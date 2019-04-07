@@ -1,0 +1,28 @@
+resolver: nightly-2019-03-14
+
+flags:
+  Taiji-scATAC-seq:
+    exe: true
+
+packages:
+- '.'
+
+extra-deps:
+
+- git:     https://github.com/Taiji-pipeline/Taiji-ATAC-seq.git
+  commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
+
+- git:     https://github.com/Taiji-pipeline/Taiji-types.git
+  commit:  9466d7f69977778f50bfdd60fd4fbf62a93dea7b
+
+- git:     https://github.com/Taiji-pipeline/bio-pipelines.git
+  commit:  482f4d1c2c57601327a581b8784d583987439229
+
+- git:     https://github.com/Taiji-pipeline/bio-experiments.git
+  commit:  4c425bf96f392fb1f9098821f643895ef1226151
+
+- bioinformatics-toolkit-0.6.0
+- HsHTSLib-1.9.2
+- drmaa-0.2.0
+- clustering-0.4.1
+- SciFlow-0.6.2
