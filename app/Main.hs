@@ -17,34 +17,31 @@ import           Taiji.Pipeline.SC.ATACSeq        (builder)
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 data SCATACSeqOpts = SCATACSeqOpts
-    { outputDir :: Directory
-    , bwaIndex  :: Maybe FilePath
-    , genome    :: Maybe FilePath
+    { output_dir :: Directory
+    , bwa_index  :: Maybe FilePath
+    , genome :: Maybe FilePath
     , input     :: FilePath
-    , picard    :: Maybe FilePath
-    , motifFile :: Maybe FilePath
-    , genomeIndex :: Maybe FilePath
+    , motif_file :: Maybe FilePath
+    , genome_index :: Maybe FilePath
     } deriving (Generic)
 
 instance SCATACSeqConfig SCATACSeqOpts where
-    _scatacseq_output_dir = outputDir
-    _scatacseq_bwa_index = bwaIndex
+    _scatacseq_output_dir = output_dir
+    _scatacseq_bwa_index = bwa_index
     _scatacseq_genome_fasta = genome
     _scatacseq_input = input
-    _scatacseq_picard = picard
     _scatacseq_callpeak_opts _ = def & mode .~ NoModel (-100) 200
-    _scatacseq_genome_index = genomeIndex
-    _scatacseq_motif_file = motifFile
+    _scatacseq_genome_index = genome_index
+    _scatacseq_motif_file = motif_file
 
 instance Default SCATACSeqOpts where
     def = SCATACSeqOpts
-        { outputDir = asDir "output"
-        , bwaIndex = Nothing
-        , genome = Nothing
+        { output_dir = asDir "output"
+        , bwa_index = Nothing
+        , genome_index = Nothing
         , input = "input.yml"
-        , picard = Nothing
-        , motifFile = Nothing
-        , genomeIndex = Nothing
+        , motif_file = Nothing
+        , genome = Nothing
         }
 
 instance FromJSON SCATACSeqOpts

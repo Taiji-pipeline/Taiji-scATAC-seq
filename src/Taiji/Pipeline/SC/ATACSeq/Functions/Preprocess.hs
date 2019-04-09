@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
-    ( RAWInput
-    , readInput
+    ( readInput
     , downloadData
     , getFastq
     ) where
@@ -11,6 +10,7 @@ import Bio.Data.Experiment
 import Control.Lens
 import           Data.Bifunctor                (bimap)
 import Bio.Pipeline
+import Data.Either (rights)
 import Bio.Data.Experiment.Parser
 import Scientific.Workflow
 import Control.Monad.Reader (asks, liftIO)
@@ -34,13 +34,10 @@ downloadData input = do
         downloadFiles dir
 
 getFastq :: [RAWInput]
-         -> [ SCATACSeq S (
-               Either (SomeTags 'Fastq) (SomeTags 'Fastq, SomeTags 'Fastq)
-            )]
+         -> [ SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq) ]
 getFastq input = concatMap split $ concatMap split $
     input & mapped.replicates.mapped.files %~ f
   where
-    f fls = map (bimap castFile (bimap castFile castFile)) $
-        filter (either (\x -> getFileType x == Fastq) g) fls
-      where
-       g (x,y) = getFileType x == Fastq && getFileType y == Fastq
+    f fls = map (bimap castFile castFile) $
+        filter (\(x,y) -> getFileType x == Fastq && getFileType y == Fastq) $
+        rights fls

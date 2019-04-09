@@ -30,7 +30,6 @@ instance Serialize (container (Replicate file)) =>
 class SCATACSeqConfig config where
     _scatacseq_output_dir :: config -> Directory
     _scatacseq_input :: config -> FilePath
-    _scatacseq_picard :: config -> Maybe FilePath
     _scatacseq_bwa_index :: config -> Maybe FilePath
     _scatacseq_genome_fasta :: config -> Maybe FilePath
     _scatacseq_genome_index :: config -> Maybe FilePath
