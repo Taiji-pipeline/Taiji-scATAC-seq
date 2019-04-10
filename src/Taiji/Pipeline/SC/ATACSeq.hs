@@ -18,7 +18,7 @@ builder = do
         note .= "Download data."
     node' "Get_Fastq" 'getFastq $ submitToRemote .= Just False
     nodePS 1 "Align" 'tagAlign $ do
-        remoteParam .= "--ntasks-per-node=16"  -- slurm
+        remoteParam .= "--ntasks-per-node=8"  -- slurm
         --remoteParam .= "-pe smp 2"  -- sge
         note .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."

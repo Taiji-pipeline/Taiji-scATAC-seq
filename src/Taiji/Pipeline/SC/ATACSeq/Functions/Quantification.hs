@@ -8,7 +8,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
 
 import Bio.Utils.BitVector
 import Bio.Data.Experiment
-import Bio.Data.Experiment.Parser
 import qualified Data.ByteString.Char8 as B
 import Conduit
 import Bio.Data.Bed.Types
@@ -30,7 +29,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 -- | Count tags on the merged sample.
 countTagsMerged :: SCATACSeqConfig config
-                => SCATACSeq S (File '[] 'Bam)
+                => SCATACSeq S (File '[] 'Bam, a)
                 -> WorkflowConfig config (SCATACSeq S (File '[] 'Bed))
 countTagsMerged input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
@@ -38,7 +37,7 @@ countTagsMerged input = do
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_readcount.bed" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\fl -> do
+    input & replicates.traverse.files %%~ liftIO . (\(fl,_) -> do
         runConduit $ countTags fl chrSize 5000 .| writeBed output
         return $ emptyFile & location .~ output )
 
