@@ -3,16 +3,21 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
-    ( countTagsMerged
+    ( mkCutSiteIndex
+    , countTagsMerged
     ) where
 
 import Bio.Utils.BitVector
 import Bio.Data.Experiment
 import qualified Data.ByteString.Char8 as B
+import Data.Conduit.List (groupBy)
+import Data.Function (on)
 import Conduit
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed.Mutable as UM
+import qualified Data.IntervalMap.Strict      as IM
 import Bio.Data.Bam
 import Control.Monad
 import           Bio.Pipeline.Utils
@@ -26,41 +31,73 @@ import Scientific.Workflow
 import Bio.Seq.IO (withGenome, getChrSizes)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+
+mkCutSiteIndex :: SCATACSeqConfig config
+               => SCATACSeq S (File '[NameSorted] 'Bam, a, b)
+               -> WorkflowConfig config (SCATACSeq S (File '[] 'Other))
+mkCutSiteIndex input = do
+    dir <- asks ((<> "/CutSiteIndex") . _scatacseq_output_dir) >>= getPath
+    genome <- fromJust <$> asks _scatacseq_genome_index 
+    let output = printf "%s/%s_rep%d.csidx" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . (\(fl,_,_) -> do
+        chrs <- withGenome genome $ return . map fst . getChrSizes
+        mkCutSiteIndex_ output fl chrs
+        return $ emptyFile & location .~ output )
+
+mkCutSiteIndex_ :: FilePath
+                -> File '[NameSorted] 'Bam
+                -> [B.ByteString]
+                -> IO ()
+mkCutSiteIndex_ output input chrs = do
+    header <- getBamHeader $ input^.location
+    createCutSiteIndex output chrs $
+        streamBam (input^.location) .| bamToBedC header .|
+        groupBy ((==) `on` (extractBarcode . fromJust . (^.name))) .|
+        mapC (\x -> (extractBarcode $ fromJust $ head x ^. name, x))
 
 -- | Count tags on the merged sample.
 countTagsMerged :: SCATACSeqConfig config
-                => SCATACSeq S (File '[] 'Bam, a)
-                -> WorkflowConfig config (SCATACSeq S (File '[] 'Bed))
+                => SCATACSeq S (File tags 'Bam, a, Int)
+                -> WorkflowConfig config (SCATACSeq S (File tags 'Bed))
 countTagsMerged input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_readcount.bed" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(fl,_) -> do
-        runConduit $ countTags fl chrSize 5000 .| writeBed output
+    input & replicates.traverse.files %%~ liftIO . (\(fl,_,nCells) -> do
+        let cutoff = max 5 $ nCells `div` 100
+        runConduit $ countTags fl chrSize 5000 cutoff .| writeBed output
         return $ emptyFile & location .~ output )
 
-countTags :: File '[] 'Bam
+countTags :: File tags 'Bam
           -> [(B.ByteString, Int)]
           -> Int  -- ^ resolution
+          -> Int  -- ^ cutoff
           -> ConduitT i BED IO ()
-countTags bam chrSize res = do
+countTags bam chrSize res cutoff = do
     header <- liftIO $ getBamHeader $ bam^.location
     (rc, _) <- liftIO $ runResourceT $ runConduit $
-        streamBam (bam^.location) .| bamToBedC header .| 
-        countTagsBinBed res beds
+        streamBam (bam^.location) .| bamToBedC header .| countTagsBinBed res beds
     forM_ (zip chrSize rc) $ \((chr, _), vec) -> flip U.imapM_ vec $ \i x -> 
-            when (x > 0) $ yield $ BED chr (i * res) ((i+1) * res)
+            when (x >= cutoff) $ yield $ BED chr (i * res) ((i+1) * res)
                 Nothing (Just $ fromIntegral (x::Int)) Nothing
   where
     beds = map (\(chr, n) -> BED3 chr 0 n) chrSize
 
-    {-
-mkCellByBinMatrix :: SCATACSeqConfig config
-                => SCATACSeq S (File '[] 'Bam)
-                -> WorkflowConfig config (SCATACSeq S (File '[] 'Bed))
-                -}
+tagCountPerCell :: Monad m
+                => [BED3] -- ^ Open regions
+                -> ConduitT [BED] (U.Vector Int) m ()
+tagCountPerCell regions = mapC $ \input -> U.create $ do
+    vec <- UM.replicate n 0
+    forM_ input $ \x -> forM_ (IM.elems $ intersecting bedTree x) $
+        UM.unsafeModify vec (+1)
+    return vec
+  where
+    bedTree = bedToTree undefined $ zip regions [0::Int ..]
+    n = length regions
 
 {-
 mkBaseMap :: FilePath   -- ^ Bam file

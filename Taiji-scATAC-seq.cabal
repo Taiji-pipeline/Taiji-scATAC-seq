@@ -25,6 +25,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
                        Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Utils
                        Taiji.Pipeline.SC.ATACSeq.Types
 
   build-depends:       base >= 4.7 && < 5
@@ -38,10 +39,12 @@ library
                      , containers
                      , conduit
                      , cereal
+                     , deepseq
                      , data-default
                      , data-ordlist
                      , filepath
                      , HsHTSLib >= 1.9.2
+                     , IntervalMap
                      , lens
                      , mtl
                      , SciFlow >= 0.6.2

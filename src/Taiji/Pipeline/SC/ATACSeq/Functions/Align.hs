@@ -12,8 +12,11 @@ import Bio.Data.Experiment
 import           Bio.HTS
 import qualified Data.ByteString.Char8 as B
 import Conduit
+import Data.Conduit.Internal (zipSinks)
 import Control.Lens
+import Data.Conduit.List (groupBy)
 import Bio.Pipeline
+import Data.Function (on)
 import Data.Either (fromRight)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
@@ -23,6 +26,7 @@ import Scientific.Workflow
 import Control.Monad.Reader (asks, liftIO)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (extractBarcode)
 
 tagAlign :: SCATACSeqConfig config
          => SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq)
@@ -51,7 +55,8 @@ filterBamSort input = do
 
 rmDuplicates :: SCATACSeqConfig config
              => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
-             -> WorkflowConfig config (SCATACSeq S (File '[] 'Bam, File '[] 'Tsv))
+             -> WorkflowConfig config
+                (SCATACSeq S (File '[NameSorted] 'Bam, File '[] 'Tsv, Int))
 rmDuplicates input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bam"))
     let output1 = printf "%s/%s_rep%d_filt_dedup.bam" dir (T.unpack $ input^.eid)
@@ -60,22 +65,26 @@ rmDuplicates input = do
             (input^.replicates._1)
         f fl = do
             header <- getBamHeader fl
-            _ <- runResourceT $ runConduit $ streamBam fl .| getReadGroup .|
-                mapC (deDupAndRmChrM header) .| getZipSink ( (,) <$>
-                    ZipSink (concatMapC fst .| sinkBam output1 header) <*>
-                    ZipSink (mapC (toString . snd) .| unlinesAsciiC .| sinkFile output2) )
+            ((n, _), _) <- runResourceT $ runConduit $ streamBam fl .|
+                groupBy ((==) `on` (extractBarcode . queryName)) .|
+                mapC (deDupAndRmChrM header) .| zipSinks 
+                    (concatMapC filterFn .| zipSinks lengthC (concatC .| sinkBam output1 header))
+                    (mapC (toString . snd) .| unlinesAsciiC .| sinkFile output2)
             return ( location .~ output1 $ emptyFile
-                   , location .~ output2 $ emptyFile )
+                   , location .~ output2 $ emptyFile
+                   , n )
     input & replicates.traverse.files %%~ liftIO . f . (^.location)
   where
     toString (a,b,c,d) = B.intercalate "\t" $ a : map (B.pack . show) [b,c,d]
+    filterFn (x, (_,_,_,n)) | n >= 1000 = Just x
+                            | otherwise = Nothing
 
 -- | Remove duplicated and chrM reads. 
 deDupAndRmChrM :: BAMHeader
                -> [BAM]
                -> ([BAM], (B.ByteString , Double, Double, Double))
 deDupAndRmChrM hdr bam =
-    (noChrM, (getBarcode $ head bam, dupRate, chrMRate, nRemain))
+    (noChrM, (extractBarcode $ queryName $ head bam, dupRate, chrMRate, nRemain))
   where
     dedup = rmDup bam
     nDedup = fromIntegral $ length dedup
@@ -84,7 +93,6 @@ deDupAndRmChrM hdr bam =
     nRemain = fromIntegral $ length noChrM
     chrMRate = 1 - nRemain / nDedup
     n = fromIntegral $ length bam
-    getBarcode x = head $ B.split ':' $ queryName x
 
 -- | Remove duplicates for reads originated from a single cell.
 rmDup :: [BAM] -> [BAM]
@@ -108,18 +116,3 @@ rmChrM :: BAMHeader -> [BAM] -> [BAM]
 rmChrM hdr = filter $ \x ->
     let chr = fromJust $ refName hdr x in chr /= "chrM" && chr /= "M"
 {-# INLINE rmChrM #-}
-
-getReadGroup:: Monad m => ConduitT BAM [BAM] m ()
-getReadGroup = await >>= \case
-    Nothing -> return ()
-    Just b -> go (getBarcode b) [b]
-  where
-    go bc acc = await >>= \case 
-        Nothing -> yield acc
-        Just b -> do
-            let bc' = getBarcode b
-            if bc == bc'
-                then go bc $ b : acc
-                else yield acc >> go bc' [b]
-    getBarcode bam = Just $ head $ B.split ':' $ queryName bam
-

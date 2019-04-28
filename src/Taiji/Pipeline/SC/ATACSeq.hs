@@ -28,3 +28,6 @@ builder = do
     nodePS 1 "Count_Tags" 'countTagsMerged $ return ()
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
          , "Remove_Duplicates", "Count_Tags" ]
+
+    nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
+    path ["Remove_Duplicates", "Make_CutSite_Index"]
