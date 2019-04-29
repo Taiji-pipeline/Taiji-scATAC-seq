@@ -4,6 +4,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , CutSite(..)
     , CutSiteIndex
     , withCutSiteIndex
+    , getKeys
     , lookupIndex
     , createCutSiteIndex
     ) where
@@ -52,6 +53,10 @@ data CutSite = CutSite
     , _cut_site_pos :: Int }
 
 type LocationMap = M.Map B.ByteString (Integer, Int)
+
+getKeys :: CutSiteIndex -> [B.ByteString]
+getKeys = M.keys . _header_location_map . _file_header
+{-# INLINE getKeys #-}
 
 lookupIndex :: B.ByteString -> CutSiteIndex -> IO (Maybe [CutSite])
 lookupIndex key idx = case lookupHeader key (_file_header idx) of
