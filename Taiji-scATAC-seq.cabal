@@ -25,6 +25,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
                        Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Motif
                        Taiji.Pipeline.SC.ATACSeq.Functions.Utils
                        Taiji.Pipeline.SC.ATACSeq.Types
 

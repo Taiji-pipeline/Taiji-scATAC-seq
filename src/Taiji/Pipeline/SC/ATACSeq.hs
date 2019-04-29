@@ -36,3 +36,9 @@ builder = do
     [ "Download_Data", "Bam_To_Bed"] ~> "Get_Bed"
     nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
+
+    nodeS "Get_Open_Region" 'getOpenRegion $ return ()
+    nodeS "Find_TFBS_Prep" 'prepDataSet $ submitToRemote .= Just False
+    nodeSharedPS 1 "Find_TFBS" [| \x -> findMotifs 1e-4 x |] $ return ()
+    path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
+
