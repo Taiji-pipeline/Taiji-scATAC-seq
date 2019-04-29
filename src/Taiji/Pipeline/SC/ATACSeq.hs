@@ -29,5 +29,10 @@ builder = do
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
          , "Remove_Duplicates", "Count_Tags" ]
 
+    nodePS 1 "Bam_To_Bed" 'mkBedGzip $ return ()
+    path ["Remove_Duplicates", "Bam_To_Bed"]
+    node' "Get_Bed" [| \(input, x) -> getSortedBed input ++ x |] $
+        submitToRemote .= Just False
+    [ "Download_Data", "Bam_To_Bed"] ~> "Get_Bed"
     nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
-    path ["Remove_Duplicates", "Make_CutSite_Index"]
+    path ["Get_Bed", "Make_CutSite_Index"]

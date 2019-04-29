@@ -34,28 +34,25 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 mkCutSiteIndex :: SCATACSeqConfig config
-               => SCATACSeq S (File '[NameSorted] 'Bam, a, b)
+               => SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
                -> WorkflowConfig config (SCATACSeq S (File '[] 'Other))
 mkCutSiteIndex input = do
     dir <- asks ((<> "/CutSiteIndex") . _scatacseq_output_dir) >>= getPath
     genome <- fromJust <$> asks _scatacseq_genome_index 
     let output = printf "%s/%s_rep%d.csidx" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(fl,_,_) -> do
+    input & replicates.traverse.files %%~ liftIO . (\fl -> do
         chrs <- withGenome genome $ return . map fst . getChrSizes
         mkCutSiteIndex_ output fl chrs
         return $ emptyFile & location .~ output )
 
 mkCutSiteIndex_ :: FilePath
-                -> File '[NameSorted] 'Bam
+                -> File '[NameSorted, Gzip] 'Bed
                 -> [B.ByteString]
                 -> IO ()
-mkCutSiteIndex_ output input chrs = do
-    header <- getBamHeader $ input^.location
-    createCutSiteIndex output chrs $
-        streamBam (input^.location) .| bamToBedC header .|
-        groupBy ((==) `on` (extractBarcode . fromJust . (^.name))) .|
-        mapC (\x -> (extractBarcode $ fromJust $ head x ^. name, x))
+mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
+    streamBedGzip (input^.location) .| groupBy ((==) `on` (^.name)) .|
+    mapC (\x -> (fromJust $ head x ^. name, x))
 
 -- | Count tags on the merged sample.
 countTagsMerged :: SCATACSeqConfig config
@@ -69,14 +66,15 @@ countTagsMerged input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(fl,_,nCells) -> do
         let cutoff = max 5 $ nCells `div` 100
-        runConduit $ countTags fl chrSize 5000 cutoff .| writeBed output
+        runResourceT $ runConduit $ countTags fl chrSize 5000 cutoff .|
+            sinkFileBed output
         return $ emptyFile & location .~ output )
 
 countTags :: File tags 'Bam
           -> [(B.ByteString, Int)]
           -> Int  -- ^ resolution
           -> Int  -- ^ cutoff
-          -> ConduitT i BED IO ()
+          -> ConduitT i BED (ResourceT IO) ()
 countTags bam chrSize res cutoff = do
     header <- liftIO $ getBamHeader $ bam^.location
     (rc, _) <- liftIO $ runResourceT $ runConduit $

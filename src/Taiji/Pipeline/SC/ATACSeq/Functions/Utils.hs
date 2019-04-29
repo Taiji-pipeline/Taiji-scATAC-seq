@@ -1,5 +1,12 @@
 {-# LANGUAGE LambdaCase #-}
-module Taiji.Pipeline.SC.ATACSeq.Functions.Utils where
+module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+    ( extractBarcode
+    , CutSite(..)
+    , CutSiteIndex
+    , withCutSiteIndex
+    , lookupIndex
+    , createCutSiteIndex
+    ) where
 
 import Conduit
 import Bio.Data.Bed
@@ -15,6 +22,7 @@ import qualified Data.ByteString as BS
 import Data.Serialize (encode, decode)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
+import Control.Exception (bracket)
 
 
 -------------------------------------------------------------------------------
@@ -49,8 +57,9 @@ lookupIndex :: B.ByteString -> CutSiteIndex -> IO (Maybe [CutSite])
 lookupIndex key idx = case lookupHeader key (_file_header idx) of
     Nothing -> return Nothing
     Just (pos, n) -> do
-      hSeek (_file_handle idx) AbsoluteSeek pos
-      Just . decodeCutSite (_chroms $ _file_header idx) <$> BS.hGet (_file_handle idx) n
+        hSeek (_file_handle idx) AbsoluteSeek pos
+        Just . decodeCutSite (_chroms $ _file_header idx) <$>
+            BS.hGet (_file_handle idx) n
 {-# INLINE lookupIndex #-}
 
 lookupHeader :: B.ByteString
@@ -59,6 +68,10 @@ lookupHeader key header = do
     (pos, n) <- M.lookup key $ _header_location_map header
     return (pos + fromIntegral (_off_set header), n)
 {-# INLINE lookupHeader #-}
+
+withCutSiteIndex :: FilePath -> (CutSiteIndex -> IO a) -> IO a
+withCutSiteIndex idx = bracket (openCutSiteIndex idx) closeCutSiteIndex
+{-# INLINE withCutSiteIndex #-}
 
 openCutSiteIndex :: FilePath -> IO CutSiteIndex
 openCutSiteIndex idx = do
@@ -117,4 +130,3 @@ decodeCutSite chrs = concatMap f . zip chrs . either error id . decode
   where
     f (chr, xs) = map (\x -> CutSite chr x) xs
 {-# INLINE decodeCutSite #-}
-

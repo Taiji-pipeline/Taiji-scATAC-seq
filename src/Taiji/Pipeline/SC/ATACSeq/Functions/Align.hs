@@ -6,9 +6,12 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
     , filterBamSort
     , rmDuplicates
+    , mkBedGzip
     ) where
 
 import Bio.Data.Experiment
+import Bio.Data.Bed
+import Bio.Data.Bam
 import           Bio.HTS
 import qualified Data.ByteString.Char8 as B
 import Conduit
@@ -52,6 +55,23 @@ filterBamSort input = do
     let output = printf "%s/%s_rep%d_filt.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . filterBam "./" output
+
+mkBedGzip :: SCATACSeqConfig config
+          => (SCATACSeq S (File '[NameSorted] 'Bam, File '[] 'Tsv, Int))
+          -> WorkflowConfig config
+              (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
+mkBedGzip input = do
+    dir <- asks ((<> "/Bed") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d.bed.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ (\(fl,_,_) -> liftIO $ do
+        header <- getBamHeader $ fl^.location
+        runResourceT $ runConduit $ streamBam (fl^.location) .|
+            bamToBedC header .| mapC changeName .|
+            sinkFileBedGzip output
+        return $ location .~ output $ emptyFile )
+  where
+    changeName x = name %~ fmap extractBarcode $ x
 
 rmDuplicates :: SCATACSeqConfig config
              => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
