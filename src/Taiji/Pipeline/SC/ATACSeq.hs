@@ -4,6 +4,7 @@
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
 import           Control.Lens
+import Bio.Data.Experiment
 import           Scientific.Workflow
 
 import           Taiji.Pipeline.SC.ATACSeq.Functions
@@ -29,16 +30,23 @@ builder = do
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
          , "Remove_Duplicates", "Count_Tags" ]
 
-    nodePS 1 "Bam_To_Bed" 'mkBedGzip $ return ()
-    path ["Remove_Duplicates", "Bam_To_Bed"]
-    node' "Get_Bed" [| \(input, x) -> getSortedBed input ++ x |] $
+    node' "Get_Bed" [| \(input, x) -> getSortedBed input ++ 
+        (traverse.replicates._2.files %~ (^._1) $ x) |] $
         submitToRemote .= Just False
-    [ "Download_Data", "Bam_To_Bed"] ~> "Get_Bed"
+    [ "Download_Data", "Remove_Duplicates"] ~> "Get_Bed"
+
+    {-- Taiji pipeline
     nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
 
     nodeS "Get_Open_Region" 'getOpenRegion $ return ()
     nodeS "Find_TFBS_Prep" 'prepDataSet $ submitToRemote .= Just False
-    nodeSharedPS 1 "Find_TFBS" [| \x -> findMotifs 1e-4 x |] $ return ()
+    nodeSharedPS 1 "Find_TFBS" [| \x -> findMotifs 5e-5 x |] $ return ()
     path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
+    --}
+
+    -- Snap pipeline
+    nodePS 1 "Snap_Pre" 'snapPre $ return ()
+    path ["Get_Bed", "Snap_Pre"]
+    
 

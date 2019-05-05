@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
     ( mkCutSiteIndex
     , countTagsMerged
@@ -18,8 +19,8 @@ import Bio.Data.Bed
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
 import qualified Data.IntervalMap.Strict      as IM
-import Bio.Data.Bam
 import Control.Monad
+import Data.Singletons.Prelude (Elem)
 import           Bio.Pipeline.Utils
 import Control.Lens
 import Control.Monad.Reader (asks)
@@ -33,6 +34,7 @@ import Bio.Seq.IO (withGenome, getChrSizes)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
+-- | Create the cut site map for every cell.
 mkCutSiteIndex :: SCATACSeqConfig config
                => SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
                -> WorkflowConfig config (SCATACSeq S (File '[] 'Other))
@@ -45,6 +47,7 @@ mkCutSiteIndex input = do
         chrs <- withGenome genome $ return . map fst . getChrSizes
         mkCutSiteIndex_ output fl chrs
         return $ emptyFile & location .~ output )
+{-# INLINE mkCutSiteIndex #-}
 
 mkCutSiteIndex_ :: FilePath
                 -> File '[NameSorted, Gzip] 'Bed
@@ -53,32 +56,33 @@ mkCutSiteIndex_ :: FilePath
 mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
     streamBedGzip (input^.location) .| groupBy ((==) `on` (^.name)) .|
     mapC (\x -> (fromJust $ head x ^. name, x))
+{-# INLINE mkCutSiteIndex_ #-}
 
 -- | Count tags on the merged sample.
-countTagsMerged :: SCATACSeqConfig config
-                => SCATACSeq S (File tags 'Bam, a, Int)
+countTagsMerged :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+                => SCATACSeq S (File tags 'Bed, a, Int)
                 -> WorkflowConfig config (SCATACSeq S (File tags 'Bed))
 countTagsMerged input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_readcount.bed" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_readcount.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(fl,_,nCells) -> do
         let cutoff = max 5 $ nCells `div` 100
         runResourceT $ runConduit $ countTags fl chrSize 5000 cutoff .|
-            sinkFileBed output
+            sinkFileBedGzip output
         return $ emptyFile & location .~ output )
 
-countTags :: File tags 'Bam
+countTags :: Elem 'Gzip tags ~ 'True
+          => File tags 'Bed
           -> [(B.ByteString, Int)]
           -> Int  -- ^ resolution
           -> Int  -- ^ cutoff
           -> ConduitT i BED (ResourceT IO) ()
-countTags bam chrSize res cutoff = do
-    header <- liftIO $ getBamHeader $ bam^.location
+countTags input chrSize res cutoff = do
     (rc, _) <- liftIO $ runResourceT $ runConduit $
-        streamBam (bam^.location) .| bamToBedC header .| countTagsBinBed res beds
+        streamBedGzip (input^.location) .| countTagsBinBed res beds
     forM_ (zip chrSize rc) $ \((chr, _), vec) -> flip U.imapM_ vec $ \i x -> 
             when (x >= cutoff) $ yield $ BED chr (i * res) ((i+1) * res)
                 Nothing (Just $ fromIntegral (x::Int)) Nothing

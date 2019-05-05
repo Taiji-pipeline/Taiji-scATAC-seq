@@ -37,45 +37,6 @@ import           System.FilePath               (takeDirectory)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
 
-getOpenRegion :: SCATACSeqConfig config
-              => [SCATACSeq S (File '[NameSorted, Gzip] 'Bed)]
-              -> WorkflowConfig config (File '[Gzip] 'Bed)
-getOpenRegion inputs = do
-    dir <- asks _scatacseq_output_dir >>= getPath
-    genome <- asks (fromJust . _scatacseq_genome_index)
-    chrSize <- liftIO $ withGenome genome $ return . getChrSizes
-    let output = dir <> "/accessible_region.bed.gz"
-        source = forM_ inputs $ \input ->
-            streamBedGzip $ input^.replicates._2.files.location
-    runResourceT $ runConduit $ source .| getOpenRegion_ chrSize .|
-        sinkFileBedGzip output
-    return $ emptyFile & location .~ output
-
-getOpenRegion_ :: PrimMonad m
-               => [(B.ByteString, Int)]  -- ^ Chromosomes and their sizes
-               -> ConduitT BED BED3 m ()
-getOpenRegion_ chrs = baseMap chrs >>= baseMapToRegion
-
-baseMapToRegion :: Monad m => BaseMap -> ConduitT i BED3 m ()
-baseMapToRegion (BaseMap bm) = forM_ (M.toList bm) $ \(chr, bv) ->
-    mkBedWindow 50 chr bv
-
-mkBedWindow :: Monad m 
-            => Int   -- ^ half window size
-            -> B.ByteString
-            -> BV.BitVector -> ConduitT i BED3 m ()
-mkBedWindow window chr bv = go (0,0) 0
-  where
-    go (lo, hi) i
-        | i >= n = yield $ asBed chr lo hi
-        | not (bv BV.! i) = go (lo, hi) $! i + 1
-        | cur_lo <= hi = go (lo, cur_hi) $! i + 1
-        | otherwise = yield (asBed chr lo hi) >> go (cur_lo, cur_hi) (i + 1)
-      where
-        (cur_lo, cur_hi) = getRegion i
-    n = BV.size bv
-    getRegion x = (max 0 $ x - window, min n $ x + 1 + window)
-
 prepDataSet :: SCATACSeqConfig config
             => File '[Gzip] 'Bed
             -> WorkflowConfig config
@@ -86,6 +47,7 @@ prepDataSet region = do
     motifs <- liftIO $ readMEME motifFile
     return $ ContextData region $ chunksOf 100 motifs
 
+-- | Identify motif binding sites.
 findMotifs :: SCATACSeqConfig config
            => Double     -- ^ p value
            -> ContextData (File '[Gzip] 'Bed) [Motif]
@@ -111,3 +73,44 @@ findMotifs p (ContextData openChromatin motifs) = do
             motifScan g motifs def p .| getMotifScore g motifs def .|
             getMotifPValue (Just (1 - p * 10)) motifs def .| sinkFileBedGzip output
         return $ location .~ output $ emptyFile
+{-# INLINE findMotifs #-}
+
+-- mkBigBed :: File '[Gzip] 'Bed
+
+getOpenRegion :: SCATACSeqConfig config
+              => [SCATACSeq S (File '[NameSorted, Gzip] 'Bed)]
+              -> WorkflowConfig config (File '[Gzip] 'Bed)
+getOpenRegion inputs = do
+    dir <- asks _scatacseq_output_dir >>= getPath
+    genome <- asks (fromJust . _scatacseq_genome_index)
+    chrSize <- liftIO $ withGenome genome $ return . getChrSizes
+    let output = dir <> "/accessible_region.bed.gz"
+        source = forM_ inputs $ \input ->
+            streamBedGzip $ input^.replicates._2.files.location
+    runResourceT $ runConduit $ source .|
+        (baseMap chrSize >>= baseMapToRegion) .| sinkFileBedGzip output
+    return $ emptyFile & location .~ output
+{-# INLINE getOpenRegion #-}
+
+baseMapToRegion :: Monad m => BaseMap -> ConduitT i BED3 m ()
+baseMapToRegion (BaseMap bm) = forM_ (M.toList bm) $ \(chr, bv) ->
+    mkBedWindow 50 chr bv
+{-# INLINE baseMapToRegion #-}
+
+-- | Create bed from basemap.
+mkBedWindow :: Monad m 
+            => Int   -- ^ half window size
+            -> B.ByteString
+            -> BV.BitVector -> ConduitT i BED3 m ()
+mkBedWindow window chr bv = go (0,0) 0
+  where
+    go (lo, hi) i
+        | i >= n = yield $ asBed chr lo hi
+        | not (bv BV.! i) = go (lo, hi) $! i + 1
+        | cur_lo <= hi = go (lo, cur_hi) $! i + 1
+        | otherwise = yield (asBed chr lo hi) >> go (cur_lo, cur_hi) (i + 1)
+      where
+        (cur_lo, cur_hi) = getRegion i
+    n = BV.size bv
+    getRegion x = (max 0 $ x - window, min n $ x + 1 + window)
+{-# INLINE mkBedWindow #-}

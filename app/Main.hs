@@ -23,6 +23,7 @@ data SCATACSeqOpts = SCATACSeqOpts
     , input     :: FilePath
     , motif_file :: Maybe FilePath
     , genome_index :: Maybe FilePath
+    , annotation :: Maybe FilePath
     } deriving (Generic)
 
 instance SCATACSeqConfig SCATACSeqOpts where
@@ -33,6 +34,7 @@ instance SCATACSeqConfig SCATACSeqOpts where
     _scatacseq_callpeak_opts _ = def & mode .~ NoModel (-100) 200
     _scatacseq_genome_index = genome_index
     _scatacseq_motif_file = motif_file
+    _scatacseq_annotation = annotation
 
 instance Default SCATACSeqOpts where
     def = SCATACSeqOpts
@@ -42,6 +44,7 @@ instance Default SCATACSeqOpts where
         , input = "input.yml"
         , motif_file = Nothing
         , genome = Nothing
+        , annotation = Nothing
         }
 
 instance FromJSON SCATACSeqOpts

@@ -35,3 +35,4 @@ class SCATACSeqConfig config where
     _scatacseq_genome_index :: config -> Maybe FilePath
     _scatacseq_motif_file :: config -> Maybe FilePath
     _scatacseq_callpeak_opts :: config -> CallPeakOpts
+    _scatacseq_annotation :: config -> Maybe FilePath
