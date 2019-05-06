@@ -35,15 +35,14 @@ builder = do
         submitToRemote .= Just False
     [ "Download_Data", "Remove_Duplicates"] ~> "Get_Bed"
 
-    {-- Taiji pipeline
     nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
 
     nodeS "Get_Open_Region" 'getOpenRegion $ return ()
-    nodeS "Find_TFBS_Prep" 'prepDataSet $ submitToRemote .= Just False
-    nodeSharedPS 1 "Find_TFBS" [| \x -> findMotifs 5e-5 x |] $ return ()
+    nodeS "Find_TFBS_Prep" [| findMotifsPre 5e-5 |] $ return ()
+
+    nodePS 1 "Find_TFBS" 'findMotifs $ return ()
     path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
-    --}
 
     -- Snap pipeline
     nodePS 1 "Snap_Pre" 'snapPre $ return ()

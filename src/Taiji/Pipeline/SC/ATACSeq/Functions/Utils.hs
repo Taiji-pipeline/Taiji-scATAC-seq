@@ -40,14 +40,14 @@ extractBarcode = head . B.split ':'
 {-# INLINE extractBarcode #-}
 
 -- | Get a list of potential TSS from GTF file
-readPromoters :: FilePath -> IO (BEDTree (CI B.ByteString))
-readPromoters = fmap (bedToTree undefined . concatMap fn) . readGenes
+readPromoters :: FilePath -> IO (BEDTree [CI B.ByteString])
+readPromoters = fmap (bedToTree (++) . concatMap fn) . readGenes
   where
-    fn :: Gene -> [(BED3, CI B.ByteString)]
+    fn :: Gene -> [(BED3, [CI B.ByteString])]
     fn Gene{..} = map g $ nubSort tss
       where
-        g x | geneStrand = (asBed geneChrom (max 0 $ x - 5000) (x + 1000), geneName)
-            | otherwise = (asBed geneChrom (max 0 $ x - 1000) (x + 5000), geneName)
+        g x | geneStrand = (asBed geneChrom (max 0 $ x - 5000) (x + 1000), [geneName])
+            | otherwise = (asBed geneChrom (max 0 $ x - 1000) (x + 5000), [geneName])
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
 {-# INLINE readPromoters #-}

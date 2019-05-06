@@ -5,7 +5,7 @@
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Motif
     ( getOpenRegion
-    , prepDataSet
+    , findMotifsPre
     , findMotifs
     ) where
 
@@ -18,7 +18,7 @@ import Bio.Data.Bed.Utils
 import           Bio.Pipeline
 import           Bio.Pipeline.Instances ()
 import Bio.Data.Bed
-import Data.List.Split (chunksOf)
+import Data.Binary
 import Control.Monad.Reader (asks)
 import           Bio.Motif                     hiding (score)
 import Data.Maybe
@@ -28,7 +28,6 @@ import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString.Char8 as B
 import qualified Bio.Utils.BitVector as BV
 import           System.IO
-import           System.IO.Temp                (emptyTempFile)
 import           Bio.Seq.IO
 import           Data.Default (def)
 import           Shelly                        (fromText, mkdir_p, shelly,
@@ -37,22 +36,26 @@ import           System.FilePath               (takeDirectory)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
 
-prepDataSet :: SCATACSeqConfig config
-            => File '[Gzip] 'Bed
-            -> WorkflowConfig config
-                (ContextData (File '[Gzip] 'Bed) [[Motif]])
-prepDataSet region = do
+findMotifsPre :: SCATACSeqConfig config
+              => Double
+              -> File '[Gzip] 'Bed
+              -> WorkflowConfig config
+                  [(B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)]
+findMotifsPre p region = do
     motifFile <- fromMaybe (error "Motif file is not specified!") <$>
         asks _scatacseq_motif_file
-    motifs <- liftIO $ readMEME motifFile
-    return $ ContextData region $ chunksOf 100 motifs
+    genome <- asks (fromJust . _scatacseq_genome_index)
+    chrs <- liftIO $ withGenome genome $ return . map fst . getChrSizes
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp"))
+    let output = dir ++ "/motif.bin"
+    liftIO $ map (mkCutoffMotif def p) <$> readMEME motifFile >>= encodeFile output
+    return $ zip3 chrs (repeat region) $ repeat $ location .~ output $ emptyFile
 
 -- | Identify motif binding sites.
 findMotifs :: SCATACSeqConfig config
-           => Double     -- ^ p value
-           -> ContextData (File '[Gzip] 'Bed) [Motif]
+           => (B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)
            -> WorkflowConfig config (File '[Gzip] 'Bed)
-findMotifs p (ContextData openChromatin motifs) = do
+findMotifs (chr, openChromatin, motifFl) = do
     -- Generate sequence index
     genome <- asks ( fromMaybe (error "Genome fasta file was not specified!") .
         _scatacseq_genome_fasta )
@@ -65,13 +68,14 @@ findMotifs p (ContextData openChromatin motifs) = do
             shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
             hPutStrLn stderr "Generating sequence index"
             mkIndex [genome] seqIndex
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/TFBS/"))
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/TFBS"))
+    let output = dir ++ "/" ++ B.unpack chr ++ ".bed.gz"
     liftIO $ withGenome seqIndex $ \g -> do
-        output <- emptyTempFile dir "motif_sites_part.bed.gz"
+        motifs <- decodeFile (motifFl^.location) :: IO [CutoffMotif]
         runResourceT $ runConduit $
             (streamBedGzip (openChromatin^.location) :: _ _ BED3 _ _) .|
-            motifScan g motifs def p .| getMotifScore g motifs def .|
-            getMotifPValue (Just (1 - p * 10)) motifs def .| sinkFileBedGzip output
+            filterC (\x -> x^.chrom == chr) .| scanMotif g motifs .|
+            sinkFileBedGzip output
         return $ location .~ output $ emptyFile
 {-# INLINE findMotifs #-}
 
