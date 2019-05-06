@@ -44,8 +44,8 @@ builder = do
     nodePS 1 "Find_TFBS" 'findMotifs $ return ()
     path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
 
-    -- Snap pipeline
+    {-- Snap pipeline
     nodePS 1 "Snap_Pre" 'snapPre $ return ()
     path ["Get_Bed", "Snap_Pre"]
-    
+    --}
 

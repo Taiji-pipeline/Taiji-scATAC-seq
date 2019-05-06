@@ -3,6 +3,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     ( extractBarcode
     , readPromoters
+    , getGenomeIndex
     , CutSite(..)
     , CutSiteIndex
     , withCutSiteIndex
@@ -28,7 +29,18 @@ import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
 import           Data.List.Ordered       (nubSort)
+import Control.Monad.Reader (asks)
+import           Bio.Seq.IO
+import Data.Maybe
+import Control.Monad (unless)
+import           System.FilePath               (takeDirectory)
+import           Shelly                        (fromText, mkdir_p, shelly,
+                                                test_f)
+import Scientific.Workflow
 import Data.CaseInsensitive (CI)
+import qualified Data.Text as T
+
+import Taiji.Pipeline.SC.ATACSeq.Types
 
 -------------------------------------------------------------------------------
 -- BASIC
@@ -51,6 +63,20 @@ readPromoters = fmap (bedToTree (++) . concatMap fn) . readGenes
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
 {-# INLINE readPromoters #-}
+
+getGenomeIndex :: SCATACSeqConfig config => WorkflowConfig config FilePath
+getGenomeIndex = do
+    seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
+        _scatacseq_genome_index )
+    genome <- asks ( fromMaybe (error "Genome fasta file was not specified!") .
+        _scatacseq_genome_fasta )
+    shelly $ do
+        fileExist <- test_f $ fromText $ T.pack seqIndex
+        unless fileExist $ do
+            mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
+            liftIO $ mkIndex [genome] seqIndex
+    return seqIndex
+{-# INLINE getGenomeIndex #-}
 
 -------------------------------------------------------------------------------
 -- CutSiteIndex

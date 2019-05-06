@@ -43,5 +43,5 @@ snapPre input = do
                 , "--min-cov=100" ]
             shelly $ run_ "snaptools" [ "snap-add-bmat"
                 , "--snap-file=" <> T.pack output
-                , "--bin-size-list 5000 50000" ]
+                , "--bin-size-list", "5000", "50000" ]
             return $ location .~ output $ emptyFile )

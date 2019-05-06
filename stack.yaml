@@ -17,7 +17,7 @@ extra-deps:
 - '../Taiji-types'
 
 - git:     https://github.com/kaizhang/bioinformatics-toolkit.git
-  commit:  942af76592a4ac9a708914efcf0c91873d4f89b9
+  commit:  75a8a813410a5c8267a59794c875f4d277ceb1be
   subdirs: 
     - bioinformatics-toolkit
 
