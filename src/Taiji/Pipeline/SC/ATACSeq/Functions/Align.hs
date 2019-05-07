@@ -60,7 +60,7 @@ filterBamSort input = do
 rmDuplicates :: SCATACSeqConfig config
              => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
              -> WorkflowConfig config
-                (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, File '[] 'Tsv, Int))
+                (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, File '[] 'Tsv))
 rmDuplicates input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
     anno <- fromJust <$> asks _scatacseq_annotation 
@@ -71,14 +71,14 @@ rmDuplicates input = do
         f fl = do
             header <- getBamHeader fl
             promoters <- (fmap.fmap) (const ()) <$> readPromoters anno
-            ((n, _), _) <- runResourceT $ runConduit $ streamBam fl .|
+            _ <- runResourceT $ runConduit $ streamBam fl .|
                 groupBy ((==) `on` (extractBarcode . queryName)) .|
-                mapC (filterReads header promoters) .| zipSinks 
-                    (concatMapC filterCell .| zipSinks lengthC (concatC .| sinkFileBedGzip output1))
+                mapC (filterReads header promoters) .|
+                zipSinks 
+                    (concatMapC filterCell .| concatC .| sinkFileBedGzip output1)
                     (mapC (showStat . snd) .| unlinesAsciiC .| sinkFile output2)
             return ( location .~ output1 $ emptyFile
-                   , location .~ output2 $ emptyFile
-                   , n )
+                   , location .~ output2 $ emptyFile )
     input & replicates.traverse.files %%~ liftIO . f . (^.location)
 
 filterCell :: (a, Stat) -> Maybe a 

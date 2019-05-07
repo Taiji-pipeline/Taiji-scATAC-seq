@@ -26,26 +26,27 @@ builder = do
     nodePS 1 "Filter_Bam" 'filterBamSort $ do
         note .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     nodePS 1 "Remove_Duplicates" 'rmDuplicates $ return ()
-    nodePS 1 "Count_Tags" 'countTagsMerged $ return ()
+    nodePS 1 "Get_Bins" 'getBins $ return ()
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
-         , "Remove_Duplicates", "Count_Tags" ]
+         , "Remove_Duplicates" ]
 
     node' "Get_Bed" [| \(input, x) -> getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $
         submitToRemote .= Just False
+    nodePS 1 "Make_Count_Matrix" 'mkCountMatrix $ return ()
     [ "Download_Data", "Remove_Duplicates"] ~> "Get_Bed"
+    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
 
     nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
 
     nodeS "Get_Open_Region" 'getOpenRegion $ return ()
     nodeS "Find_TFBS_Prep" [| findMotifsPre 5e-5 |] $ return ()
-
     nodePS 1 "Find_TFBS" 'findMotifs $ return ()
     path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
 
-    {-- Snap pipeline
+
+    -- Snap pipeline
     nodePS 1 "Snap_Pre" 'snapPre $ return ()
     path ["Get_Bed", "Snap_Pre"]
-    --}
 

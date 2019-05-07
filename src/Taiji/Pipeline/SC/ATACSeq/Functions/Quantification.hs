@@ -5,16 +5,20 @@
 {-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
     ( mkCutSiteIndex
-    , countTagsMerged
+    , getBins
+    , mkCountMatrix
     ) where
 
-import Bio.Utils.BitVector
 import Bio.Data.Experiment
 import qualified Data.ByteString.Char8 as B
 import Data.Conduit.List (groupBy)
+import Data.ByteString.Lex.Integral (packDecimal)
 import Data.Function (on)
+import Data.Conduit.Internal (zipSinks)
 import Conduit
+import Control.Monad.ST
 import Bio.Data.Bed.Types
+import Data.Conduit.Zlib (gzip)
 import Bio.Data.Bed
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
@@ -27,6 +31,7 @@ import Control.Monad.Reader (asks)
 import Text.Printf (printf)
 import qualified Data.Text as T
 import Data.Maybe
+import Control.DeepSeq (force)
 import Bio.Data.Bed.Utils
 import Scientific.Workflow
 import Bio.Seq.IO (withGenome, getChrSizes)
@@ -58,68 +63,93 @@ mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
     mapC (\x -> (fromJust $ head x ^. name, x))
 {-# INLINE mkCutSiteIndex_ #-}
 
--- | Count tags on the merged sample.
-countTagsMerged :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-                => SCATACSeq S (File tags 'Bed, a, Int)
-                -> WorkflowConfig config (SCATACSeq S (File tags 'Bed))
-countTagsMerged input = do
+-- | Get bins
+getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+        => SCATACSeq S (File tags 'Bed)
+        -> WorkflowConfig config
+            (SCATACSeq S (File tags 'Bed, File tags 'Bed, Int))
+getBins input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_readcount.bed.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_bin_idx.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(fl,_,nCells) -> do
-        let cutoff = max 5 $ nCells `div` 100
-        runResourceT $ runConduit $ countTags fl chrSize 5000 cutoff .|
+    input & replicates.traverse.files %%~ liftIO . (\fl -> do
+        (n, rc) <- binCount fl chrSize 5000
+        let lo = fromIntegral n * 0.001
+            hi = fromIntegral n * 0.95
+        runResourceT $ runConduit $
+            filterBin lo hi 5000 (zip (map fst chrSize) rc) .|
             sinkFileBedGzip output
+        return $ (fl, emptyFile & location .~ output, n) )
+
+-- | Divide the genome into bins and count the tags.
+binCount :: Elem 'Gzip tags ~ 'True
+         => File tags 'Bed    -- ^ Tags
+         -> [(B.ByteString, Int)]  -- ^ chromosome sizes
+         -> Int  -- ^ resolution
+         -> IO (Int, [U.Vector Int])
+binCount input chrSize res = runResourceT $ runConduit $
+    inputWithGroupCell .| zipSinks lengthC (mapC countTags .| fold)
+  where
+    inputWithGroupCell = streamBedGzip (input^.location) .|
+        groupBy ((==) `on` (^.name))
+    countTags beds = map (U.map (\x -> if x > 0 then 1 else x)) $
+        fst $ runST $ runConduit $ yieldMany beds .| countTagsBinBed res chrs
+    chrs = map (\(chr, n) -> BED3 chr 0 n) chrSize
+    fold = await >>= \case
+        Nothing -> return []
+        Just v -> foldlC f v
+    f x y = force $ zipWith (U.zipWith (+)) x y
+{-# INLINE binCount #-}
+
+filterBin :: Monad m
+          => Double
+          -> Double
+          -> Int
+          -> [(B.ByteString, U.Vector Int)] -> ConduitT i BED m ()
+filterBin lo hi res rc = forM_ rc $ \(chr, vec) -> flip U.imapM_ vec $ \i x -> 
+    when (fromIntegral x > lo && fromIntegral x < hi) $
+        yield $ BED chr (i * res) ((i+1) * res) Nothing (Just x) Nothing
+{-# INLINE filterBin #-}
+
+-- | Make the read count matrix.
+mkCountMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+             => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
+             -> WorkflowConfig config (SCATACSeq S (File tags 'Other))
+mkCountMatrix input = do
+    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_readcount.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
+        regions <- runResourceT $ runConduit $
+            streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
+        let bedTree = bedToTree undefined $ zip regions [0::Int ..]
+            nBin = length regions
+            header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+        runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
+            groupBy ((==) `on` (^.name)) .|
+            mapC (tagCountPerCell bedTree nBin) .|
+            (yield header >> mapC (uncurry showSparseVector)) .|
+            unlinesAsciiC .| gzip .| sinkFile output
         return $ emptyFile & location .~ output )
 
-countTags :: Elem 'Gzip tags ~ 'True
-          => File tags 'Bed
-          -> [(B.ByteString, Int)]
-          -> Int  -- ^ resolution
-          -> Int  -- ^ cutoff
-          -> ConduitT i BED (ResourceT IO) ()
-countTags input chrSize res cutoff = do
-    (rc, _) <- liftIO $ runResourceT $ runConduit $
-        streamBedGzip (input^.location) .| countTagsBinBed res beds
-    forM_ (zip chrSize rc) $ \((chr, _), vec) -> flip U.imapM_ vec $ \i x -> 
-            when (x >= cutoff) $ yield $ BED chr (i * res) ((i+1) * res)
-                Nothing (Just $ fromIntegral (x::Int)) Nothing
+tagCountPerCell :: BEDTree Int -> Int -> [BED] -> (B.ByteString, U.Vector Int)
+tagCountPerCell regions n input = (cellBc, rc)
   where
-    beds = map (\(chr, n) -> BED3 chr 0 n) chrSize
+    rc = U.create $ do
+        vec <- UM.replicate n 0
+        forM_ input $ \x -> forM_ (IM.elems $ intersecting regions $ toSite x) $
+            UM.unsafeModify vec (+1)
+        return vec
+    cellBc = fromJust $ head input^.name
+    toSite bed = case bed^.strand of
+        Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
+        _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
 
-tagCountPerCell :: Monad m
-                => [BED3] -- ^ Open regions
-                -> ConduitT [BED] (U.Vector Int) m ()
-tagCountPerCell regions = mapC $ \input -> U.create $ do
-    vec <- UM.replicate n 0
-    forM_ input $ \x -> forM_ (IM.elems $ intersecting bedTree x) $
-        UM.unsafeModify vec (+1)
-    return vec
+showSparseVector :: B.ByteString -> U.Vector Int -> B.ByteString
+showSparseVector cellBc = B.intercalate "\t" . (cellBc:) . map f . U.toList .
+    U.imapMaybe (\i v -> if v /= 0 then Just (i,v) else Nothing)
   where
-    bedTree = bedToTree undefined $ zip regions [0::Int ..]
-    n = length regions
-
-{-
-mkBaseMap :: FilePath   -- ^ Bam file
-          -> [(B.ByteString, Int)]
-          -> Int  -- ^ resolution
-          -> IO (M.HashMap B.ByteString (U.Vector Bool))
-mkBaseMap input chrSize res = runResourceT (
-    runConduit $ streamBam input .| bamToBedC .| baseMap chrSize) >>=
-    (\BaseMap x -> fmap (downSample res) x) 
-
--- | Down-sample basemap to given resolution by summing.
-downSample :: Int    -- ^ Resolution, must be the multiple of 8.
-           -> BitVector
-           -> U.Vector Int
-downSample res (BitVector _ v) = U.generate n $ \i ->
-    U.sum $ U.slice (i * step) step v
-  where
-    step = res `div` 8
-    n = if U.length v `mod` step == 0
-        then U.length v `div` step
-        else U.length v `div` step + 1
-{-# INLINE downSample #-}
--}
+    f (i,v) = fromJust (packDecimal i) <> "," <> fromJust (packDecimal v)
+{-# INLINE showSparseVector #-}

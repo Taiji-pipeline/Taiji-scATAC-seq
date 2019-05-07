@@ -76,8 +76,6 @@ findMotifs (chr, openChromatin, motifFl) = do
         return r
 {-# INLINE findMotifs #-}
 
--- mkBigBed :: File '[Gzip] 'Bed
-
 getOpenRegion :: SCATACSeqConfig config
               => [SCATACSeq S (File '[NameSorted, Gzip] 'Bed)]
               -> WorkflowConfig config (File '[Gzip] 'Bed)

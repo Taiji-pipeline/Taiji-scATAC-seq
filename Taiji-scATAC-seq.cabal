@@ -35,6 +35,7 @@ library
                      , binary
                      , bio-pipelines
                      , bytestring
+                     , bytestring-lexing
                      , bio-experiments
                      , bioinformatics-toolkit >= 0.8.0
                      , conduit-extra
@@ -49,6 +50,7 @@ library
                      , filepath
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
+                     , inline-r
                      , lens
                      , mtl
                      , SciFlow >= 0.6.2
