@@ -6,14 +6,13 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
     , filterBamSort
-    , rmDuplicates
+    , qualityControl
     ) where
 
 import Bio.Data.Experiment
 import Bio.Data.Bed
 import Bio.Data.Bam
 import           Bio.HTS
-import qualified Data.ByteString.Char8 as B
 import Conduit
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
@@ -23,7 +22,6 @@ import Bio.Pipeline hiding (frip)
 import Data.Function (on)
 import Data.Either (fromRight)
 import qualified Data.Text as T
-import qualified Data.Map.Strict as M
 import Data.Maybe
 import Text.Printf (printf)
 import Scientific.Workflow
@@ -31,6 +29,7 @@ import Control.Monad.Reader (asks, liftIO)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 
 tagAlign :: SCATACSeqConfig config
          => SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq)
@@ -57,16 +56,20 @@ filterBamSort input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . filterBam "./" output
 
-rmDuplicates :: SCATACSeqConfig config
+qualityControl :: SCATACSeqConfig config
              => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
              -> WorkflowConfig config
-                (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, File '[] 'Tsv))
-rmDuplicates input = do
+                (SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
+                             , File '[NameSorted] 'Bam
+                             , File '[] 'Tsv ))
+qualityControl input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
     anno <- fromJust <$> asks _scatacseq_annotation 
     let output1 = printf "%s/%s_rep%d_filt.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         output2 = printf "%s/%s_rep%d_stat.txt" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        mitoReads = printf "%s/%s_rep%d_mito.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         f fl = do
             header <- getBamHeader fl
@@ -74,12 +77,18 @@ rmDuplicates input = do
             _ <- runResourceT $ runConduit $ streamBam fl .|
                 groupBy ((==) `on` (extractBarcode . queryName)) .|
                 mapC (filterReads header promoters) .|
-                zipSinks 
-                    (concatMapC filterCell .| concatC .| sinkFileBedGzip output1)
-                    (mapC (showStat . snd) .| unlinesAsciiC .| sinkFile output2)
+                zipSinks ( zipSinks (tagsOutputSink output1)
+                    (concatMapC (snd . fst) .| sinkBam mitoReads header) )
+                    (qcFileSink output2)
             return ( location .~ output1 $ emptyFile
+                   , location .~ mitoReads $ emptyFile
                    , location .~ output2 $ emptyFile )
     input & replicates.traverse.files %%~ liftIO . f . (^.location)
+  where
+    tagsOutputSink out = concatMapC (fmap fst . filterCell) .|
+        concatC .| sinkFileBedGzip out
+    qcFileSink out = mapC (showStat . snd) .| unlinesAsciiC .| sinkFile out
+
 
 filterCell :: (a, Stat) -> Maybe a 
 filterCell (x, Stat{..})
@@ -87,72 +96,19 @@ filterCell (x, Stat{..})
     | otherwise = Nothing
 {-# INLINE filterCell #-}
 
-data Stat = Stat
-    { _cell_barcode :: B.ByteString
-    , _dup_rate :: Double
-    , _mito_rate :: Double
-    , _frip :: Double
-    , _uniq_reads :: Int }
-
-showStat :: Stat -> B.ByteString
-showStat (Stat a b c d e) = B.intercalate "\t" $
-    [ a, B.pack $ show b, B.pack $ show c, B.pack $ show d, B.pack $ show e]
-{-# INLINE showStat #-}
-
 -- | Remove duplicated and chrM reads. 
 filterReads :: BAMHeader
             -> BEDTree a   -- ^ Promoter
             -> [BAM]
-            -> ([BED], Stat)
-filterReads hdr promoters bam = runState f $ Stat bc 0 0 0 0
+            -> (([BED], [BAM]), Stat)
+filterReads hdr promoters bam = runState filterFn $ Stat bc 0 0 0 0 []
   where
-    f = mapMaybe (fmap changeName . bamToBed hdr) <$> rmDup bam >>=
-        rmChrM >>= frip promoters >>= final
-    final x = do
-        modify' $ \s -> s{_uniq_reads=length x}
-        return x
+    filterFn = do
+        (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
+        let beds = mapMaybe (fmap changeName . bamToBed hdr) tags
+        frip promoters beds
+        totalReads beds
+        return (beds, mito)
     bc = extractBarcode $ queryName $ head bam
     changeName x = name .~ Just bc $ x
 {-# INLINE filterReads #-}
-
--- | Remove duplicates for reads originated from a single cell.
-rmDup :: [BAM] -> State Stat [BAM]
-rmDup input = do
-    modify' $ \x -> x{_dup_rate = dupRate}
-    return output
-  where
-    output = map snd $ M.elems $ M.fromListWith collapse $
-        map (\b -> (getKey b, (getSc b, b))) input
-    collapse x y | fst x > fst y = x
-                 | otherwise = y
-    getKey b | not (hasMultiSegments flg) || isNextUnmapped flg = singleKey
-             | otherwise = pairKey
-      where
-        (singleKey, pairKey) = makeKey (const Nothing) b
-        flg = flag b
-    getSc b = case queryAuxData ('m', 's') b of
-        Just (AuxInt x) -> x + fromJust (sumQual 15 b)
-        _ -> fromJust $ sumQual 15 b
-    dupRate = 1 - fromIntegral (length output) / fromIntegral (length input)
-{-# INLINE rmDup #-}
-
--- | Remove chrM reads.
-rmChrM :: [BED] -> State Stat [BED]
-rmChrM input = do
-    modify' $ \x -> x{_mito_rate = chrMRate}
-    return output
-  where
-    output = filter notChrM input
-    chrMRate = 1 - fromIntegral (length output) / fromIntegral (length input)
-    notChrM x = x^.chrom /= "chrM" && x^.chrom /= "M"
-{-# INLINE rmChrM #-}
-
--- | Fraction of Reads in Promoter
-frip :: BEDTree a -> [BED] -> State Stat [BED]
-frip promoter input = do
-    modify' $ \x -> x{_frip=rate}
-    return input
-  where
-    rate = fromIntegral (length $ filter (isIntersected promoter) input) /
-        fromIntegral (length input)
-{-# INLINE frip #-}

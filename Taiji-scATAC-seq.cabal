@@ -27,6 +27,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
                        Taiji.Pipeline.SC.ATACSeq.Functions.Motif
                        Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+                       Taiji.Pipeline.SC.ATACSeq.Functions.QC
                        Taiji.Pipeline.SC.ATACSeq.Functions.SnapTools
                        Taiji.Pipeline.SC.ATACSeq.Types
 

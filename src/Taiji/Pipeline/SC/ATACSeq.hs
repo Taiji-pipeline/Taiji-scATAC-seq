@@ -25,16 +25,16 @@ builder = do
             "bwa mem -M -k 32."
     nodePS 1 "Filter_Bam" 'filterBamSort $ do
         note .= "Remove low quality tags using: samtools -F 0x70c -q 30"
-    nodePS 1 "Remove_Duplicates" 'rmDuplicates $ return ()
+    nodePS 1 "QC" 'qualityControl $ return ()
     nodePS 1 "Get_Bins" 'getBins $ return ()
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
-         , "Remove_Duplicates" ]
+         , "QC" ]
 
     node' "Get_Bed" [| \(input, x) -> getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $
         submitToRemote .= Just False
     nodePS 1 "Make_Count_Matrix" 'mkCountMatrix $ return ()
-    [ "Download_Data", "Remove_Duplicates"] ~> "Get_Bed"
+    [ "Download_Data", "QC"] ~> "Get_Bed"
     path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
 
     nodePS 1 "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
@@ -48,5 +48,6 @@ builder = do
 
     -- Snap pipeline
     nodePS 1 "Snap_Pre" 'snapPre $ return ()
-    path ["Get_Bed", "Snap_Pre"]
+    nodePS 1 "Snap_Cluster" 'getClusters $ return ()
+    path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
 
