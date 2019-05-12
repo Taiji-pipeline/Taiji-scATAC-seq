@@ -101,7 +101,7 @@ filterReads :: BAMHeader
             -> BEDTree a   -- ^ Promoter
             -> [BAM]
             -> (([BED], [BAM]), Stat)
-filterReads hdr promoters bam = runState filterFn $ Stat bc 0 0 0 0 []
+filterReads hdr promoters bam = runState filterFn $ Stat bc 0 0 0 0
   where
     filterFn = do
         (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr

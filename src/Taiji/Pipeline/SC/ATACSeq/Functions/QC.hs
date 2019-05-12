@@ -30,8 +30,7 @@ data Stat = Stat
     , _dup_rate :: Double
     , _mito_rate :: Double
     , _frip :: Double
-    , _uniq_reads :: Int
-    , _base_coverage :: [(Int, Int)] }
+    , _uniq_reads :: Int }
 
 showStat :: Stat -> B.ByteString
 showStat Stat{..} = B.intercalate "\t" $
@@ -39,17 +38,13 @@ showStat Stat{..} = B.intercalate "\t" $
     , B.pack $ show _dup_rate
     , B.pack $ show _mito_rate
     , B.pack $ show _frip
-    , B.pack $ show _uniq_reads
-    , B.intercalate ":" $ map (B.pack . show) _base_coverage ]
+    , B.pack $ show _uniq_reads ]
 {-# INLINE showStat #-}
 
-baseCoverageStat :: BAMHeader -> [BAM] -> State Stat [BAM]
-baseCoverageStat header bam = do
-    modify' $ \x -> x{_base_coverage = res}
-    return bam
+baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
+baseCoverageStat header bam = sort $ I.toList $ runIdentity $ runConduit $
+    mergeBedWith counts beds .| foldlC (I.unionWith (+)) I.empty
   where
-    res = sort $ I.toList $ runIdentity $ runConduit $
-        mergeBedWith counts beds .| foldlC (I.unionWith (+)) I.empty
     beds = runIdentity $ runConduit $
         yieldMany (sortBy (comparing queryName) bam) .|
         toBed header .| sinkList
