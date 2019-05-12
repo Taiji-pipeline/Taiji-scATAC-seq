@@ -35,10 +35,11 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 findMotifsPre :: SCATACSeqConfig config
               => Double
-              -> File '[Gzip] 'Bed
+              -> Maybe (File '[Gzip] 'Bed)
               -> WorkflowConfig config
                   [(B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)]
-findMotifsPre p region = do
+findMotifsPre _ Nothing = return []
+findMotifsPre p (Just region) = do
     motifFile <- fromMaybe (error "Motif file is not specified!") <$>
         asks _scatacseq_motif_file
     genome <- getGenomeIndex
@@ -76,19 +77,22 @@ findMotifs (chr, openChromatin, motifFl) = do
         return r
 {-# INLINE findMotifs #-}
 
+-- | Identify all accessiable regions.
 getOpenRegion :: SCATACSeqConfig config
               => [SCATACSeq S (File '[NameSorted, Gzip] 'Bed)]
-              -> WorkflowConfig config (File '[Gzip] 'Bed)
-getOpenRegion inputs = do
-    dir <- asks _scatacseq_output_dir >>= getPath
-    genome <- asks (fromJust . _scatacseq_genome_index)
-    chrSize <- liftIO $ withGenome genome $ return . getChrSizes
-    let output = dir <> "/accessible_region.bed.gz"
-        source = forM_ inputs $ \input ->
-            streamBedGzip $ input^.replicates._2.files.location
-    runResourceT $ runConduit $ source .|
-        (baseMap chrSize >>= baseMapToRegion) .| sinkFileBedGzip output
-    return $ emptyFile & location .~ output
+              -> WorkflowConfig config (Maybe (File '[Gzip] 'Bed))
+getOpenRegion inputs 
+    | null inputs = return Nothing
+    | otherwise = do
+        dir <- asks _scatacseq_output_dir >>= getPath
+        genome <- asks (fromJust . _scatacseq_genome_index)
+        chrSize <- liftIO $ withGenome genome $ return . getChrSizes
+        let output = dir <> "/accessible_region.bed.gz"
+            source = forM_ inputs $ \input ->
+                streamBedGzip $ input^.replicates._2.files.location
+        runResourceT $ runConduit $ source .|
+            (baseMap chrSize >>= baseMapToRegion) .| sinkFileBedGzip output
+        return $ Just $ emptyFile & location .~ output
 {-# INLINE getOpenRegion #-}
 
 baseMapToRegion :: Monad m => BaseMap -> ConduitT i BED3 m ()

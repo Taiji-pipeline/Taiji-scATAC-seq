@@ -29,10 +29,10 @@ readInput _ = do
 downloadData :: SCATACSeqConfig config
              => [RAWInput]
              -> WorkflowConfig config [RAWInput]
-downloadData input = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Download"))
-    liftIO $ input & traverse.replicates.traverse.files.traverse %%~
-        downloadFiles dir
+downloadData input = input & traverse.replicates.traverse.files.traverse %%~
+    ( \fl -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Download"))
+        liftIO $ downloadFiles dir fl )
 
 getFastq :: [RAWInput]
          -> [ SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq) ]

@@ -63,7 +63,7 @@ library
                      , shelly
                      , statistics >= 0.15.0.0
                      , vector
-                     , Taiji-types
+                     , Taiji-utils
   default-language:    Haskell2010
 
 executable taiji-scatac-seq
