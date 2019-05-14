@@ -51,3 +51,9 @@ builder = do
     nodePS 1 "Snap_Cluster" 'getClusters $ return ()
     path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
 
+
+    node' "Make_Bed_Cluster_Prep" [| uncurry zipExp |] $ return ()
+    nodePS 1 "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
+    nodePS 1 "Call_Peak_Cluster" 'callPeakCluster $ return ()
+    ["Get_Bed", "Snap_Cluster"] ~> "Make_Bed_Cluster_Prep"
+    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster", "Call_Peak_Cluster"]
