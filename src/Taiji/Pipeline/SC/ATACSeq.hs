@@ -54,6 +54,13 @@ builder = do
 
     node' "Make_Bed_Cluster_Prep" [| uncurry zipExp |] $ return ()
     nodePS 1 "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
+    nodePS 1 "Subsample_Bed_Cluster" 'subSampleClusterBed $ return ()
+    node' "Call_Peak_Cluster_Prep" [| concatMap split |] $ return ()
     nodePS 1 "Call_Peak_Cluster" 'callPeakCluster $ return ()
     ["Get_Bed", "Snap_Cluster"] ~> "Make_Bed_Cluster_Prep"
-    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster", "Call_Peak_Cluster"]
+    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster",
+        "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
+
+    nodePS 1 "Estimate_Gene_Expr" 'estimateExpr $ return ()
+    nodeS "Make_Expr_Table" 'mkExprTable $ return ()
+    path ["Call_Peak_Cluster_Prep", "Estimate_Gene_Expr", "Make_Expr_Table"]

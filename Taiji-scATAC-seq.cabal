@@ -49,6 +49,7 @@ library
                      , deepseq
                      , data-default
                      , data-ordlist
+                     , double-conversion
                      , filepath
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
