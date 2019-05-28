@@ -25,7 +25,9 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
                        Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
-                       Taiji.Pipeline.SC.ATACSeq.Functions.SnapTools
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
                        Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
                        Taiji.Pipeline.SC.ATACSeq.Functions.Motif

@@ -2,10 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
-    ( CellCluster(..)
-    , readCellCluster
-    , writeCellCluster
-    , extractBarcode
+    ( extractBarcode
     , readPromoters
     , getGenomeIndex
     , CutSite(..)
@@ -45,23 +42,6 @@ import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
 
 import Taiji.Pipeline.SC.ATACSeq.Types
-
-data CellCluster = CellCluster
-    { _cluster_name :: B.ByteString
-    , _cluster_member :: [B.ByteString] }
-
-writeCellCluster :: FilePath -> [CellCluster] -> IO ()
-writeCellCluster output = B.writeFile output . B.unlines . map showCellCluster
-
-readCellCluster :: FilePath -> IO [CellCluster]
-readCellCluster input = map f . B.lines <$> B.readFile input
-  where
-    f xs = let [nm, members] = B.split '\t' xs
-           in CellCluster nm $ B.split ',' members
-
-showCellCluster :: CellCluster -> B.ByteString
-showCellCluster CellCluster{..} = _cluster_name <> "\t" <>
-    B.intercalate "," _cluster_member
 
 -------------------------------------------------------------------------------
 -- BASIC

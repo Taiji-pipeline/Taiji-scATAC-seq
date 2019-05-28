@@ -74,7 +74,7 @@ mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
     mapC (\x -> (fromJust $ head x ^. name, x))
 {-# INLINE mkCutSiteIndex_ #-}
 
--- | Get bins
+-- | Get candidate bins.
 getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
         => SCATACSeq S (File tags 'Bed)
         -> WorkflowConfig config
@@ -86,20 +86,22 @@ getBins input = do
     let output = printf "%s/%s_rep%d_bin_idx.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\fl -> do
-        (n, rc) <- binCount fl chrSize 5000
-        let lo = fromIntegral n * 0.001
+        (n, rc) <- binCount fl chrSize res
+        let lo = fromIntegral n * 0.05
             hi = fromIntegral n * 0.95
         runResourceT $ runConduit $
-            filterBin lo hi 5000 (zip (map fst chrSize) rc) .|
+            filterBin lo hi res (zip (map fst chrSize) rc) .|
             sinkFileBedGzip output
         return $ (fl, emptyFile & location .~ output, n) )
+  where
+    res = 5000
 
 -- | Divide the genome into bins and count the tags.
 binCount :: Elem 'Gzip tags ~ 'True
          => File tags 'Bed    -- ^ Tags
          -> [(B.ByteString, Int)]  -- ^ chromosome sizes
          -> Int  -- ^ resolution
-         -> IO (Int, [U.Vector Int])
+         -> IO (Int, [U.Vector Int])   -- ^ Total counts and count for each chromosome
 binCount input chrSize res = runResourceT $ runConduit $
     inputWithGroupCell .| zipSinks lengthC (mapC countTags .| fold)
   where
@@ -145,7 +147,10 @@ mkCountMatrix input = do
             unlinesAsciiC .| gzip .| sinkFile output
         return $ emptyFile & location .~ output )
 
-tagCountPerCell :: BEDTree Int -> Int -> [BED] -> (B.ByteString, U.Vector Int)
+tagCountPerCell :: BEDTree Int   -- ^ Regions
+                -> Int           -- ^ length of vector
+                -> [BED]         -- ^ Tags
+                -> (B.ByteString, U.Vector Int)
 tagCountPerCell regions n input = (cellBc, rc)
   where
     rc = U.create $ do
@@ -157,6 +162,7 @@ tagCountPerCell regions n input = (cellBc, rc)
     toSite bed = case bed^.strand of
         Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
         _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
+{-# INLINE tagCountPerCell #-}
 
 showSparseVector :: B.ByteString -> U.Vector Int -> B.ByteString
 showSparseVector cellBc = B.intercalate "\t" . (cellBc:) . map f . U.toList .
@@ -164,6 +170,7 @@ showSparseVector cellBc = B.intercalate "\t" . (cellBc:) . map f . U.toList .
   where
     f (i,v) = fromJust (packDecimal i) <> "," <> fromJust (packDecimal v)
 {-# INLINE showSparseVector #-}
+
 
 estimateExpr :: SCATACSeqConfig config
              => (SCATACSeq S (B.ByteString, File '[Gzip] 'Bed))

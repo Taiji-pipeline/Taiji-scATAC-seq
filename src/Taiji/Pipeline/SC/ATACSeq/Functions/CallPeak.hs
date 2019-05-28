@@ -23,7 +23,7 @@ import qualified Data.ByteString.Char8 as B
 import           Scientific.Workflow
 import Shelly hiding (FilePath)
 
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import Taiji.Types
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 callPeakCluster :: SCATACSeqConfig config
@@ -43,18 +43,17 @@ callPeakCluster input = do
 -- | Extract BEDs for each cluster.
 mkCellClusterBed :: SCATACSeqConfig config
                  => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
-                                , File '[] 'Other )  -- ^ clusters
+                                , [CellCluster] )  -- ^ clusters
                  -> WorkflowConfig config
                     (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed, Int)])
 mkCellClusterBed input = do
     let idRep = asDir $ "/Bed/" <> T.unpack (input^.eid) <>
             "_rep" <> show (input^.replicates._1)
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
-    input & replicates.traverse.files %%~ liftIO . ( \(bed, cluster) -> do
-        cs <- readCellCluster $ cluster^.location
+    input & replicates.traverse.files %%~ liftIO . ( \(bed, cs) -> do
         let sinks = sequenceConduits $ flip map cs $ \CellCluster{..} -> do
                 let output = dir ++ "/" ++ B.unpack _cluster_name ++ ".bed.gz"
-                    cells = S.fromList _cluster_member
+                    cells = S.fromList $ map _cell_id _cluster_member
                     fl = location .~ output $ emptyFile
                 (_, depth) <- filterC (f cells) .|
                     zipSinks (sinkFileBedGzip output) lengthC

@@ -12,13 +12,9 @@ extra-deps:
 - git:     https://github.com/Taiji-pipeline/Taiji-ATAC-seq.git
   commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
 
-- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
-  commit:  576a427243a3003f823d7e0ed98d97035e0fa136
-
-- git:     https://github.com/kaizhang/bioinformatics-toolkit.git
-  commit:  75a8a813410a5c8267a59794c875f4d277ceb1be
-  subdirs: 
-    - bioinformatics-toolkit
+#- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
+#  commit:  b7abca8e1df00790914dce68af2ec11cf62ee934
+- '../Taiji-utils'
 
 - git:     https://github.com/Taiji-pipeline/bio-pipelines.git
   commit:  3b756e3ff0cb31c4e9ed8a1cc8d24c2ea6951af6
@@ -26,7 +22,10 @@ extra-deps:
 - git:     https://github.com/Taiji-pipeline/bio-experiments.git
   commit:  5fd7472babf427606058594c089abf689b7b89f4
 
+- bioinformatics-toolkit-0.8.0
 - HsHTSLib-1.9.2
 - drmaa-0.2.0
 - clustering-0.4.1
 - SciFlow-0.6.2
+- bbi-0.1.1
+- jmacro-0.6.16

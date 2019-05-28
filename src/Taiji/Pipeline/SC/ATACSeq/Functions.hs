@@ -4,7 +4,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Motif
     , module Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
-    , module Taiji.Pipeline.SC.ATACSeq.Functions.SnapTools
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ) where
 
 import Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
@@ -12,4 +12,4 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Align
 import Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
 import Taiji.Pipeline.SC.ATACSeq.Functions.Motif
 import Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
-import Taiji.Pipeline.SC.ATACSeq.Functions.SnapTools
+import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering

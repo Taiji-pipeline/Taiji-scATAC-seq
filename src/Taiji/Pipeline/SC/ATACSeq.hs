@@ -48,7 +48,7 @@ builder = do
 
     -- Snap pipeline
     nodePS 1 "Snap_Pre" 'snapPre $ return ()
-    nodePS 1 "Snap_Cluster" 'getClusters $ return ()
+    nodeP 1 "Snap_Cluster" 'getClusters $ return ()
     path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
 
 
