@@ -12,7 +12,7 @@ import           Bio.Pipeline
 import Control.Monad (forM)
 import Bio.Data.Experiment
 import qualified Data.HashSet as S
-import Control.Monad.Reader (asks, liftIO)
+import Control.Monad.Reader (ReaderT, asks, liftIO)
 import Data.Maybe
 import Control.Lens
 import Bio.Data.Bed
@@ -20,7 +20,6 @@ import Conduit
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
-import           Scientific.Workflow
 import Shelly hiding (FilePath)
 
 import Taiji.Types
@@ -28,7 +27,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 callPeakCluster :: SCATACSeqConfig config
                 => (SCATACSeq S (B.ByteString, File '[Gzip] 'Bed))
-                -> WorkflowConfig config
+                -> ReaderT config IO
                     (SCATACSeq S (B.ByteString, File '[] 'NarrowPeak))
 callPeakCluster input = do
     let idRep = asDir $ "/Peaks/" <> T.unpack (input^.eid) <>
@@ -44,7 +43,7 @@ callPeakCluster input = do
 mkCellClusterBed :: SCATACSeqConfig config
                  => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
                                 , [CellCluster] )  -- ^ clusters
-                 -> WorkflowConfig config
+                 -> ReaderT config IO
                     (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed, Int)])
 mkCellClusterBed input = do
     let idRep = asDir $ "/Bed/" <> T.unpack (input^.eid) <>
@@ -67,7 +66,7 @@ mkCellClusterBed input = do
 -- | Subsampling bed files.
 subSampleClusterBed :: SCATACSeqConfig config
                  => (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed, Int)])
-                 -> WorkflowConfig config
+                 -> ReaderT config IO
                     (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed)])
 subSampleClusterBed input = do
     let idRep = asDir $ "/Bed/" <> T.unpack (input^.eid) <>

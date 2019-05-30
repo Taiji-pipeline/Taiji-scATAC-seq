@@ -24,8 +24,7 @@ import Data.Either (fromRight)
 import qualified Data.Text as T
 import Data.Maybe
 import Text.Printf (printf)
-import Scientific.Workflow
-import Control.Monad.Reader (asks, liftIO)
+import Control.Monad.Reader (ReaderT, asks, liftIO)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -33,7 +32,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 
 tagAlign :: SCATACSeqConfig config
          => SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq)
-         -> WorkflowConfig config ( SCATACSeq S (File '[PairedEnd] 'Bam) )
+         -> ReaderT config IO ( SCATACSeq S (File '[PairedEnd] 'Bam) )
 tagAlign input = do
     dir <- asks ((<> "/Bam") . _scatacseq_output_dir) >>= getPath
     idx <- asks (fromJust . _scatacseq_bwa_index)
@@ -48,7 +47,7 @@ tagAlign input = do
 
 filterBamSort :: SCATACSeqConfig config
               => SCATACSeq S (File '[PairedEnd] 'Bam)
-              -> WorkflowConfig config
+              -> ReaderT config IO
                   (SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam))
 filterBamSort input = do
     dir <- asks ((<> "/Bam") . _scatacseq_output_dir) >>= getPath
@@ -58,7 +57,7 @@ filterBamSort input = do
 
 qualityControl :: SCATACSeqConfig config
              => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
-             -> WorkflowConfig config
+             -> ReaderT config IO
                 (SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
                              , File '[NameSorted] 'Bam
                              , File '[] 'Tsv ))

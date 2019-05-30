@@ -1,4 +1,4 @@
-resolver: nightly-2019-05-06
+resolver: nightly-2019-05-22
 
 flags:
   Taiji-scATAC-seq:
@@ -12,20 +12,35 @@ extra-deps:
 - git:     https://github.com/Taiji-pipeline/Taiji-ATAC-seq.git
   commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
 
-#- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
-#  commit:  b7abca8e1df00790914dce68af2ec11cf62ee934
-- '../Taiji-utils'
+- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
+  commit:  21feefd4dae98256695bf71e563d42a5cd85f067
 
 - git:     https://github.com/Taiji-pipeline/bio-pipelines.git
-  commit:  3b756e3ff0cb31c4e9ed8a1cc8d24c2ea6951af6
+  commit:  ab7a4c19a882168c3038b10d3ba4020a24595bda
 
 - git:     https://github.com/Taiji-pipeline/bio-experiments.git
-  commit:  5fd7472babf427606058594c089abf689b7b89f4
+  commit:  1d5fb05157fd308278e19d048e56068e96f17d76
 
+- git:     https://github.com/haskell-distributed/distributed-static.git
+  commit:  d34b5139a0c349fbda6ffea5fbbe960c3c91aeb1
+
+- git:     https://github.com/haskell-distributed/network-transport-tcp.git
+  commit:  5a08e32c73093c1338c09a17a95c456568394d48
+
+- git:     https://github.com/haskell-distributed/distributed-process.git
+  commit:  660d554f6acd2dba8b605c84e8fa69e45708bc14
+
+- git:     https://github.com/kaizhang/SciFlow.git
+  commit:  0c909a2ac16b42e821e22e5a4b6c58e8b752f4ff
+  subdirs:
+      - SciFlow
+      - SciFlow-app
+      - SciFlow-drmaa
+
+- distributed-process-monad-control-0.5.1.3
 - bioinformatics-toolkit-0.8.0
 - HsHTSLib-1.9.2
-- drmaa-0.2.0
+- drmaa-0.3.0
 - clustering-0.4.1
-- SciFlow-0.6.2
 - bbi-0.1.1
 - jmacro-0.6.16

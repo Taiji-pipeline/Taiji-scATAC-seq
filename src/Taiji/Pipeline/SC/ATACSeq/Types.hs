@@ -7,7 +7,7 @@ module Taiji.Pipeline.SC.ATACSeq.Types
     , SCATACSeqConfig(..)
     ) where
 
-import           Data.Serialize                (Serialize (..))
+import           Data.Binary (Binary(..))
 import           Data.Aeson
 import Bio.Data.Experiment.Types
 import Bio.Data.Experiment.Replicate
@@ -24,8 +24,8 @@ instance FromJSON (container (Replicate file)) =>
 instance ToJSON (container (Replicate file)) =>
     ToJSON (SCATACSeq container file)
 
-instance Serialize (container (Replicate file)) =>
-    Serialize (SCATACSeq container file)
+instance Binary (container (Replicate file)) =>
+    Binary (SCATACSeq container file)
 
 class SCATACSeqConfig config where
     _scatacseq_output_dir :: config -> Directory

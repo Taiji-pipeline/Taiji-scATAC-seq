@@ -7,12 +7,16 @@ module Main where
 import           Bio.Pipeline.CallPeaks
 import           Bio.Pipeline.Utils
 import           Control.Lens                  ((&), (.~))
-import           Data.Aeson                    (FromJSON, ToJSON)
-import           Data.Default
+import           Data.Aeson                    (FromJSON)
+import Data.Binary (Binary)
 import           GHC.Generics                  (Generic)
-import           Scientific.Workflow
-import           Scientific.Workflow.Main      (MainOpts (..), defaultMainOpts,
-                                                mainWith)
+import Data.Default
+
+import           Control.Workflow
+import qualified Control.Workflow.Coordinator.Drmaa as D
+import Control.Workflow.Main
+import Data.Proxy (Proxy(..))
+
 import           Taiji.Pipeline.SC.ATACSeq        (builder)
 import Taiji.Pipeline.SC.ATACSeq.Types
 
@@ -26,31 +30,32 @@ data SCATACSeqOpts = SCATACSeqOpts
     , annotation :: Maybe FilePath
     } deriving (Generic)
 
+instance Binary SCATACSeqOpts
+instance FromJSON SCATACSeqOpts
+
 instance SCATACSeqConfig SCATACSeqOpts where
     _scatacseq_output_dir = output_dir
-    _scatacseq_bwa_index = bwa_index
+    _scatacseq_bwa_index = fmap (++ "/genome.fa") . bwa_index
     _scatacseq_genome_fasta = genome
     _scatacseq_input = input
     _scatacseq_callpeak_opts _ = def & mode .~ NoModel (-100) 200
+                                   & cutoff .~ QValue 0.05
+                                   & callSummits .~ True
     _scatacseq_genome_index = genome_index
     _scatacseq_motif_file = motif_file
     _scatacseq_annotation = annotation
 
-instance Default SCATACSeqOpts where
-    def = SCATACSeqOpts
-        { output_dir = asDir "output"
-        , bwa_index = Nothing
-        , genome_index = Nothing
-        , input = "input.yml"
-        , motif_file = Nothing
-        , genome = Nothing
-        , annotation = Nothing
-        }
+decodeDrmaa :: String -> Int -> FilePath -> IO D.DrmaaConfig
+decodeDrmaa ip port _ = D.getDefaultDrmaaConfig
+    ["remote", "--ip", ip, "--port", show port]
 
-instance FromJSON SCATACSeqOpts
-instance ToJSON SCATACSeqOpts
+build "wf" [t| SciFlow SCATACSeqOpts |] builder
 
-mainWith defaultMainOpts
-    { programHeader = "Taiji-ATAC-Seq"
-    , workflowConfigType = Just ''SCATACSeqOpts
-    } builder
+main :: IO ()
+main = defaultMain "" cmd wf
+  where
+    cmd = [ runParser decodeDrmaa
+          , viewParser
+          , deleteParser
+          , remoteParser (Proxy :: Proxy D.Drmaa) ]
+

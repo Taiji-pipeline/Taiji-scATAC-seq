@@ -11,14 +11,13 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Motif
 
 import Bio.Data.Experiment
 import Control.Lens
-import Scientific.Workflow
 import Bio.Seq.IO (withGenome, getChrSizes)
 import Bio.Data.Bed.Utils
 import           Bio.Pipeline
 import           Bio.Pipeline.Instances ()
 import Bio.Data.Bed
 import Data.Binary
-import Control.Monad.Reader (asks)
+import Control.Monad.Reader (asks, ReaderT)
 import           Bio.Motif                     hiding (score)
 import Data.Maybe
 import Conduit
@@ -36,7 +35,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 findMotifsPre :: SCATACSeqConfig config
               => Double
               -> Maybe (File '[Gzip] 'Bed)
-              -> WorkflowConfig config
+              -> ReaderT config IO
                   [(B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)]
 findMotifsPre _ Nothing = return []
 findMotifsPre p (Just region) = do
@@ -52,7 +51,7 @@ findMotifsPre p (Just region) = do
 -- | Identify motif binding sites.
 findMotifs :: SCATACSeqConfig config
            => (B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)
-           -> WorkflowConfig config (B.ByteString, Maybe (File '[] 'BigBed))
+           -> ReaderT config IO (B.ByteString, Maybe (File '[] 'BigBed))
 findMotifs (chr, openChromatin, motifFl) = do
     seqIndex <- getGenomeIndex
     chrSize <- liftIO $ withGenome seqIndex $
@@ -80,7 +79,7 @@ findMotifs (chr, openChromatin, motifFl) = do
 -- | Identify all accessiable regions.
 getOpenRegion :: SCATACSeqConfig config
               => [SCATACSeq S (File '[NameSorted, Gzip] 'Bed)]
-              -> WorkflowConfig config (Maybe (File '[Gzip] 'Bed))
+              -> ReaderT config IO (Maybe (File '[Gzip] 'Bed))
 getOpenRegion inputs 
     | null inputs = return Nothing
     | otherwise = do

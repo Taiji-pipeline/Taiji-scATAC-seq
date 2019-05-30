@@ -38,13 +38,12 @@ import Control.Lens
 import           Data.List (foldl1')
 import Control.Arrow (second)
 import           Data.List.Ordered                    (nubSort)
-import Control.Monad.Reader (asks)
+import Control.Monad.Reader (asks, ReaderT)
 import Text.Printf (printf)
 import qualified Data.Text as T
 import Data.Maybe
 import Control.DeepSeq (force)
 import Bio.Data.Bed.Utils
-import Scientific.Workflow
 import Bio.Seq.IO (withGenome, getChrSizes)
 
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -53,7 +52,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 -- | Create the cut site map for every cell.
 mkCutSiteIndex :: SCATACSeqConfig config
                => SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
-               -> WorkflowConfig config (SCATACSeq S (File '[] 'Other))
+               -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 mkCutSiteIndex input = do
     dir <- asks ((<> "/CutSiteIndex") . _scatacseq_output_dir) >>= getPath
     genome <- fromJust <$> asks _scatacseq_genome_index 
@@ -77,7 +76,7 @@ mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
 -- | Get candidate bins.
 getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
         => SCATACSeq S (File tags 'Bed)
-        -> WorkflowConfig config
+        -> ReaderT config IO
             (SCATACSeq S (File tags 'Bed, File tags 'Bed, Int))
 getBins input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
@@ -87,8 +86,8 @@ getBins input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\fl -> do
         (n, rc) <- binCount fl chrSize res
-        let lo = fromIntegral n * 0.05
-            hi = fromIntegral n * 0.95
+        let lo = fromIntegral n * 0.001
+            hi = fromIntegral n * 1
         runResourceT $ runConduit $
             filterBin lo hi res (zip (map fst chrSize) rc) .|
             sinkFileBedGzip output
@@ -101,7 +100,7 @@ binCount :: Elem 'Gzip tags ~ 'True
          => File tags 'Bed    -- ^ Tags
          -> [(B.ByteString, Int)]  -- ^ chromosome sizes
          -> Int  -- ^ resolution
-         -> IO (Int, [U.Vector Int])   -- ^ Total counts and count for each chromosome
+         -> IO (Int, [U.Vector Int])   -- ^ Cell number and count for each chromosome
 binCount input chrSize res = runResourceT $ runConduit $
     inputWithGroupCell .| zipSinks lengthC (mapC countTags .| fold)
   where
@@ -129,7 +128,7 @@ filterBin lo hi res rc = forM_ rc $ \(chr, vec) -> flip U.imapM_ vec $ \i x ->
 -- | Make the read count matrix.
 mkCountMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
-             -> WorkflowConfig config (SCATACSeq S (File tags 'Other))
+             -> ReaderT config IO (SCATACSeq S (File tags 'Other))
 mkCountMatrix input = do
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_readcount.txt.gz" dir (T.unpack $ input^.eid)
@@ -174,7 +173,7 @@ showSparseVector cellBc = B.intercalate "\t" . (cellBc:) . map f . U.toList .
 
 estimateExpr :: SCATACSeqConfig config
              => (SCATACSeq S (B.ByteString, File '[Gzip] 'Bed))
-             -> WorkflowConfig config
+             -> ReaderT config IO
                 (SCATACSeq S (B.ByteString, File '[GeneQuant] 'Tsv))
 estimateExpr input = do
     genes <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust
@@ -203,7 +202,7 @@ mkGeneCount genes = zip (map (original . geneName) genes) . U.toList <$>
 -- | Combine expression data into a table and output
 mkExprTable :: SCATACSeqConfig config
             => [SCATACSeq S (B.ByteString, File '[GeneQuant] 'Tsv)]
-            -> WorkflowConfig config
+            -> ReaderT config IO
                 [SCATACSeq S (File '[GeneQuant] 'Tsv)]
 mkExprTable = mapM mkTable . concatMap split . mergeExp
   where

@@ -14,8 +14,7 @@ import qualified Data.ByteString as BS
 import Bio.Seq.IO
 import Bio.Pipeline
 import Data.Maybe
-import Scientific.Workflow
-import Control.Monad.Reader (asks, liftIO)
+import Control.Monad.Reader (ReaderT, asks, liftIO)
 import Text.Printf (printf)
 import Data.Ord
 import Data.List
@@ -38,7 +37,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 snapPre :: SCATACSeqConfig config
         => SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
-        -> WorkflowConfig config (SCATACSeq S (File '[] 'Other))
+        -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 snapPre input = do
     dir <- asks ((<> "/Snap") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.snap" dir (T.unpack $ input^.eid)
@@ -67,7 +66,7 @@ snapPre input = do
 getClusters :: SCATACSeq S (File '[] 'Other)
             -> IO (SCATACSeq S [CellCluster])
 getClusters input = input & replicates.traverse.files %%~
-    (\fl -> liftIO $ snap (fl^.location))
+    (\fl -> snap (fl^.location))
 
 snap :: FilePath   -- ^ BED File
      -> IO [CellCluster]

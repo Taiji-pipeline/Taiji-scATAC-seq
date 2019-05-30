@@ -30,14 +30,13 @@ import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
 import           Data.List.Ordered       (nubSort)
-import Control.Monad.Reader (asks)
+import Control.Monad.Reader (asks, ReaderT)
 import           Bio.Seq.IO
 import Data.Maybe
 import Control.Monad (unless)
 import           System.FilePath               (takeDirectory)
 import           Shelly                        (fromText, mkdir_p, shelly,
                                                 test_f)
-import Scientific.Workflow
 import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
 
@@ -65,7 +64,7 @@ readPromoters = fmap (bedToTree (++) . concatMap fn) . readGenes
             | otherwise = geneRight : map snd geneTranscripts
 {-# INLINE readPromoters #-}
 
-getGenomeIndex :: SCATACSeqConfig config => WorkflowConfig config FilePath
+getGenomeIndex :: SCATACSeqConfig config => ReaderT config IO FilePath
 getGenomeIndex = do
     seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
         _scatacseq_genome_index )
