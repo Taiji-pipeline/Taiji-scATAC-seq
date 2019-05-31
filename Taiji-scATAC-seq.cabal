@@ -27,6 +27,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
                        Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
@@ -42,7 +43,6 @@ library
                      , bytestring-lexing
                      , bio-experiments
                      , bioinformatics-toolkit >= 0.8.0
-                     , cereal
                      , conduit-extra
                      , unordered-containers
                      , case-insensitive
@@ -56,8 +56,8 @@ library
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
                      , inline-r
-                     , lens
                      , mtl
+                     , primitive
                      , SciFlow >= 0.7.0
                      , text
                      , temporary

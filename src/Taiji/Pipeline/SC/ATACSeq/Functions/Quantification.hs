@@ -12,16 +12,13 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
     , mkExprTable
     ) where
 
-import Bio.Data.Experiment
 import qualified Data.ByteString.Char8 as B
 import Data.Conduit.List (groupBy)
 import qualified Data.HashMap.Strict                  as M
 import Data.ByteString.Lex.Integral (packDecimal)
-import           Bio.Utils.Misc                       (readDouble)
 import Data.Double.Conversion.ByteString (toShortest)
-import Data.Function (on)
+import           Bio.Utils.Misc                       (readDouble)
 import Data.Conduit.Internal (zipSinks)
-import Conduit
 import Control.Monad.ST
 import Bio.Data.Bed.Types
 import Data.Conduit.Zlib (gzip)
@@ -31,21 +28,16 @@ import           Data.CaseInsensitive  (mk, original, CI)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
 import qualified Data.IntervalMap.Strict      as IM
-import Control.Monad
 import Data.Singletons.Prelude (Elem)
 import           Bio.Pipeline.Utils
-import Control.Lens
-import           Data.List (foldl1')
 import Control.Arrow (second)
 import           Data.List.Ordered                    (nubSort)
-import Control.Monad.Reader (asks, ReaderT)
-import Text.Printf (printf)
 import qualified Data.Text as T
-import Data.Maybe
 import Control.DeepSeq (force)
 import Bio.Data.Bed.Utils
 import Bio.Seq.IO (withGenome, getChrSizes)
 
+import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 

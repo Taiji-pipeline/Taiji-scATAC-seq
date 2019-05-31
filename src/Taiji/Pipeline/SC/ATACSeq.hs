@@ -3,11 +3,9 @@
 {-# LANGUAGE TemplateHaskell   #-}
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
-import           Control.Lens
-import Bio.Data.Experiment
 import           Control.Workflow
-import Control.Monad.IO.Class(liftIO)
 
+import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 
 builder :: Builder ()
@@ -32,7 +30,8 @@ builder = do
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
     nodePar "Make_Count_Matrix" 'mkCountMatrix $ return ()
     [ "Download_Data", "QC"] ~> "Get_Bed"
-    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
+    nodePar "TF_IDF" 'applyTFIDF $ return ()
+    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "TF_IDF"]
 
     nodePar "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]

@@ -9,20 +9,14 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
     ) where
 
 import           Bio.Pipeline
-import Control.Monad (forM)
-import Bio.Data.Experiment
 import qualified Data.HashSet as S
-import Control.Monad.Reader (ReaderT, asks, liftIO)
-import Data.Maybe
-import Control.Lens
 import Bio.Data.Bed
-import Conduit
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import Shelly hiding (FilePath)
 
-import Taiji.Types
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 callPeakCluster :: SCATACSeqConfig config

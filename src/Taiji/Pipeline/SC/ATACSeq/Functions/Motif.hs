@@ -9,19 +9,13 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Motif
     , findMotifs
     ) where
 
-import Bio.Data.Experiment
-import Control.Lens
 import Bio.Seq.IO (withGenome, getChrSizes)
 import Bio.Data.Bed.Utils
 import           Bio.Pipeline
 import           Bio.Pipeline.Instances ()
 import Bio.Data.Bed
 import Data.Binary
-import Control.Monad.Reader (asks, ReaderT)
 import           Bio.Motif                     hiding (score)
-import Data.Maybe
-import Conduit
-import Control.Monad
 import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString.Char8 as B
 import qualified Bio.Utils.BitVector as BV
@@ -29,6 +23,7 @@ import           System.IO (hClose)
 import           System.IO.Temp (withTempFile)
 import           Data.Default (def)
 
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 

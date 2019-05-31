@@ -16,14 +16,11 @@ import           Bio.Data.Bam
 import           Bio.HTS
 import Control.Monad.State.Strict
 import           Bio.Data.Bed
-import Control.Lens
-import Data.Maybe
-import Data.List
-import Data.Ord
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
-import Conduit
+
+import Taiji.Prelude
 
 data Stat = Stat
     { _cell_barcode :: B.ByteString

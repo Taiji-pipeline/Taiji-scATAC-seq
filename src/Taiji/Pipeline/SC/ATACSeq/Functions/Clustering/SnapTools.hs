@@ -13,26 +13,18 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString as BS
 import Bio.Seq.IO
 import Bio.Pipeline
-import Data.Maybe
-import Control.Monad.Reader (ReaderT, asks, liftIO)
-import Text.Printf (printf)
-import Data.Ord
-import Data.List
-import Data.Function (on)
-import Bio.Data.Experiment
 import Shelly hiding (FilePath)
 import qualified Data.Text as T
 import System.IO.Temp (withTempFile)
 import System.IO
 import Data.Int (Int32)
-import Control.Lens
 
 import qualified Language.R                        as R
 import           Language.R.QQ
 import qualified Data.Vector.SEXP as V
 import Language.R.HExp
 
-import Taiji.Types
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 snapPre :: SCATACSeqConfig config

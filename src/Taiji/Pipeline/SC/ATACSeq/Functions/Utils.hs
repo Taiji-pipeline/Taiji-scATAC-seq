@@ -13,33 +13,29 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , createCutSiteIndex
     ) where
 
-import Conduit
 import Bio.Data.Bed
 import System.IO
 import Data.Conduit.Internal (zipSinks)
 import           Bio.RealWorld.GENCODE
 import Control.Arrow (second)
-import Control.Lens
 import Data.Either (either)
 import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.ByteString.Char8 as B
-import qualified Data.ByteString as BS
-import Data.Serialize (encode, decode)
+import qualified Data.ByteString.Lazy as BS
+import Data.Binary (encode, decode)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
 import           Data.List.Ordered       (nubSort)
-import Control.Monad.Reader (asks, ReaderT)
 import           Bio.Seq.IO
-import Data.Maybe
-import Control.Monad (unless)
 import           System.FilePath               (takeDirectory)
 import           Shelly                        (fromText, mkdir_p, shelly,
                                                 test_f)
 import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
 
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 -------------------------------------------------------------------------------
@@ -124,8 +120,8 @@ withCutSiteIndex idx = bracket (openCutSiteIndex idx) closeCutSiteIndex
 openCutSiteIndex :: FilePath -> IO CutSiteIndex
 openCutSiteIndex idx = do
     h <- openFile idx ReadMode
-    n <- either error id . decode <$> BS.hGet h 8
-    (locationMap, chrs) <- either error id . decode <$> BS.hGet h n
+    n <- decode <$> BS.hGet h 8
+    (locationMap, chrs) <- decode <$> BS.hGet h n
     return $ CutSiteIndex (CutSiteIndexHeader locationMap chrs (n + 8)) h
 {-# INLINE openCutSiteIndex #-}
 
@@ -150,7 +146,7 @@ encodeFile :: (MonadResource m, PrimMonad m)
            => FilePath
            -> [B.ByteString]
            -> ConduitT (B.ByteString, [BED]) Void m LocationMap
-encodeFile output chrs = mapC (second (encodeCutSite chrs . map bedToCutSite)) .|
+encodeFile output chrs = mapC (second (BS.toStrict . encodeCutSite chrs . map bedToCutSite)) .|
     fmap snd (zipSinks sink1 sink2)
   where
     sink1 = mapC snd .| sinkFile output
@@ -158,7 +154,7 @@ encodeFile output chrs = mapC (second (encodeCutSite chrs . map bedToCutSite)) .
       where
         f (pos, acc) (nm, bs) = force (pos + fromIntegral n, M.insert nm (pos, n) acc)
           where 
-            n = BS.length bs
+            n = B.length bs
 {-# INLINE encodeFile #-}
 
 bedToCutSite :: BED -> CutSite

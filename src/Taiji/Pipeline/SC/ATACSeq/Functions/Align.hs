@@ -9,23 +9,17 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     , qualityControl
     ) where
 
-import Bio.Data.Experiment
 import Bio.Data.Bed
 import Bio.Data.Bam
 import           Bio.HTS
-import Conduit
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
-import Control.Lens
 import Data.Conduit.List (groupBy)
 import Bio.Pipeline hiding (frip)
-import Data.Function (on)
 import Data.Either (fromRight)
 import qualified Data.Text as T
-import Data.Maybe
-import Text.Printf (printf)
-import Control.Monad.Reader (ReaderT, asks, liftIO)
 
+import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC

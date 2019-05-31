@@ -7,14 +7,12 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     , getSortedBed
     ) where
 
-import Bio.Data.Experiment
-import Control.Lens
 import           Data.Bifunctor                (bimap)
 import Bio.Pipeline
 import Data.Either (rights, lefts)
 import Bio.Data.Experiment.Parser
-import Control.Monad.Reader (asks, liftIO, ReaderT)
 
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 type RAWInput = SCATACSeq N [Either SomeFile (SomeFile, SomeFile)]
