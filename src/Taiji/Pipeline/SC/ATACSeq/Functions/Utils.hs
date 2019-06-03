@@ -11,11 +11,14 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , getKeys
     , lookupIndex
     , createCutSiteIndex
+
       -- * Sparse Matrix
     , SpMatrix(..)
     , Row
     , mkSpMatrix
     , streamRows
+    , decodeRowWith
+    , encodeRowWith
 
     , visualizeCluster
     ) where
@@ -30,6 +33,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
+import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
 import Data.Conduit.Zlib (multiple, ungzip)
 import Data.Binary (encode, decode)
@@ -227,6 +231,12 @@ decodeRowWith decoder x = (nm, map f values)
     f v = let [i, a] = B.split ',' v
           in (readInt i, decoder a)
 {-# INLINE decodeRowWith #-}
+
+encodeRowWith :: (a -> B.ByteString) -> Row a -> B.ByteString
+encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
+  where
+    f (i,v) = fromJust (packDecimal i) <> "," <> encoder v
+{-# INLINE encodeRowWith #-}
 
 visualizeCluster :: FilePath
                  -> HM.HashMap B.ByteString Double -> [CellCluster] -> IO ()

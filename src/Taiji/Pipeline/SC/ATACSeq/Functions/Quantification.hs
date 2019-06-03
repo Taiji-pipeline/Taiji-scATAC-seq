@@ -7,7 +7,8 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
     ( mkCutSiteIndex
     , getBins
-    , mkCountMatrix
+    , mkCellByBinMat
+    , mergeMatrix
     , estimateExpr
     , mkExprTable
     ) where
@@ -15,10 +16,12 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
 import qualified Data.ByteString.Char8 as B
 import Data.Conduit.List (groupBy)
 import qualified Data.HashMap.Strict                  as M
+import qualified Data.HashSet as S
 import Data.ByteString.Lex.Integral (packDecimal)
 import Data.Double.Conversion.ByteString (toShortest)
-import           Bio.Utils.Misc (readDouble)
+import           Bio.Utils.Misc (readInt, readDouble)
 import Data.Conduit.Internal (zipSinks)
+import Control.Arrow (first)
 import Control.Monad.ST
 import Bio.Data.Bed.Types
 import Data.Conduit.Zlib (gzip)
@@ -96,10 +99,10 @@ getBins input = do
     res = 5000
 
 -- | Make the read count matrix.
-mkCountMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-             => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
-             -> ReaderT config IO (SCATACSeq S (File tags 'Other))
-mkCountMatrix input = do
+mkCellByBinMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+               => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
+               -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+mkCellByBinMat input = do
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_readcount.txt.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
@@ -169,6 +172,67 @@ showSparseVector cellBc = B.intercalate "\t" . (cellBc:) . map f . U.toList .
   where
     f (i,v) = fromJust (packDecimal i) <> "," <> fromJust (packDecimal v)
 {-# INLINE showSparseVector #-}
+
+mergeMatrix :: ( Elem 'Gzip tags1 ~ 'True
+               , Elem 'Gzip tags2 ~ 'True
+               , SCATACSeqConfig config )
+            => [SCATACSeq S (File tags1 'Bed, File tags2 'Other)]
+            -> ReaderT config IO (File '[Gzip] 'Other)
+mergeMatrix inputs = do
+    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
+    let output = dir ++ "/Merged_readcount.txt.gz"
+    liftIO $ do
+        indices <- getIndices $ inputs^..folded.replicates._2.files._1.location
+        mats <- forM inputs $ \input -> do
+            let e = B.pack $ T.unpack $ input^.eid
+                (idxFl, matFl) = input^.replicates._2.files
+            idxMap <- fmap (mkIdxMap indices) $ runResourceT $ runConduit $
+                streamBedGzip (idxFl^.location) .|
+                mapC (\x -> ((x::BED3)^.chrom, x^.chromStart)) .| sinkList
+            mat <- mkSpMatrix readInt $ matFl^.location
+            return ( e, mat
+                { _decoder = \x -> _decoder mat x .| mapC (changeIdx idxMap)
+                , _num_col = M.size indices } )
+        merge output mats
+    return $ location .~ output $ emptyFile
+  where
+    merge :: FilePath -> [(B.ByteString, SpMatrix Int)] -> IO ()
+    merge output ms
+        | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"
+        | otherwise = runResourceT $ runConduit $ source .|
+            (yield header >> mapC (encodeRowWith (fromJust . packDecimal))) .|
+            unlinesAsciiC .| gzip .| sinkFile output
+      where
+        source = forM_ ms $ \(sample, m) -> streamRows m .| 
+            mapC (first (\x -> sample <> "_" <> x))
+        nCell = foldl' (+) 0 $ map (_num_row . snd) ms
+        nBin = _num_col $ snd $ head ms
+        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+
+changeIdx :: U.Vector Int -> Row a -> Row a
+changeIdx idxMap = second $ map $ first (idxMap U.!)
+{-# INLINE changeIdx #-}
+
+-- | A map from old index to new index.
+mkIdxMap :: M.HashMap (B.ByteString, Int) Int
+          -> [(B.ByteString, Int)]
+          -> U.Vector Int
+mkIdxMap newIdx oldIdx = U.fromList $ map f oldIdx
+  where
+    f k = M.lookupDefault undefined k newIdx
+{-# INLINE mkIdxMap #-}
+
+getIndices :: [FilePath]   -- ^ A list of files containg the indices
+           -> IO (M.HashMap (B.ByteString, Int) Int)
+getIndices idxFls = do
+    idx <- runResourceT $ runConduit $
+        mapM_ streamBedGzip idxFls .| foldlC f S.empty
+    return $ M.fromList $ zip (S.toList idx) [0..]
+  where
+    f :: S.HashSet (B.ByteString, Int) -> BED3 -> S.HashSet (B.ByteString, Int) 
+    f m b = S.insert (b^.chrom, b^.chromStart) m
+{-# INLINE getIndices #-}
+
 
 --------------------------------------------------------------------------------
 -- Cell by Gene Matrix

@@ -8,7 +8,9 @@
 {-# LANGUAGE DataKinds #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-    (applyTFIDF) where
+    ( lsaClust
+    , lsaClustMerged
+    ) where
 
 import Control.Arrow
 import Data.Conduit.Zlib (gzip)
@@ -27,27 +29,45 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
-applyTFIDF :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-           => SCATACSeq S (File tags 'Other)
-           -> ReaderT config IO (SCATACSeq S [CellCluster])
-applyTFIDF input = do
+-- | Using LSA + graphical clustering
+lsaClust :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+         => SCATACSeq S (File tags 'Other)
+         -> ReaderT config IO (SCATACSeq S [CellCluster])
+lsaClust input = do
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
-    tmpDir <- asks _scatacseq_temp_dir
-    let lsaNpy = T.pack $ printf "%s/%s_rep%d_readcount_lsa.npy" dir
+    tmp <- asks _scatacseq_temp_dir
+    let lsaNpy = printf "%s/%s_rep%d_readcount_lsa.npy" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . (\fl ->
-        withTemp tmpDir $ \tmp -> do
-            sp <- mkSpMatrix readInt $ fl^.location
-            cellBcs <- runResourceT $ runConduit $
-                streamRows sp .| mapC fst .| sinkList
-            tfidf (fl^.location) tmp
-            shelly $ run_ "sc_utils" ["run", T.pack tmp, lsaNpy]
-            shelly $ run_ "sc_utils" ["embed", lsaNpy, T.pack tmp]
-            cells <- readCells cellBcs tmp
-            shelly $ run_ "sc_utils" ["clust", lsaNpy, T.pack tmp]
-            clusters <- readClusters tmp
-            return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1..] $
-                map (map (cells V.!)) clusters )
+    input & replicates.traversed.files %%~ liftIO . lsaClust' tmp lsaNpy
+
+-- | Using LSA + graphical clustering
+lsaClustMerged :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+               => File tags 'Other
+               -> ReaderT config IO [CellCluster]
+lsaClustMerged input = do
+    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
+    tmp <- asks _scatacseq_temp_dir
+    let lsaNpy = dir <> "/merged_lsa.npy"
+    liftIO $ lsaClust' tmp lsaNpy input
+
+-- | Using LSA + graphical clustering
+lsaClust' :: Elem 'Gzip tags ~ 'True
+          => Maybe FilePath    -- ^ temp dir
+          -> FilePath    -- ^ LSA output
+          -> File tags 'Other
+          -> IO [CellCluster]
+lsaClust' dir lsaNpy input = withTemp dir $ \tmp -> do
+      sp <- mkSpMatrix readInt $ input^.location
+      cellBcs <- runResourceT $ runConduit $
+          streamRows sp .| mapC fst .| sinkList
+      tfidf (input^.location) tmp
+      shelly $ run_ "sc_utils" ["run", T.pack tmp, T.pack lsaNpy]
+      shelly $ run_ "sc_utils" ["embed", T.pack lsaNpy, T.pack tmp]
+      cells <- readCells cellBcs tmp
+      shelly $ run_ "sc_utils" ["clust", T.pack lsaNpy, T.pack tmp]
+      clusters <- readClusters tmp
+      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
+          map (map (cells V.!)) clusters
   where
     readClusters fl = map (map readInt . B.split ',') . B.lines <$>
         B.readFile fl
@@ -56,6 +76,11 @@ applyTFIDF input = do
       where
         f i [x,y,z] = Cell i x y z
         f _ _ = error "formatting error"
+{-# INLINE lsaClust' #-}
+
+--------------------------------------------------------------------------------
+-- Helper functions
+--------------------------------------------------------------------------------
 
 tfidf :: FilePath -> FilePath -> IO ()
 tfidf input output = do
@@ -66,6 +91,7 @@ tfidf input output = do
     runResourceT $ runConduit $
         streamRows sp .| mapC (second (\x -> idf `dotProd` binarizeTF x)) .|
         (yield header >> mapC showRow) .| unlinesAsciiC .| gzip .| sinkFile output
+{-# INLINE tfidf #-}
 
 -- | The weighting functions transform each cell, a_{ij} of A, to be the
 -- product of a local term weight, l_{ij}, which describes the relative

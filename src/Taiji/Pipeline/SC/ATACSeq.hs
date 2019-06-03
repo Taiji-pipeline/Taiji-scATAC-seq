@@ -28,10 +28,18 @@ builder = do
 
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
-    nodePar "Make_Count_Matrix" 'mkCountMatrix $ return ()
+    nodePar "Make_Count_Matrix" 'mkCellByBinMat $ return ()
     [ "Download_Data", "QC"] ~> "Get_Bed"
-    nodePar "TF_IDF" 'applyTFIDF $ return ()
+    nodePar "TF_IDF" 'lsaClust $ return ()
     path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "TF_IDF"]
+
+    node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
+        zipExp (x & mapped.replicates._2.files %~ (^._2)) y
+        |]$ return ()
+    node "Merge_Count_Matrix" 'mergeMatrix $ return ()
+    node "LSA_Merged" 'lsaClustMerged $ return ()
+    ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
+    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged"]
 
     node "Plot_Cluster_Prep" [| \(x,y) -> return $
         zipExp x $ y & mapped.replicates._2.files %~ (^._3)
