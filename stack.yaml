@@ -13,10 +13,10 @@ extra-deps:
   commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
 
 - git:     https://github.com/Taiji-pipeline/Taiji-utils.git
-  commit:  7537b0c46ae227c2039cb8f93a974e83500441ba
+  commit:  b2563e897fddd89c9f323e09be1696be7b0b972d
 
 - git:     https://github.com/Taiji-pipeline/bio-pipelines.git
-  commit:  ab7a4c19a882168c3038b10d3ba4020a24595bda
+  commit:  b9814899ac5d8322bf1e8e04b48712472e807df7
 
 - git:     https://github.com/Taiji-pipeline/bio-experiments.git
   commit:  1d5fb05157fd308278e19d048e56068e96f17d76

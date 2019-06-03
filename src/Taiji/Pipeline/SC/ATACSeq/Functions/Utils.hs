@@ -11,6 +11,13 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , getKeys
     , lookupIndex
     , createCutSiteIndex
+      -- * Sparse Matrix
+    , SpMatrix(..)
+    , Row
+    , mkSpMatrix
+    , streamRows
+
+    , visualizeCluster
     ) where
 
 import Bio.Data.Bed
@@ -20,9 +27,11 @@ import           Bio.RealWorld.GENCODE
 import Control.Arrow (second)
 import Data.Either (either)
 import qualified Data.Map.Strict as M
-import qualified Data.HashMap.Lazy as HM
+import qualified Data.HashMap.Strict as HM
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
+import Bio.Utils.Misc (readInt)
+import Data.Conduit.Zlib (multiple, ungzip)
 import Data.Binary (encode, decode)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
@@ -37,6 +46,8 @@ import qualified Data.Text as T
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Utils.Plot
+import Taiji.Utils.Plot.ECharts
 
 -------------------------------------------------------------------------------
 -- BASIC
@@ -174,3 +185,53 @@ decodeCutSite chrs = concatMap f . zip chrs . either error id . decode
   where
     f (chr, xs) = map (\x -> CutSite chr x) xs
 {-# INLINE decodeCutSite #-}
+
+-------------------------------------------------------------------------------
+-- Sparse Matrix
+-------------------------------------------------------------------------------
+
+data SpMatrix a = SpMatrix
+    { _num_row :: Int
+    , _num_col :: Int
+    , _filepath :: FilePath
+    , _decoder :: FilePath -> ConduitT () (Row a) (ResourceT IO) ()
+    }
+
+type Row a = (B.ByteString, [(Int, a)])
+
+mkSpMatrix :: (B.ByteString -> a)   -- ^ Element decoder
+           -> FilePath -> IO (SpMatrix a)
+mkSpMatrix f input = do
+    header <- runResourceT $ runConduit $ sourceFile input .| multiple ungzip .|
+        linesUnboundedAsciiC .| headC
+    case header of
+        Nothing -> error "empty file"
+        Just x -> do
+            let [n, m] = map (read . T.unpack . T.strip) $ T.splitOn "x" $
+                    last $ T.splitOn ":" $ T.pack $ B.unpack x
+            return $ SpMatrix n m input $ decodeSpMatrix f
+
+streamRows :: SpMatrix a -> ConduitT () (Row a) (ResourceT IO) ()
+streamRows sp = (_decoder sp) (_filepath sp)
+
+decodeSpMatrix :: (B.ByteString -> a)
+               -> FilePath -> ConduitT () (Row a) (ResourceT IO) ()
+decodeSpMatrix f input = sourceFile input .| multiple ungzip .|
+    linesUnboundedAsciiC .| (headC >> mapC (decodeRowWith f))
+{-# INLINE decodeSpMatrix #-}
+
+decodeRowWith :: (B.ByteString -> a) -> B.ByteString -> Row a
+decodeRowWith decoder x = (nm, map f values)
+  where
+    (nm:values) = B.split '\t' x
+    f v = let [i, a] = B.split ',' v
+          in (readInt i, decoder a)
+{-# INLINE decodeRowWith #-}
+
+visualizeCluster :: FilePath
+                 -> HM.HashMap B.ByteString Double -> [CellCluster] -> IO ()
+visualizeCluster output marker cs = do
+    savePlots output [] [scatter3D dat]
+  where
+    dat = flip map cs $ \(CellCluster nm cells) -> (B.unpack nm, map f cells) 
+    f (Cell i x y z) = [x, y, z, HM.lookupDefault undefined i marker]

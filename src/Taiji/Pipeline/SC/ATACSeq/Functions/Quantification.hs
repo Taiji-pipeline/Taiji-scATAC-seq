@@ -17,7 +17,7 @@ import Data.Conduit.List (groupBy)
 import qualified Data.HashMap.Strict                  as M
 import Data.ByteString.Lex.Integral (packDecimal)
 import Data.Double.Conversion.ByteString (toShortest)
-import           Bio.Utils.Misc                       (readDouble)
+import           Bio.Utils.Misc (readDouble)
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.ST
 import Bio.Data.Bed.Types
@@ -40,6 +40,10 @@ import Bio.Seq.IO (withGenome, getChrSizes)
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+
+--------------------------------------------------------------------------------
+-- Cut site map
+--------------------------------------------------------------------------------
 
 -- | Create the cut site map for every cell.
 mkCutSiteIndex :: SCATACSeqConfig config
@@ -65,6 +69,10 @@ mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
     mapC (\x -> (fromJust $ head x ^. name, x))
 {-# INLINE mkCutSiteIndex_ #-}
 
+--------------------------------------------------------------------------------
+-- Cell by Bin Matrix
+--------------------------------------------------------------------------------
+
 -- | Get candidate bins.
 getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
         => SCATACSeq S (File tags 'Bed)
@@ -86,6 +94,27 @@ getBins input = do
         return $ (fl, emptyFile & location .~ output, n) )
   where
     res = 5000
+
+-- | Make the read count matrix.
+mkCountMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+             => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
+             -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+mkCountMatrix input = do
+    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_readcount.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
+        regions <- runResourceT $ runConduit $
+            streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
+        let bedTree = bedToTree undefined $ zip regions [0::Int ..]
+            nBin = length regions
+            header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+        runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
+            groupBy ((==) `on` (^.name)) .|
+            mapC (tagCountPerCell bedTree nBin) .|
+            (yield header >> mapC (uncurry showSparseVector)) .|
+            unlinesAsciiC .| gzip .| sinkFile output
+        return $ emptyFile & location .~ output )
 
 -- | Divide the genome into bins and count the tags.
 binCount :: Elem 'Gzip tags ~ 'True
@@ -117,27 +146,6 @@ filterBin lo hi res rc = forM_ rc $ \(chr, vec) -> flip U.imapM_ vec $ \i x ->
         yield $ BED chr (i * res) ((i+1) * res) Nothing (Just x) Nothing
 {-# INLINE filterBin #-}
 
--- | Make the read count matrix.
-mkCountMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-             => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
-             -> ReaderT config IO (SCATACSeq S (File tags 'Other))
-mkCountMatrix input = do
-    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_readcount.txt.gz" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
-        regions <- runResourceT $ runConduit $
-            streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
-        let bedTree = bedToTree undefined $ zip regions [0::Int ..]
-            nBin = length regions
-            header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-        runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
-            groupBy ((==) `on` (^.name)) .|
-            mapC (tagCountPerCell bedTree nBin) .|
-            (yield header >> mapC (uncurry showSparseVector)) .|
-            unlinesAsciiC .| gzip .| sinkFile output
-        return $ emptyFile & location .~ output )
-
 tagCountPerCell :: BEDTree Int   -- ^ Regions
                 -> Int           -- ^ length of vector
                 -> [BED]         -- ^ Tags
@@ -162,6 +170,9 @@ showSparseVector cellBc = B.intercalate "\t" . (cellBc:) . map f . U.toList .
     f (i,v) = fromJust (packDecimal i) <> "," <> fromJust (packDecimal v)
 {-# INLINE showSparseVector #-}
 
+--------------------------------------------------------------------------------
+-- Cell by Gene Matrix
+--------------------------------------------------------------------------------
 
 estimateExpr :: SCATACSeqConfig config
              => (SCATACSeq S (B.ByteString, File '[Gzip] 'Bed))
@@ -177,7 +188,7 @@ estimateExpr input = do
         counts <- runResourceT $ runConduit $
             streamBedGzip (fl^.location) .| mkGeneCount genes
         B.writeFile output $ B.unlines $
-            map (\(nm, c) -> nm <> "\t" <> toShortest c) counts
+            map (\(n, c) -> n <> "\t" <> toShortest c) counts
         return (nm, location .~ output $ emptyFile) )
 
 -- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6385419/
@@ -211,6 +222,10 @@ mkExprTable = mapM mkTable . concatMap split . mergeExp
             map (\(x,xs) -> B.intercalate "\t" $ original x : map toShortest xs)
                 (combine values)
         return $ input & replicates._2.files .~ (location .~ output $ emptyFile)
+
+--------------------------------------------------------------------------------
+-- Auxiliary functions
+--------------------------------------------------------------------------------
 
 readExpr :: SCATACSeq S [(B.ByteString, File '[GeneQuant] 'Tsv)]
          -> IO [(B.ByteString, [[(CI B.ByteString, Double)]])]

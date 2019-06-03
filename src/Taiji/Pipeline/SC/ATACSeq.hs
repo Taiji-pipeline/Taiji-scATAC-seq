@@ -33,6 +33,22 @@ builder = do
     nodePar "TF_IDF" 'applyTFIDF $ return ()
     path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "TF_IDF"]
 
+    node "Plot_Cluster_Prep" [| \(x,y) -> return $
+        zipExp x $ y & mapped.replicates._2.files %~ (^._3)
+        |] $ return ()
+    nodePar "Plot_Cluster" 'plotClusters $ return ()
+    ["TF_IDF", "QC"] ~> "Plot_Cluster_Prep"
+    ["Plot_Cluster_Prep"] ~> "Plot_Cluster"
+
+    node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
+    nodePar "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
+    nodePar "Subsample_Bed_Cluster" 'subSampleClusterBed $ return ()
+    node "Call_Peak_Cluster_Prep" [| return . concatMap split |] $ return ()
+    nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
+    ["Get_Bed", "TF_IDF"] ~> "Make_Bed_Cluster_Prep"
+    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster",
+        "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
+
     nodePar "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
 
@@ -41,21 +57,12 @@ builder = do
     nodePar "Find_TFBS" 'findMotifs $ return ()
     path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
 
-
+    {-
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
     nodePar "Snap_Cluster" [| liftIO . getClusters |] $ return ()
     path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
-
-
-    node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
-    nodePar "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
-    nodePar "Subsample_Bed_Cluster" 'subSampleClusterBed $ return ()
-    node "Call_Peak_Cluster_Prep" [| return . concatMap split |] $ return ()
-    nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
-    ["Get_Bed", "Snap_Cluster"] ~> "Make_Bed_Cluster_Prep"
-    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster",
-        "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
+    -}
 
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
     node "Make_Expr_Table" 'mkExprTable $ return ()

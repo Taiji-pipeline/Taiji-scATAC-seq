@@ -44,6 +44,7 @@ instance SCATACSeqConfig SCATACSeqOpts where
     _scatacseq_genome_index = genome_index
     _scatacseq_motif_file = motif_file
     _scatacseq_annotation = annotation
+    _scatacseq_temp_dir = const Nothing
 
 decodeDrmaa :: String -> Int -> FilePath -> IO D.DrmaaConfig
 decodeDrmaa ip port _ = D.getDefaultDrmaaConfig

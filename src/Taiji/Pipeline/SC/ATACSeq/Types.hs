@@ -36,3 +36,4 @@ class SCATACSeqConfig config where
     _scatacseq_motif_file :: config -> Maybe FilePath
     _scatacseq_callpeak_opts :: config -> CallPeakOpts
     _scatacseq_annotation :: config -> Maybe FilePath
+    _scatacseq_temp_dir :: config -> Maybe FilePath

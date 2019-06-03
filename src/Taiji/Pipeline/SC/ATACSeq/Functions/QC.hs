@@ -4,6 +4,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ( Stat(..)
     , showStat
+    , decodeStat
     , rmAbnoramlFragment
     , rmChrM
     , rmDup
@@ -16,11 +17,12 @@ import           Bio.Data.Bam
 import           Bio.HTS
 import Control.Monad.State.Strict
 import           Bio.Data.Bed
+import Bio.Utils.Misc (readInt, readDouble)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
 
-import Taiji.Prelude
+import Taiji.Prelude hiding (frip)
 
 data Stat = Stat
     { _cell_barcode :: B.ByteString
@@ -37,6 +39,13 @@ showStat Stat{..} = B.intercalate "\t" $
     , B.pack $ show _frip
     , B.pack $ show _uniq_reads ]
 {-# INLINE showStat #-}
+
+decodeStat :: B.ByteString -> Stat
+decodeStat x = Stat bc (readDouble dupRate) (readDouble mitoRate)
+    (readDouble frip) (readInt uniq)
+  where
+    [bc, dupRate, mitoRate, frip, uniq] = B.split '\t' x
+{-# INLINE decodeStat #-}
 
 baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
 baseCoverageStat header bam = sort $ I.toList $ runIdentity $ runConduit $

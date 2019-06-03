@@ -12,7 +12,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString as BS
 import Bio.Seq.IO
-import Bio.Pipeline
 import Shelly hiding (FilePath)
 import qualified Data.Text as T
 import System.IO.Temp (withTempFile)
@@ -106,4 +105,4 @@ snap input = R.runRegion $ do
         sortBy (comparing (^._2)) $ zip4 bc (membership :: [Int32]) coordX coordY
   where
     f i cells = CellCluster (B.pack $ "C" ++ show (i :: Int)) $
-        flip map cells $ \(bc, _, x, y) -> Cell bc x y
+        flip map cells $ \(bc, _, x, y) -> Cell bc x y 0

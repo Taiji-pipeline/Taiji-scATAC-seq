@@ -57,7 +57,6 @@ library
                      , IntervalMap
                      , inline-r
                      , mtl
-                     , primitive
                      , SciFlow >= 0.7.0
                      , text
                      , temporary

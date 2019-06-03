@@ -15,11 +15,10 @@ import           Bio.HTS
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
-import Bio.Pipeline hiding (frip)
 import Data.Either (fromRight)
 import qualified Data.Text as T
 
-import Taiji.Prelude hiding (groupBy)
+import Taiji.Prelude hiding (groupBy, frip)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
@@ -52,9 +51,9 @@ filterBamSort input = do
 qualityControl :: SCATACSeqConfig config
              => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
              -> ReaderT config IO
-                (SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
-                             , File '[NameSorted] 'Bam
-                             , File '[] 'Tsv ))
+                (SCATACSeq S ( File '[NameSorted, Gzip] 'Bed  -- ^ filtered reads
+                             , File '[NameSorted] 'Bam        -- ^ mito reads
+                             , File '[] 'Tsv ))               -- ^ Stat
 qualityControl input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
     anno <- fromJust <$> asks _scatacseq_annotation 
