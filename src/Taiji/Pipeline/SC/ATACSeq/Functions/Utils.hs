@@ -31,8 +31,10 @@ import Control.Arrow (second)
 import Data.Either (either)
 import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
+import qualified Data.HashSet as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
+import qualified Data.Vector.Unboxed as U
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
 import Data.Conduit.Zlib (multiple, ungzip)
@@ -238,10 +240,21 @@ encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
     f (i,v) = fromJust (packDecimal i) <> "," <> encoder v
 {-# INLINE encodeRowWith #-}
 
-visualizeCluster :: FilePath
-                 -> HM.HashMap B.ByteString Double -> [CellCluster] -> IO ()
-visualizeCluster output marker cs = do
-    savePlots output [] [scatter3D dat]
+visualizeCluster :: FilePath -> Maybe (U.Vector Double) -> [CellCluster] -> IO ()
+visualizeCluster output marker cs = savePlots output [] [scatter3D dat]
   where
     dat = flip map cs $ \(CellCluster nm cells) -> (B.unpack nm, map f cells) 
-    f (Cell i x y z) = [x, y, z, HM.lookupDefault undefined i marker]
+    f (Cell i x y z _ v) = case marker of
+        Nothing -> [x, y, z, log $ fromIntegral v]
+        Just m -> [x, y, z, m U.! i]
+
+    {-
+visualizeCluster' :: FilePath -> [CellCluster] -> IO ()
+visualizeCluster' output cs = savePlots output [] [scatter3D dat]
+  where
+    dat = flip map cs $ \(CellCluster nm cells) -> (B.unpack nm, map f cells) 
+    f (Cell i x y z) = [x, y, z, HM.lookupDefault undefined (getName i) nameMap]
+    nameMap = HM.fromList $ zip names [10,20..]
+    names = S.toList $ S.fromList $ concatMap (map (getName . _cell_id) . _cluster_member) cs
+    getName = T.init . fst . T.breakOnEnd "_" . T.pack . B.unpack 
+    -}

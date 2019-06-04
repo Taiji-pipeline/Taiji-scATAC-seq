@@ -210,7 +210,7 @@ mergeMatrix inputs = do
         header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
 
 changeIdx :: U.Vector Int -> Row a -> Row a
-changeIdx idxMap = second $ map $ first (idxMap U.!)
+changeIdx idxMap = second $ sortBy (comparing fst) . map (first (idxMap U.!))
 {-# INLINE changeIdx #-}
 
 -- | A map from old index to new index.

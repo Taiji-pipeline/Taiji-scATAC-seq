@@ -29,31 +29,35 @@ builder = do
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
     nodePar "Make_Count_Matrix" 'mkCellByBinMat $ return ()
+    nodePar "LSA" 'performLSA $ return ()
+    nodePar "Cluster_LSA" [| \input -> do
+        tmp <- asks _scatacseq_temp_dir
+        input & replicates.traversed.files %%~ liftIO . clust tmp
+        |] $ return ()
+    nodePar "Visualize_Cluster" 'plotClusters $ return ()
     [ "Download_Data", "QC"] ~> "Get_Bed"
-    nodePar "TF_IDF" 'lsaClust $ return ()
-    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "TF_IDF"]
+    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "LSA",
+        "Cluster_LSA", "Visualize_Cluster"]
 
+    {-
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
     node "Merge_Count_Matrix" 'mergeMatrix $ return ()
-    node "LSA_Merged" 'lsaClustMerged $ return ()
+    node "LSA_Merged" 'lsaClustMerged $ memory .= 20
+    node "Plot_Cluster_Merged" 'plotClusters' $ return ()
     ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
-    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged"]
+    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged"
+        , "Plot_Cluster_Merged"]
+        -}
 
-    node "Plot_Cluster_Prep" [| \(x,y) -> return $
-        zipExp x $ y & mapped.replicates._2.files %~ (^._3)
-        |] $ return ()
-    nodePar "Plot_Cluster" 'plotClusters $ return ()
-    ["TF_IDF", "QC"] ~> "Plot_Cluster_Prep"
-    ["Plot_Cluster_Prep"] ~> "Plot_Cluster"
 
     node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
     nodePar "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
     nodePar "Subsample_Bed_Cluster" 'subSampleClusterBed $ return ()
     node "Call_Peak_Cluster_Prep" [| return . concatMap split |] $ return ()
     nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
-    ["Get_Bed", "TF_IDF"] ~> "Make_Bed_Cluster_Prep"
+    ["Get_Bed", "Cluster_LSA"] ~> "Make_Bed_Cluster_Prep"
     path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster",
         "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
 

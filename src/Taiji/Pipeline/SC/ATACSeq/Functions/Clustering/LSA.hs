@@ -8,8 +8,8 @@
 {-# LANGUAGE DataKinds #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-    ( lsaClust
-    , lsaClustMerged
+    ( clust
+    , performLSA
     ) where
 
 import Control.Arrow
@@ -29,6 +29,7 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
+{-
 -- | Using LSA + graphical clustering
 lsaClust :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
          => SCATACSeq S (File tags 'Other)
@@ -49,23 +50,26 @@ lsaClustMerged input = do
     tmp <- asks _scatacseq_temp_dir
     let lsaNpy = dir <> "/merged_lsa.npy"
     liftIO $ lsaClust' tmp lsaNpy input
+    -}
 
+    {-
 -- | Using LSA + graphical clustering
 lsaClust' :: Elem 'Gzip tags ~ 'True
           => Maybe FilePath    -- ^ temp dir
           -> FilePath    -- ^ LSA output
           -> File tags 'Other
           -> IO [CellCluster]
-lsaClust' dir lsaNpy input = withTemp dir $ \tmp -> do
+lsaClust' dir lsaNpy input = withTempDir dir $ \tmpD -> do
+      tfidf (input^.location) $ tmpD <> "/tfidf"
+      shelly $ run_ "sc_utils" ["run", T.pack tmpD <> "/tfidf", T.pack lsaNpy]
+      shelly $ run_ "sc_utils" ["embed", T.pack lsaNpy, T.pack tmpD <> "/embed"]
+      shelly $ run_ "sc_utils" ["clust", T.pack lsaNpy, T.pack tmpD <> "/clust"]
+
+      clusters <- readClusters $ tmpD <> "/clust"
       sp <- mkSpMatrix readInt $ input^.location
       cellBcs <- runResourceT $ runConduit $
           streamRows sp .| mapC fst .| sinkList
-      tfidf (input^.location) tmp
-      shelly $ run_ "sc_utils" ["run", T.pack tmp, T.pack lsaNpy]
-      shelly $ run_ "sc_utils" ["embed", T.pack lsaNpy, T.pack tmp]
-      cells <- readCells cellBcs tmp
-      shelly $ run_ "sc_utils" ["clust", T.pack lsaNpy, T.pack tmp]
-      clusters <- readClusters tmp
+      cells <- readCells cellBcs $ tmpD <> "/embed"
       return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
           map (map (cells V.!)) clusters
   where
@@ -77,6 +81,66 @@ lsaClust' dir lsaNpy input = withTemp dir $ \tmp -> do
         f i [x,y,z] = Cell i x y z
         f _ _ = error "formatting error"
 {-# INLINE lsaClust' #-}
+-}
+
+clust :: Maybe FilePath      -- ^ temp dir
+      -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
+      -> IO [CellCluster]
+clust dir (coverage, mat) = withTempDir dir $ \tmpD -> do
+      runResourceT $ runConduit $ seqDepthC .| mapC snd .|
+          unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
+      shelly $ run_ "sc_utils" ["embed", T.pack $ mat^.location, T.pack tmpD <> "/embed"]
+      shelly $ run_ "sc_utils" [ "clust", "--coverage"
+          , T.pack tmpD <> "/coverage", T.pack $ mat^.location, T.pack tmpD <> "/clust" ]
+
+      let sourceCells = getZipSource $ (,,) <$>
+              ZipSource (iterateC succ 0) <*>
+              ZipSource seqDepthC <*>
+              ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
+                mapC (map readDouble . B.split '\t') )
+      cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
+      clusters <- readClusters $ tmpD <> "/clust"
+      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
+          map (map (cells V.!)) clusters
+  where
+    readClusters fl = map (map readInt . B.split ',') . B.lines <$>
+        B.readFile fl
+    seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
+        mapC ((\[a,b] -> (a,b)) . B.split '\t')
+    f (i, (bc, dep), [x,y,z]) = Cell i x y z bc $ readInt dep
+    f _ = error "formatting error"
+{-# INLINE clust #-}
+
+performLSA :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+           => SCATACSeq S (File tags 'Other)
+           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
+performLSA input = do
+    dir <- asks ((<> "/LSA") . _scatacseq_output_dir) >>= getPath
+    tmp <- asks _scatacseq_temp_dir
+    let output = printf "%s/%s_rep%d_lsa.tsv.gz" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+        rownames = printf "%s/%s_rep%d_lsa.rownames.txt" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+        lsa tmp output fl
+        sp <- mkSpMatrix readInt $ fl^.location
+        runResourceT $ runConduit $
+            streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
+        return ( location .~ rownames $ emptyFile
+               , location .~ output $ emptyFile ) )
+  where
+    f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
+
+-- | Perform LSA.
+lsa :: Elem 'Gzip tags ~ 'True
+    => Maybe FilePath    -- ^ temp dir
+    -> FilePath    -- ^ LSA output
+    -> File tags 'Other
+    -> IO ()
+lsa dir lsaNpy input = withTemp dir $ \tmp -> do
+      tfidf (input^.location) tmp
+      shelly $ run_ "sc_utils" ["svd", T.pack tmp, T.pack lsaNpy]
+{-# INLINE lsa #-}
 
 --------------------------------------------------------------------------------
 -- Helper functions

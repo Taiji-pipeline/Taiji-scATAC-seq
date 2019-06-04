@@ -105,4 +105,4 @@ snap input = R.runRegion $ do
         sortBy (comparing (^._2)) $ zip4 bc (membership :: [Int32]) coordX coordY
   where
     f i cells = CellCluster (B.pack $ "C" ++ show (i :: Int)) $
-        flip map cells $ \(bc, _, x, y) -> Cell bc x y 0
+        flip map cells $ \(bc, _, x, y) -> Cell 1 x y 0

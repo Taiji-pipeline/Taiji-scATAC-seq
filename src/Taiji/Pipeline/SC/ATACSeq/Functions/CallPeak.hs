@@ -46,7 +46,7 @@ mkCellClusterBed input = do
     input & replicates.traverse.files %%~ liftIO . ( \(bed, cs) -> do
         let sinks = sequenceConduits $ flip map cs $ \CellCluster{..} -> do
                 let output = dir ++ "/" ++ B.unpack _cluster_name ++ ".bed.gz"
-                    cells = S.fromList $ map _cell_id _cluster_member
+                    cells = S.fromList $ map _cell_barcode _cluster_member
                     fl = location .~ output $ emptyFile
                 (_, depth) <- filterC (f cells) .|
                     zipSinks (sinkFileBedGzip output) lengthC
