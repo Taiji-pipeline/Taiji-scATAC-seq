@@ -63,18 +63,16 @@ def lsiTransform(args):
     '''
 
 
-def getEmbedding(args):
+def getEmbedding(mat, output):
     import umap
-
-    mat = np.loadtxt(args.input)
     embedding = umap.UMAP(random_state=42, n_components=3).fit_transform(mat)
-    np.savetxt(args.output, embedding, delimiter='\t')
+    np.savetxt(output, embedding, delimiter='\t')
 
 # regress out a variable
 def regressOut(X, y):
     from sklearn.linear_model import Lasso
-    reg = Lasso(alpha=0.1).fit(X, y)
-    return y - reg.predict(X)
+    reg = Lasso(alpha=0.5).fit(X, y)
+    return np.subtract(y.flatten(), reg.predict(X))
 
 def clustering(args):
     from sklearn.neighbors import kneighbors_graph
@@ -83,7 +81,7 @@ def clustering(args):
 
     def readCoverage(fl):
         with open(fl, 'r') as f:
-            return [[math.log(int(line.strip()))] for line in f]
+            return np.array([[math.log(int(line.strip()))] for line in f])
 
     data_transformed = np.loadtxt(args.input)
     print(data_transformed.shape)
@@ -91,7 +89,7 @@ def clustering(args):
         print("Performing regression")
         cov = readCoverage(args.coverage)
         def normalize(y):
-            return [r[0] for r in regressOut(cov, [[x] for x in y])]
+            return regressOut(cov, np.array([[x] for x in y]))
         data_transformed = np.apply_along_axis(normalize, 0, data_transformed)
     print("Start KNN")
     adj = kneighbors_graph(data_transformed, 20, mode='distance')
@@ -107,3 +105,7 @@ def clustering(args):
     print(len(partition)) 
     with open(args.output, 'w') as f:
         f.write('\n'.join([','.join(map(str, c)) for c in partition]))
+
+    if(args.embed):
+        print("Create Embedding:")
+        getEmbedding(data_transformed, args.embed)

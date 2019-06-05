@@ -177,7 +177,8 @@ mergeMatrix :: ( Elem 'Gzip tags1 ~ 'True
                , Elem 'Gzip tags2 ~ 'True
                , SCATACSeqConfig config )
             => [SCATACSeq S (File tags1 'Bed, File tags2 'Other)]
-            -> ReaderT config IO (File '[Gzip] 'Other)
+            -> ReaderT config IO (Maybe (File '[Gzip] 'Other))
+mergeMatrix [] = return Nothing
 mergeMatrix inputs = do
     dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
     let output = dir ++ "/Merged_readcount.txt.gz"
@@ -194,7 +195,7 @@ mergeMatrix inputs = do
                 { _decoder = \x -> _decoder mat x .| mapC (changeIdx idxMap)
                 , _num_col = M.size indices } )
         merge output mats
-    return $ location .~ output $ emptyFile
+    return $ Just $ location .~ output $ emptyFile
   where
     merge :: FilePath -> [(B.ByteString, SpMatrix Int)] -> IO ()
     merge output ms

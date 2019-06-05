@@ -39,16 +39,15 @@ builder = do
     path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "LSA",
         "Cluster_LSA", "Visualize_Cluster"]
 
-    {-
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
     node "Merge_Count_Matrix" 'mergeMatrix $ return ()
-    node "LSA_Merged" 'lsaClustMerged $ memory .= 20
-    node "Plot_Cluster_Merged" 'plotClusters' $ return ()
+    node "LSA_Merged" 'performLSAMerged $ memory .= 20
     ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
-    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged"
-        , "Plot_Cluster_Merged"]
+    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged"]
+    {-
+    node "Plot_Cluster_Merged" 'plotClusters' $ return ()
         -}
 
 

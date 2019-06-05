@@ -19,13 +19,8 @@ parser_clust = subparsers.add_parser('clust', help='perform clustering')
 parser_clust.add_argument('input', type=str, help='input matrix in .npy format')
 parser_clust.add_argument('output', type=str, help='output file')
 parser_clust.add_argument('--coverage', help='coverage file')
+parser_clust.add_argument('--embed', help='embedding file')
 parser_clust.set_defaults(func=sc.clustering)
-
-# create the parser for the "embed" command
-parser_embed = subparsers.add_parser('embed', help='Get UMAP embedding')
-parser_embed.add_argument('input', type=str, help='input matrix in .npy format')
-parser_embed.add_argument('output', type=str, help='output file')
-parser_embed.set_defaults(func=sc.getEmbedding)
 
 def main():
     args = parser.parse_args()

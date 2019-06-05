@@ -10,6 +10,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     ( clust
     , performLSA
+    , performLSAMerged
     ) where
 
 import Control.Arrow
@@ -29,59 +30,25 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
-{-
 -- | Using LSA + graphical clustering
-lsaClust :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-         => SCATACSeq S (File tags 'Other)
-         -> ReaderT config IO (SCATACSeq S [CellCluster])
-lsaClust input = do
-    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
+performLSAMerged :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+                 => Maybe (File tags 'Other)
+                 -> ReaderT config IO (Maybe (File '[] 'Tsv, File '[Gzip] 'Tsv))
+performLSAMerged Nothing = return Nothing
+performLSAMerged (Just input) = do
+    dir <- asks ((<> "/LSA") . _scatacseq_output_dir) >>= getPath
     tmp <- asks _scatacseq_temp_dir
-    let lsaNpy = printf "%s/%s_rep%d_readcount_lsa.npy" dir
-            (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . lsaClust' tmp lsaNpy
-
--- | Using LSA + graphical clustering
-lsaClustMerged :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-               => File tags 'Other
-               -> ReaderT config IO [CellCluster]
-lsaClustMerged input = do
-    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
-    tmp <- asks _scatacseq_temp_dir
-    let lsaNpy = dir <> "/merged_lsa.npy"
-    liftIO $ lsaClust' tmp lsaNpy input
-    -}
-
-    {-
--- | Using LSA + graphical clustering
-lsaClust' :: Elem 'Gzip tags ~ 'True
-          => Maybe FilePath    -- ^ temp dir
-          -> FilePath    -- ^ LSA output
-          -> File tags 'Other
-          -> IO [CellCluster]
-lsaClust' dir lsaNpy input = withTempDir dir $ \tmpD -> do
-      tfidf (input^.location) $ tmpD <> "/tfidf"
-      shelly $ run_ "sc_utils" ["run", T.pack tmpD <> "/tfidf", T.pack lsaNpy]
-      shelly $ run_ "sc_utils" ["embed", T.pack lsaNpy, T.pack tmpD <> "/embed"]
-      shelly $ run_ "sc_utils" ["clust", T.pack lsaNpy, T.pack tmpD <> "/clust"]
-
-      clusters <- readClusters $ tmpD <> "/clust"
-      sp <- mkSpMatrix readInt $ input^.location
-      cellBcs <- runResourceT $ runConduit $
-          streamRows sp .| mapC fst .| sinkList
-      cells <- readCells cellBcs $ tmpD <> "/embed"
-      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
-          map (map (cells V.!)) clusters
+    let output = dir <> "/merged_lsa.tsv.gz"
+        rownames = dir <> "/merged_lsa.rownames.txt"
+    liftIO $ do
+        lsa tmp output input
+        sp <- mkSpMatrix readInt $ input^.location
+        runResourceT $ runConduit $
+            streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
+        return $ Just ( location .~ rownames $ emptyFile
+                , location .~ output $ emptyFile )
   where
-    readClusters fl = map (map readInt . B.split ',') . B.lines <$>
-        B.readFile fl
-    readCells bc fl = V.fromList . zipWith f bc .
-        map (map readDouble . B.split '\t') . B.lines <$> B.readFile fl
-      where
-        f i [x,y,z] = Cell i x y z
-        f _ _ = error "formatting error"
-{-# INLINE lsaClust' #-}
--}
+    f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 
 clust :: Maybe FilePath      -- ^ temp dir
       -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
@@ -89,9 +56,10 @@ clust :: Maybe FilePath      -- ^ temp dir
 clust dir (coverage, mat) = withTempDir dir $ \tmpD -> do
       runResourceT $ runConduit $ seqDepthC .| mapC snd .|
           unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
-      shelly $ run_ "sc_utils" ["embed", T.pack $ mat^.location, T.pack tmpD <> "/embed"]
-      shelly $ run_ "sc_utils" [ "clust", "--coverage"
-          , T.pack tmpD <> "/coverage", T.pack $ mat^.location, T.pack tmpD <> "/clust" ]
+      shelly $ run_ "sc_utils" [ "clust",
+          "--coverage", T.pack tmpD <> "/coverage",
+          "--embed", T.pack tmpD <> "/embed",
+          T.pack $ mat^.location, T.pack tmpD <> "/clust" ]
 
       let sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
@@ -151,7 +119,7 @@ tfidf input output = do
     sp <- mkSpMatrix readInt input
     idf <- mkIDF sp
     let header = B.pack $
-            printf "Sparse matrix: %d x %d" (_num_row sp) (_num_col sp)
+        printf "Sparse matrix: %d x %d" (_num_row sp) (_num_col sp)
     runResourceT $ runConduit $
         streamRows sp .| mapC (second (\x -> idf `dotProd` binarizeTF x)) .|
         (yield header >> mapC showRow) .| unlinesAsciiC .| gzip .| sinkFile output
