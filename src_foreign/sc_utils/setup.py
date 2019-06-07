@@ -17,6 +17,7 @@ setup(name='sc_utils',
           'numpy',
           'python-igraph',
           'umap-learn',
-          'leidenalg'
+          'leidenalg',
+          'MulticoreTSNE'
       ],
       zip_safe=False)

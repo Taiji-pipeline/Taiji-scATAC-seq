@@ -25,31 +25,54 @@ builder = do
     nodePar "Get_Bins" 'getBins $ return ()
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
          , "QC" ]
-
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
     nodePar "Make_Count_Matrix" 'mkCellByBinMat $ return ()
+    [ "Download_Data", "QC"] ~> "Get_Bed"
+    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
+
+    -- LSA
     nodePar "LSA" 'performLSA $ return ()
     nodePar "Cluster_LSA" [| \input -> do
         tmp <- asks _scatacseq_temp_dir
         input & replicates.traversed.files %%~ liftIO . clust tmp
         |] $ return ()
-    nodePar "Visualize_Cluster" 'plotClusters $ return ()
-    [ "Download_Data", "QC"] ~> "Get_Bed"
-    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix", "LSA",
-        "Cluster_LSA", "Visualize_Cluster"]
+    nodePar "Visualize_LSA_Cluster" [| \x -> do
+        dir <- asks ((<> "/Cluster/LSA") . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Make_Count_Matrix", "LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
+
+    -- LDA
+    nodePar "LDA" 'performLDA $ return ()
+    nodePar "Cluster_LDA" [| \input -> do
+        tmp <- asks _scatacseq_temp_dir
+        input & replicates.traversed.files %%~ liftIO . clust tmp
+        |] $ return ()
+    nodePar "Visualize_LDA_Cluster" [| \x -> do
+        dir <- asks ((<> "/Cluster/LDA") . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Make_Count_Matrix", "LDA", "Cluster_LDA", "Visualize_LDA_Cluster"]
 
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
     node "Merge_Count_Matrix" 'mergeMatrix $ return ()
-    node "LSA_Merged" 'performLSAMerged $ memory .= 20
+    node "LSA_Merged" 'performLSAMerged $ return ()
+    node "Cluster_LSA_Merged" [| \input -> do
+        tmp <- asks _scatacseq_temp_dir
+        case input of
+            Nothing -> return Nothing
+            Just f -> liftIO $ Just <$> clust tmp f
+        |] $ memory .= 20
+    node "Plot_Cluster_Merged" [| \input -> case input of
+        Nothing -> return ()
+        Just x -> plotClusters' x
+        |] $ return ()
     ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
-    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged"]
-    {-
-    node "Plot_Cluster_Merged" 'plotClusters' $ return ()
-        -}
-
+    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged",
+        "Cluster_LSA_Merged", "Plot_Cluster_Merged"]
 
     node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
     nodePar "Make_Bed_Cluster" 'mkCellClusterBed $ return ()

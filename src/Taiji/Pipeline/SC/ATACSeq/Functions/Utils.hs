@@ -34,7 +34,7 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
-import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector as V
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
 import Data.Conduit.Zlib (multiple, ungzip)
@@ -240,21 +240,15 @@ encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
     f (i,v) = fromJust (packDecimal i) <> "," <> encoder v
 {-# INLINE encodeRowWith #-}
 
-visualizeCluster :: FilePath -> Maybe (U.Vector Double) -> [CellCluster] -> IO ()
-visualizeCluster output marker cs = savePlots output [] [scatter3D dat]
+visualizeCluster :: FilePath
+                 -> Maybe (V.Vector String)  -- ^ Optional indicator
+                 -> [CellCluster] -> IO ()
+visualizeCluster output marker cs = savePlots output [] [scatter3D dat viz]
   where
-    dat = flip map cs $ \(CellCluster nm cells) -> (B.unpack nm, map f cells) 
-    f (Cell i x y z _ v) = case marker of
-        Nothing -> [x, y, z, log $ fromIntegral v]
-        Just m -> [x, y, z, m U.! i]
-
-    {-
-visualizeCluster' :: FilePath -> [CellCluster] -> IO ()
-visualizeCluster' output cs = savePlots output [] [scatter3D dat]
-  where
-    dat = flip map cs $ \(CellCluster nm cells) -> (B.unpack nm, map f cells) 
-    f (Cell i x y z) = [x, y, z, HM.lookupDefault undefined (getName i) nameMap]
-    nameMap = HM.fromList $ zip names [10,20..]
-    names = S.toList $ S.fromList $ concatMap (map (getName . _cell_id) . _cluster_member) cs
-    getName = T.init . fst . T.breakOnEnd "_" . T.pack . B.unpack 
-    -}
+    dat = flip map cs $ \(CellCluster nm cells) ->
+        (B.unpack nm, map (\(Cell _ x y z _ _) -> (x, y, z)) cells)
+    viz = case marker of
+        Nothing -> Continuous $ concatMap
+            (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
+        Just vec -> Categorical $ concatMap
+            (map (\x -> vec V.! _cell_id x) . _cluster_member) cs

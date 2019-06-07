@@ -8,8 +8,7 @@
 {-# LANGUAGE DataKinds #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-    ( clust
-    , performLSA
+    ( performLSA
     , performLSAMerged
     ) where
 
@@ -50,35 +49,6 @@ performLSAMerged (Just input) = do
   where
     f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 
-clust :: Maybe FilePath      -- ^ temp dir
-      -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
-      -> IO [CellCluster]
-clust dir (coverage, mat) = withTempDir dir $ \tmpD -> do
-      runResourceT $ runConduit $ seqDepthC .| mapC snd .|
-          unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
-      shelly $ run_ "sc_utils" [ "clust",
-          "--coverage", T.pack tmpD <> "/coverage",
-          "--embed", T.pack tmpD <> "/embed",
-          T.pack $ mat^.location, T.pack tmpD <> "/clust" ]
-
-      let sourceCells = getZipSource $ (,,) <$>
-              ZipSource (iterateC succ 0) <*>
-              ZipSource seqDepthC <*>
-              ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
-                mapC (map readDouble . B.split '\t') )
-      cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
-      clusters <- readClusters $ tmpD <> "/clust"
-      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
-          map (map (cells V.!)) clusters
-  where
-    readClusters fl = map (map readInt . B.split ',') . B.lines <$>
-        B.readFile fl
-    seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
-        mapC ((\[a,b] -> (a,b)) . B.split '\t')
-    f (i, (bc, dep), [x,y,z]) = Cell i x y z bc $ readInt dep
-    f _ = error "formatting error"
-{-# INLINE clust #-}
-
 performLSA :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
            => SCATACSeq S (File tags 'Other)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
@@ -107,7 +77,7 @@ lsa :: Elem 'Gzip tags ~ 'True
     -> IO ()
 lsa dir lsaNpy input = withTemp dir $ \tmp -> do
       tfidf (input^.location) tmp
-      shelly $ run_ "sc_utils" ["svd", T.pack tmp, T.pack lsaNpy]
+      shelly $ run_ "sc_utils" ["reduce", "--method", "svd", T.pack tmp, T.pack lsaNpy]
 {-# INLINE lsa #-}
 
 --------------------------------------------------------------------------------
@@ -118,8 +88,8 @@ tfidf :: FilePath -> FilePath -> IO ()
 tfidf input output = do
     sp <- mkSpMatrix readInt input
     idf <- mkIDF sp
-    let header = B.pack $
-        printf "Sparse matrix: %d x %d" (_num_row sp) (_num_col sp)
+    let header = B.pack $ printf "Sparse matrix: %d x %d"
+            (_num_row sp) (_num_col sp)
     runResourceT $ runConduit $
         streamRows sp .| mapC (second (\x -> idf `dotProd` binarizeTF x)) .|
         (yield header >> mapC showRow) .| unlinesAsciiC .| gzip .| sinkFile output

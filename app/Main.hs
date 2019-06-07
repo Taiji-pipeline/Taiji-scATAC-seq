@@ -8,6 +8,7 @@ import           Bio.Pipeline.CallPeaks
 import           Bio.Pipeline.Utils
 import           Control.Lens                  ((&), (.~))
 import           Data.Aeson                    (FromJSON)
+import Data.Yaml (decodeFile)
 import Data.Binary (Binary)
 import           GHC.Generics                  (Generic)
 import Data.Default
@@ -47,8 +48,10 @@ instance SCATACSeqConfig SCATACSeqOpts where
     _scatacseq_temp_dir = const Nothing
 
 decodeDrmaa :: String -> Int -> FilePath -> IO D.DrmaaConfig
-decodeDrmaa ip port _ = D.getDefaultDrmaaConfig
-    ["remote", "--ip", ip, "--port", show port]
+decodeDrmaa ip port fl = do
+    config <- D.getDefaultDrmaaConfig ["remote", "--ip", ip, "--port", show port]
+    settings <- decodeFile fl
+    return config { _drmaa_parameters = M.lookup "drmaa_parameters" settings }
 
 build "wf" [t| SciFlow SCATACSeqOpts |] builder
 
