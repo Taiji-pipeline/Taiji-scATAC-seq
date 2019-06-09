@@ -29,11 +29,11 @@ class InputData:
 '''
 
 def ldaTransform(args):
-    from gensim.models.ldamulticore import LdaMulticore
+    from gensim.models.ldamodel import LdaModel
     data = InputData(args.input)
     n_dim = 30
 
-    model = LdaMulticore(data, num_topics=n_dim, chunksize=10000, random_state=2347, passes=20, update_every=0)
+    model = LdaModel(data, num_topics=n_dim, chunksize=10000, random_state=2347, passes=20, update_every=0)
     data_transformed = corpus2dense(model[data], n_dim).T
     np.savetxt(args.output, data_transformed, delimiter='\t')
 
@@ -68,14 +68,15 @@ def reduceDimension(args):
     else:
         ldaTransform(args)
 
-def getEmbedding(mat, output, method="tsne"):
+def getEmbedding(mat, output, method="umap"):
     if(method == "tsne"):
         from MulticoreTSNE import MulticoreTSNE as TSNE
         tsne = TSNE(n_jobs=4, n_components=3, perplexity=15)
         embedding = tsne.fit_transform(mat)
     else:
         import umap
-        embedding = umap.UMAP(random_state=42, n_components=3).fit_transform(mat)
+        embedding = umap.UMAP(random_state=42,
+            n_components=3, min_dist=0).fit_transform(mat)
     np.savetxt(output, embedding, delimiter='\t')
 
 # regress out a variable
@@ -93,6 +94,13 @@ def clustering(args):
         with open(fl, 'r') as f:
             return np.array([[math.log(int(line.strip()))] for line in f])
 
+    def scaling(xs):
+        s = 0
+        for x in xs:
+            s = s + x * x
+        s = math.sqrt(s)
+        return np.array([x / s for x in xs])
+
     data_transformed = np.loadtxt(args.input)
     print(data_transformed.shape)
 
@@ -105,6 +113,9 @@ def clustering(args):
 
     if (args.discard):
         data_transformed = data_transformed[1:]
+
+    if (args.scale):
+        data_transformed = np.apply_along_axis(scaling, 1, data_transformed)
 
     print("Start KNN")
     adj = kneighbors_graph(data_transformed, 20, mode='distance')

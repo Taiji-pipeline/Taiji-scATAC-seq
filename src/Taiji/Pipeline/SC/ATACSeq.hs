@@ -35,26 +35,13 @@ builder = do
     nodePar "LSA" 'performLSA $ return ()
     nodePar "Cluster_LSA" [| \input -> do
         tmp <- asks _scatacseq_temp_dir
-        input & replicates.traversed.files %%~ liftIO . clust tmp
+        input & replicates.traversed.files %%~ liftIO . clust True tmp
         |] $ return ()
     nodePar "Visualize_LSA_Cluster" [| \x -> do
         dir <- asks ((<> "/Cluster/LSA") . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["Make_Count_Matrix", "LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
-
-    -- LDA
-    nodePar "LDA" 'performLDA $ return ()
-    nodePar "Cluster_LDA" [| \input -> do
-        tmp <- asks _scatacseq_temp_dir
-        input & replicates.traversed.files %%~ liftIO . clust tmp
-        |] $ return ()
-    nodePar "Visualize_LDA_Cluster" [| \x -> do
-        dir <- asks ((<> "/Cluster/LDA") . _scatacseq_output_dir) >>= getPath
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Make_Count_Matrix", "LDA", "Cluster_LDA", "Visualize_LDA_Cluster"]
-
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
@@ -63,17 +50,37 @@ builder = do
     node "Cluster_LSA_Merged" [| \input -> do
         tmp <- asks _scatacseq_temp_dir
         case input of
-            Nothing -> return Nothing
-            Just f -> liftIO $ Just <$> clust tmp f
+            Nothing -> return []
+            Just f -> liftIO $ clust True tmp f
         |] $ memory .= 20
-    node "Plot_Cluster_Merged" [| \input -> case input of
-        Nothing -> return ()
-        Just x -> plotClusters' x
+    node "Plot_Cluster_Merged" [| \input -> if null input
+        then return ()
+        else plotClusters' input
         |] $ return ()
     ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
     path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged",
         "Cluster_LSA_Merged", "Plot_Cluster_Merged"]
 
+    node "Make_Bed_Cluster_Prep"  [| return . getClusterBarcodes |] $ return ()
+    ["Get_Bed", "Cluster_LSA_Merged"] ~> "Make_Bed_Cluster_Prep"
+    nodePar "Make_Bed_Cluster" 'getBedCluster $ return ()
+    node "Merge_Bed_Cluster" 'mergeBedCluster $ return ()
+    nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
+    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster", "Merge_Bed_Cluster", "Call_Peak_Cluster"]
+
+    -- LDA
+    nodePar "LDA" 'performLDA $ return ()
+    nodePar "Cluster_LDA" [| \input -> do
+        tmp <- asks _scatacseq_temp_dir
+        input & replicates.traversed.files %%~ liftIO . clust False tmp
+        |] $ return ()
+    nodePar "Visualize_LDA_Cluster" [| \x -> do
+        dir <- asks ((<> "/Cluster/LDA") . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Make_Count_Matrix", "LDA", "Cluster_LDA", "Visualize_LDA_Cluster"]
+
+    {-
     node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
     nodePar "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
     nodePar "Subsample_Bed_Cluster" 'subSampleClusterBed $ return ()
@@ -82,6 +89,7 @@ builder = do
     ["Get_Bed", "Cluster_LSA"] ~> "Make_Bed_Cluster_Prep"
     path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster",
         "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
+        -}
 
     nodePar "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
@@ -98,6 +106,8 @@ builder = do
     path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
     -}
 
+    {-
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
     node "Make_Expr_Table" 'mkExprTable $ return ()
     path ["Call_Peak_Cluster_Prep", "Estimate_Gene_Expr", "Make_Expr_Table"]
+    -}

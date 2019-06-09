@@ -1,8 +1,12 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
+    , getClusterBarcodes
+    , getBedCluster
+    , mergeBedCluster
     , plotClusters
     , plotClusters'
     , clust
@@ -11,11 +15,14 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
 import qualified Data.HashMap.Strict as M
+import qualified Data.HashSet as S
+import Bio.Data.Bed
+import Control.Arrow (first)
 import qualified Data.Vector as V
 import System.Random.MWC.Distributions
 import System.Random.MWC
 import Bio.Utils.Misc (readDouble, readInt)
-import Shelly (shelly, run_)
+import Shelly (shelly, run_, escaping)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
@@ -23,17 +30,18 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
-clust :: Maybe FilePath      -- ^ temp dir
+clust :: Bool   -- ^ Whether to discard the first dimension
+      -> Maybe FilePath      -- ^ temp dir
       -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
       -> IO [CellCluster]
-clust dir (coverage, mat) = withTempDir dir $ \tmpD -> do
+clust discard dir (coverage, mat) = withTempDir dir $ \tmpD -> do
       runResourceT $ runConduit $ seqDepthC .| mapC snd .|
           unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
-      shelly $ run_ "sc_utils" [ "clust",
-          "--discard",
+      shelly $ run_ "sc_utils" $ [ "clust",
           --"--coverage", T.pack tmpD <> "/coverage",
           "--embed", T.pack tmpD <> "/embed",
-          T.pack $ mat^.location, T.pack tmpD <> "/clust" ]
+          T.pack $ mat^.location, T.pack tmpD <> "/clust" ] ++
+            if discard then ["--discard"] else []
 
       let sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
@@ -52,6 +60,56 @@ clust dir (coverage, mat) = withTempDir dir $ \tmpD -> do
     f (i, (bc, dep), [x,y,z]) = Cell i x y z bc $ readInt dep
     f _ = error "formatting error"
 {-# INLINE clust #-}
+
+getClusterBarcodes :: ([SCATACSeq S file], [CellCluster])
+                   -> [(SCATACSeq S (file, [(B.ByteString, [B.ByteString])]))]
+getClusterBarcodes (_, []) = []
+getClusterBarcodes (inputs, clusters) = flip map inputs $ \input ->
+    let res = flip map clusters $ \CellCluster{..} ->
+            (_cluster_name, mapMaybe (getBarcode (input^.eid)) _cluster_member)
+    in input & replicates.traverse.files %~ (\f -> (f, res))
+  where
+    getBarcode e x | B.unpack (B.init i) == T.unpack e = Just bc
+                   | otherwise = Nothing
+      where
+        (i, bc) = B.breakEnd (=='_') $ _cell_barcode x
+
+-- | Extract BEDs for each cluster.
+getBedCluster :: SCATACSeqConfig config
+              => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
+                             , [(B.ByteString, [B.ByteString])] )  -- ^ clusters
+              -> ReaderT config IO
+                    (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed)])
+getBedCluster input = do
+    let idRep = asDir $ "/temp/" <> T.unpack (input^.eid) <>
+            "_rep" <> show (input^.replicates._1)
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
+    input & replicates.traverse.files %%~ liftIO . ( \(bed, cs) -> do
+        let sinks = sequenceConduits $ flip map cs $ \(cName, bc) -> do
+                let output = dir ++ "/" ++ B.unpack cName ++ ".bed.gz"
+                    cells = S.fromList bc
+                    fl = location .~ output $ emptyFile
+                filterC (\x -> fromJust ((x::BED)^.name) `S.member` cells) .|
+                    sinkFileBedGzip output
+                return (cName, fl)
+        runResourceT $ runConduit $
+            streamBedGzip (bed^.location) .| sinks )
+
+-- | Extract BEDs for each cluster.
+mergeBedCluster :: SCATACSeqConfig config
+                => [SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed)]]
+                -> ReaderT config IO [(B.ByteString, File '[Gzip] 'Bed)]
+mergeBedCluster inputs = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Bed/Cluster/")
+    liftIO $ forM clusters $ \(cName, fls) -> do
+        let output = dir <> B.unpack cName <> ".bed.gz"
+        shelly $ escaping False $ do
+            run_ "cat" $ map (\x -> T.pack $ x^.location) fls ++ [">", T.pack output]
+            run_ "rm" $ map (\x -> T.pack $ x^.location) fls
+        return (cName, location .~ output $ emptyFile)
+  where
+    clusters = map (first head . unzip) $ groupBy ((==) `on` fst) $
+        sortBy (comparing fst) $ concat $ inputs^..folded.replicates._2.files
 
 plotClusters :: FilePath
              -> SCATACSeq S [CellCluster]

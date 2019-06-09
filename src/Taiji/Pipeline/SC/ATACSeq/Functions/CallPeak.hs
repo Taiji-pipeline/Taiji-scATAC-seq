@@ -19,19 +19,30 @@ import Shelly hiding (FilePath)
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 
-callPeakCluster :: SCATACSeqConfig config
-                => (SCATACSeq S (B.ByteString, File '[Gzip] 'Bed))
-                -> ReaderT config IO
-                    (SCATACSeq S (B.ByteString, File '[] 'NarrowPeak))
-callPeakCluster input = do
-    let idRep = asDir $ "/Peaks/" <> T.unpack (input^.eid) <>
-            "_rep" <> show (input^.replicates._1)
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
+{-
+callPeakBulk :: SCATACSeqConfig config
+             => SCATACSeq S (File tags 'Bed)
+             -> ReaderT config IO (SCATACSeq S (File '[] 'NarrowPeak))
+callPeakBulk input = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Peaks"))
+    let output = printf "%s/%s_rep%d_filt.bed.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
     opts <- asks _scatacseq_callpeak_opts
     input & replicates.traverse.files %%~ liftIO . ( \(nm, fl) -> do
         let output = dir ++ "/" ++ B.unpack nm ++ ".narrowPeak" 
         r <- callPeaks output fl Nothing opts
         return (nm, r) )
+        -}
+
+callPeakCluster :: SCATACSeqConfig config
+                => (B.ByteString, File '[Gzip] 'Bed)
+                -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
+callPeakCluster (cName, bedFl) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Peaks/Cluster/")
+    opts <- asks _scatacseq_callpeak_opts
+    let output = dir ++ B.unpack cName ++ ".narrowPeak" 
+    r <- liftIO $ callPeaks output bedFl Nothing opts
+    return (cName, r)
 
 -- | Extract BEDs for each cluster.
 mkCellClusterBed :: SCATACSeqConfig config
@@ -64,7 +75,7 @@ subSampleClusterBed :: SCATACSeqConfig config
                     (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed)])
 subSampleClusterBed input = do
     let idRep = asDir $ "/Bed/" <> T.unpack (input^.eid) <>
-            "_rep" <> show (input^.replicates._1) <> "Subsample"
+            "_rep" <> show (input^.replicates._1) <> "_Subsample"
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
     input & replicates.traverse.files %%~ liftIO . ( \fls -> 
         fmap catMaybes $ forM fls $ \(name, bed, n) -> if n >= depth
