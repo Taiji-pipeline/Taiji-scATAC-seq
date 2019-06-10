@@ -11,26 +11,13 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
 
 import qualified Data.ByteString.Char8 as B
 import Data.Conduit.List (groupBy)
-import qualified Data.HashMap.Strict                  as M
-import qualified Data.HashSet as S
-import Data.ByteString.Lex.Integral (packDecimal)
-import Data.Double.Conversion.ByteString (toShortest)
-import           Bio.Utils.Misc (readInt, readDouble)
 import Data.Conduit.Internal (zipSinks)
-import Control.Arrow (first)
 import Control.Monad.ST
 import Bio.Data.Bed.Types
-import Data.Conduit.Zlib (gzip)
 import Bio.Data.Bed
-import Bio.RealWorld.GENCODE (readGenes, Gene(..))
-import           Data.CaseInsensitive  (mk, original, CI)
 import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector.Unboxed.Mutable as UM
-import qualified Data.IntervalMap.Strict      as IM
 import Data.Singletons.Prelude (Elem)
 import           Bio.Pipeline.Utils
-import Control.Arrow (second)
-import           Data.List.Ordered                    (nubSort)
 import qualified Data.Text as T
 import Control.DeepSeq (force)
 import Bio.Data.Bed.Utils

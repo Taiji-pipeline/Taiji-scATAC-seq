@@ -60,8 +60,8 @@ build "wf" [t| SciFlow SCATACSeqOpts |] builder
 main :: IO ()
 main = defaultMain "" cmd wf
   where
-    cmd = [ runParser undefined
+    cmd = [ runParser (\_ _ _ -> return $ L.LocalConfig 2)
           , viewParser
           , deleteParser
-          , remoteParser (Proxy :: Proxy L.LocalConfig) ]
+          , remoteParser (Proxy :: Proxy L.Local) ]
 

@@ -1,21 +1,19 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
-    , getClusterBarcodes
-    , getBedCluster
-    , mergeBedCluster
     , plotClusters
     , plotClusters'
     , clust
     , lsaClust
+    , extractTags
     ) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
-import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as S
 import Bio.Data.Bed
 import Control.Arrow (first)
@@ -24,6 +22,7 @@ import System.Random.MWC.Distributions
 import System.Random.MWC
 import Bio.Utils.Misc (readDouble, readInt)
 import Shelly (shelly, run_, escaping)
+import Control.Workflow
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
@@ -43,6 +42,13 @@ lsaClust prefix = do
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
+
+extractTags :: Builder ()
+extractTags = do
+    node "Extract_Tags_Prep"  [| return . getClusterBarcodes |] $ return ()
+    nodePar "Extract_Tags" 'getBedCluster $ return ()
+    node "Merge_Tags_Cluster" 'mergeBedCluster $ return ()
+    path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Cluster"]
 
 clust :: Bool   -- ^ Whether to discard the first dimension
       -> Maybe FilePath      -- ^ temp dir
@@ -75,11 +81,10 @@ clust discard dir (coverage, mat) = withTempDir dir $ \tmpD -> do
     f _ = error "formatting error"
 {-# INLINE clust #-}
 
-getClusterBarcodes :: ([SCATACSeq S file], [CellCluster])
+getClusterBarcodes :: ([SCATACSeq S file], [SCATACSeq S [CellCluster]])
                    -> [(SCATACSeq S (file, [(B.ByteString, [B.ByteString])]))]
-getClusterBarcodes (_, []) = []
-getClusterBarcodes (inputs, clusters) = flip map inputs $ \input ->
-    let res = flip map clusters $ \CellCluster{..} ->
+getClusterBarcodes (inputs, [clusters]) = flip map inputs $ \input ->
+    let res = flip map (clusters^.replicates._2.files) $ \CellCluster{..} ->
             (_cluster_name, mapMaybe (getBarcode (input^.eid)) _cluster_member)
     in input & replicates.traverse.files %~ (\f -> (f, res))
   where
@@ -87,6 +92,7 @@ getClusterBarcodes (inputs, clusters) = flip map inputs $ \input ->
                    | otherwise = Nothing
       where
         (i, bc) = B.breakEnd (=='_') $ _cell_barcode x
+getClusterBarcodes _ = []
 
 -- | Extract BEDs for each cluster.
 getBedCluster :: SCATACSeqConfig config

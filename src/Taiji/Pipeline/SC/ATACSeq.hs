@@ -10,7 +10,9 @@ import           Taiji.Pipeline.SC.ATACSeq.Functions
 
 builder :: Builder ()
 builder = do
-    -- The basics
+--------------------------------------------------------------------------------
+-- The basics
+--------------------------------------------------------------------------------
     node "Read_Input" 'readInput $
         doc .= "Read ATAC-seq data information from input file."
     node "Download_Data" 'downloadData $
@@ -26,6 +28,9 @@ builder = do
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
          , "QC" ]
 
+--------------------------------------------------------------------------------
+-- Cell by Window matrix
+--------------------------------------------------------------------------------
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
     nodePar "Get_Bins" 'getBins $ return ()
@@ -33,15 +38,30 @@ builder = do
     [ "Download_Data", "QC"] ~> "Get_Bed"
     path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
 
-    -- LSA
-    lsaClust "Cluster/LSA/"
-    path ["Make_Count_Matrix", "LSA"]
-
-    {-
+    -- merged matrix
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
-    node "Merge_Count_Matrix" 'mergeMatrix $ return ()
+    node "Merge_Count_Matrix" 'mergeFeatMatrix $ return ()
+    ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
+    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix"]
+
+--------------------------------------------------------------------------------
+-- LSA
+--------------------------------------------------------------------------------
+    lsaClust "Cluster_by_window/LSA/"
+    path ["Make_Count_Matrix", "LSA"]
+
+    namespace "Merged" $ lsaClust "Cluster_by_window/LSA/"
+    path ["Merge_Count_Matrix", "Merged_LSA"]
+    namespace "LSA" extractTags
+    ["Get_Bed", "Merged_Cluster_LSA"] ~> "LSA_Extract_Tags_Prep"
+
+    nodePar "LSA_Call_Peaks" 'findPeaks $ return ()
+    node "LSA_Merge_Peaks" 'mergePeaks $ return ()
+    path ["LSA_Merge_Tags_Cluster", "LSA_Call_Peaks", "LSA_Merge_Peaks"]
+
+    {-
     node "LSA_Merged" 'performLSAMerged $ return ()
     node "Cluster_LSA_Merged" [| \input -> do
         tmp <- asks _scatacseq_temp_dir
@@ -53,7 +73,6 @@ builder = do
         then return ()
         else plotClusters' input
         |] $ return ()
-    ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
     path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged",
         "Cluster_LSA_Merged", "Plot_Cluster_Merged"]
 

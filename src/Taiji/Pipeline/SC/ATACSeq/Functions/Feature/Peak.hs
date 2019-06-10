@@ -2,8 +2,8 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 
-module Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
-    ( callPeakCluster
+module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
+    ( findPeaks
     , mergePeaks
     , mkCellClusterBed
     , subSampleClusterBed
@@ -35,10 +35,11 @@ callPeakBulk input = do
         return (nm, r) )
         -}
 
-callPeakCluster :: SCATACSeqConfig config
+-- | Call Peaks
+findPeaks :: SCATACSeqConfig config
                 => (B.ByteString, File '[Gzip] 'Bed)
                 -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
-callPeakCluster (cName, bedFl) = do
+findPeaks (cName, bedFl) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Peaks/Cluster/")
     opts <- asks _scatacseq_callpeak_opts
     let output = dir ++ B.unpack cName ++ ".narrowPeak" 

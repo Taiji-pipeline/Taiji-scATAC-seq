@@ -8,9 +8,7 @@
 {-# LANGUAGE DataKinds #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-    ( performLSA
-    , performLSAMerged
-    ) where
+    ( performLSA ) where
 
 import Control.Arrow
 import Data.Conduit.Zlib (gzip)
@@ -28,26 +26,6 @@ import Shelly (shelly, run_)
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
-
--- | Using LSA + graphical clustering
-performLSAMerged :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-                 => Maybe (File tags 'Other)
-                 -> ReaderT config IO (Maybe (File '[] 'Tsv, File '[Gzip] 'Tsv))
-performLSAMerged Nothing = return Nothing
-performLSAMerged (Just input) = do
-    dir <- asks ((<> "/LSA") . _scatacseq_output_dir) >>= getPath
-    tmp <- asks _scatacseq_temp_dir
-    let output = dir <> "/merged_lsa.tsv.gz"
-        rownames = dir <> "/merged_lsa.rownames.txt"
-    liftIO $ do
-        lsa tmp output input
-        sp <- mkSpMatrix readInt $ input^.location
-        runResourceT $ runConduit $
-            streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
-        return $ Just ( location .~ rownames $ emptyFile
-                , location .~ output $ emptyFile )
-  where
-    f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 
 performLSA :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
            => SCATACSeq S (File tags 'Other)

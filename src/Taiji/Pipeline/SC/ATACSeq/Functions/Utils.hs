@@ -255,7 +255,7 @@ encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
 
 -- | Generating the cell by feature count matrix as a gzipped stream.
 -- The input stream is raw tags grouped by cells.
-mkFeatMat :: MonadIO m
+mkFeatMat :: (PrimMonad m, MonadThrow m)
           => Int   -- ^ the number of cells
           -> [BED3]    -- ^ a list of regions
           -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
@@ -267,10 +267,10 @@ mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
     nBin = length regions
     header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
     countEachCell :: BEDTree Int -> [BED] -> [(Int, Int)]
-    countEachCell regions = HM.toList . foldl' f HM.empty
+    countEachCell beds = HM.toList . foldl' f HM.empty
       where
         f m bed = foldl' (\x k -> HM.insertWith (+) k (1::Int) x) m $
-            intersecting regions query
+            intersecting beds query
           where
             query = case bed^.strand of
                 Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
@@ -287,7 +287,7 @@ mergeMatrix :: Elem 'Gzip tags1 ~ 'True
             => [(B.ByteString, (File tags1 file, File tags2 'Other))]  -- ^ (regions, matrix)
             -> ConduitT () B.ByteString (ResourceT IO) ()
 mergeMatrix inputs = do
-    indices <- liftIO $ getIndices $ map fst inputs
+    indices <- liftIO $ getIndices $ map (fst . snd) inputs
     mats <- liftIO $ forM inputs $ \(nm, (idxFl, matFl)) -> do
         idxMap <- fmap (mkIdxMap indices) $ runResourceT $ runConduit $
             streamBedGzip (idxFl^.location) .|
