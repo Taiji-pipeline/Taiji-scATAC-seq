@@ -24,7 +24,8 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions
                        Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
-                       Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Feature
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
@@ -87,7 +88,6 @@ executable taiji-scatac-seq
                      , data-default
                      , lens
                      , SciFlow >=0.7.0
-                     , SciFlow-drmaa
                      , SciFlow-app
                      , Taiji-scATAC-seq
 

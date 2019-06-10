@@ -1,6 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     ( extractBarcode
     , readPromoters
@@ -20,14 +23,21 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , decodeRowWith
     , encodeRowWith
 
+      -- * Feature matrix
+    , mkFeatMat
+    , groupCells
+    , mergeMatrix
+
     , visualizeCluster
     ) where
 
 import Bio.Data.Bed
+import Bio.Data.Bed.Types
 import System.IO
+import Data.Conduit.List (groupBy)
 import Data.Conduit.Internal (zipSinks)
 import           Bio.RealWorld.GENCODE
-import Control.Arrow (second)
+import Control.Arrow (first, second)
 import Data.Either (either)
 import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
@@ -35,10 +45,12 @@ import qualified Data.HashSet as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
-import Data.Conduit.Zlib (multiple, ungzip)
+import Data.Conduit.Zlib (multiple, ungzip, gzip)
 import Data.Binary (encode, decode)
+import Data.Singletons.Prelude (Elem)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
@@ -50,7 +62,7 @@ import           Shelly                        (fromText, mkdir_p, shelly,
 import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
 
-import Taiji.Prelude
+import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.ECharts
@@ -239,6 +251,75 @@ encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
   where
     f (i,v) = fromJust (packDecimal i) <> "," <> encoder v
 {-# INLINE encodeRowWith #-}
+
+
+-- | Generating the cell by feature count matrix as a gzipped stream.
+-- The input stream is raw tags grouped by cells.
+mkFeatMat :: MonadIO m
+          => Int   -- ^ the number of cells
+          -> [BED3]    -- ^ a list of regions
+          -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
+mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
+  where
+    source = yield header >> mapC
+        (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
+    bedTree = bedToTree undefined $ zip regions [0::Int ..]
+    nBin = length regions
+    header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+    countEachCell :: BEDTree Int -> [BED] -> [(Int, Int)]
+    countEachCell regions = HM.toList . foldl' f HM.empty
+      where
+        f m bed = foldl' (\x k -> HM.insertWith (+) k (1::Int) x) m $
+            intersecting regions query
+          where
+            query = case bed^.strand of
+                Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
+                _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
+{-# INLINE mkFeatMat #-}
+
+groupCells :: Monad m => ConduitT BED (B.ByteString, [BED]) m ()
+groupCells = groupBy ((==) `on` (^.name)) .|
+    mapC (\xs -> (fromJust $ head xs^.name, xs))
+{-# INLINE groupCells #-}
+
+-- | Merge sparse matrix.
+mergeMatrix :: Elem 'Gzip tags1 ~ 'True
+            => [(B.ByteString, (File tags1 file, File tags2 'Other))]  -- ^ (regions, matrix)
+            -> ConduitT () B.ByteString (ResourceT IO) ()
+mergeMatrix inputs = do
+    indices <- liftIO $ getIndices $ map fst inputs
+    mats <- liftIO $ forM inputs $ \(nm, (idxFl, matFl)) -> do
+        idxMap <- fmap (mkIdxMap indices) $ runResourceT $ runConduit $
+            streamBedGzip (idxFl^.location) .|
+            mapC (\x -> ((x::BED3)^.chrom, x^.chromStart)) .| sinkList
+        mat <- mkSpMatrix readInt $ matFl^.location
+        return ( nm, mat
+            { _decoder = \x -> _decoder mat x .| mapC (changeIdx idxMap)
+            , _num_col = HM.size indices } )
+    merge mats
+  where
+    merge ms
+        | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"
+        | otherwise = source .|
+            (yield header >> mapC (encodeRowWith (fromJust . packDecimal))) .|
+            unlinesAsciiC .| gzip
+      where
+        source = forM_ ms $ \(sample, m) -> streamRows m .| 
+            mapC (first (\x -> sample <> "_" <> x))
+        nCell = foldl' (+) 0 $ map (_num_row . snd) ms
+        nBin = _num_col $ snd $ head ms
+        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+    getIndices idxFls = do
+        idx <- runResourceT $ runConduit $
+            mapM_ (streamBedGzip . (^.location)) idxFls .| foldlC f S.empty
+        return $ HM.fromList $ zip (S.toList idx) [0..]
+      where
+        f :: S.HashSet (B.ByteString, Int) -> BED3 -> S.HashSet (B.ByteString, Int) 
+        f m b = S.insert (b^.chrom, b^.chromStart) m
+    changeIdx idxMap = second $ sortBy (comparing fst) . map (first (idxMap U.!))
+    mkIdxMap newIdx oldIdx = U.fromList $ map f oldIdx
+      where
+        f k = HM.lookupDefault undefined k newIdx
 
 visualizeCluster :: FilePath
                  -> Maybe (V.Vector String)  -- ^ Optional indicator

@@ -4,7 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GADTs #-}
-module Taiji.Pipeline.SC.ATACSeq.Functions.Quantification
+module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
     ( mkCutSiteIndex
     , getBins
     , mkCellByBinMat
@@ -43,6 +43,7 @@ import Bio.Seq.IO (withGenome, getChrSizes)
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
 
 --------------------------------------------------------------------------------
 -- Cut site map
@@ -75,6 +76,27 @@ mkCutSiteIndex_ output input chrs = createCutSiteIndex output chrs $
 --------------------------------------------------------------------------------
 -- Cell by Bin Matrix
 --------------------------------------------------------------------------------
+
+-- | Generating cell by bin count matrix.
+countTagsCellByBin :: [BED3]    -- ^ a list of regions
+                   -> ConduitT (B.ByteString, [BED]) 
+countTagsCellByBin regions = (\(tagFl, regionFl, nCell) -> do
+        let bedTree = bedToTree undefined $ zip regions [0::Int ..]
+            nBin = length regions
+            header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+        runResourceT $ runConduit $ mapC (countEachCell bedTree) .|
+            (yield header >> mapC (uncurry showSparseVector)) .|
+            unlinesAsciiC .| gzip .| sinkFile output
+        return $ emptyFile & location .~ output )
+  where
+    countEachCell :: BEDTree Int -> [BED] -> [(Int, Int)]
+    countEachCell regions input = M.toList $ foldl' f M.empty input
+      where
+        f m bed = foldl' (flip (M.insertWith (+))) m $ intersecting regions query
+          where
+            query = case bed^.strand of
+                Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
+                _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
 
 -- | Get candidate bins.
 getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)

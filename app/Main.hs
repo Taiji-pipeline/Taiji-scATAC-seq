@@ -14,7 +14,7 @@ import           GHC.Generics                  (Generic)
 import Data.Default
 
 import           Control.Workflow
-import qualified Control.Workflow.Coordinator.Drmaa as D
+import qualified Control.Workflow.Coordinator.Local as L
 import Control.Workflow.Main
 import Data.Proxy (Proxy(..))
 
@@ -47,19 +47,21 @@ instance SCATACSeqConfig SCATACSeqOpts where
     _scatacseq_annotation = annotation
     _scatacseq_temp_dir = const Nothing
 
+    {-
 decodeDrmaa :: String -> Int -> FilePath -> IO D.DrmaaConfig
 decodeDrmaa ip port fl = do
     config <- D.getDefaultDrmaaConfig ["remote", "--ip", ip, "--port", show port]
     settings <- decodeFile fl
     return config { _drmaa_parameters = M.lookup "drmaa_parameters" settings }
+    -}
 
 build "wf" [t| SciFlow SCATACSeqOpts |] builder
 
 main :: IO ()
 main = defaultMain "" cmd wf
   where
-    cmd = [ runParser decodeDrmaa
+    cmd = [ runParser undefined
           , viewParser
           , deleteParser
-          , remoteParser (Proxy :: Proxy D.Drmaa) ]
+          , remoteParser (Proxy :: Proxy L.LocalConfig) ]
 

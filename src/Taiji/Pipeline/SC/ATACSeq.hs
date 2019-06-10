@@ -10,6 +10,7 @@ import           Taiji.Pipeline.SC.ATACSeq.Functions
 
 builder :: Builder ()
 builder = do
+    -- The basics
     node "Read_Input" 'readInput $
         doc .= "Read ATAC-seq data information from input file."
     node "Download_Data" 'downloadData $
@@ -22,26 +23,21 @@ builder = do
     nodePar "Filter_Bam" 'filterBamSort $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     nodePar "QC" 'qualityControl $ return ()
-    nodePar "Get_Bins" 'getBins $ return ()
     path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
          , "QC" ]
+
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
-    nodePar "Make_Count_Matrix" 'mkCellByBinMat $ return ()
+    nodePar "Get_Bins" 'getBins $ return ()
+    nodePar "Make_Count_Matrix" 'mkWindowMat $ return ()
     [ "Download_Data", "QC"] ~> "Get_Bed"
     path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
 
     -- LSA
-    nodePar "LSA" 'performLSA $ return ()
-    nodePar "Cluster_LSA" [| \input -> do
-        tmp <- asks _scatacseq_temp_dir
-        input & replicates.traversed.files %%~ liftIO . clust True tmp
-        |] $ return ()
-    nodePar "Visualize_LSA_Cluster" [| \x -> do
-        dir <- asks ((<> "/Cluster/LSA") . _scatacseq_output_dir) >>= getPath
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Make_Count_Matrix", "LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
+    lsaClust "Cluster/LSA/"
+    path ["Make_Count_Matrix", "LSA"]
+
+    {-
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
@@ -66,8 +62,12 @@ builder = do
     nodePar "Make_Bed_Cluster" 'getBedCluster $ return ()
     node "Merge_Bed_Cluster" 'mergeBedCluster $ return ()
     nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
-    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster", "Merge_Bed_Cluster", "Call_Peak_Cluster"]
+    node "Merge_Peaks" 'mergePeaks $ return ()
+    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster", "Merge_Bed_Cluster",
+        "Call_Peak_Cluster", "Merge_Peaks"]
+        -}
 
+    {-
     -- LDA
     nodePar "LDA" 'performLDA $ return ()
     nodePar "Cluster_LDA" [| \input -> do
@@ -79,6 +79,7 @@ builder = do
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["Make_Count_Matrix", "LDA", "Cluster_LDA", "Visualize_LDA_Cluster"]
+    -}
 
     {-
     node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()

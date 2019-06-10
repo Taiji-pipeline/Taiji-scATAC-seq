@@ -10,6 +10,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , plotClusters
     , plotClusters'
     , clust
+    , lsaClust
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -29,6 +30,19 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+
+lsaClust :: FilePath -> Builder ()
+lsaClust prefix = do
+    nodePar "LSA" 'performLSA $ return ()
+    nodePar "Cluster_LSA" [| \input -> do
+        tmp <- asks _scatacseq_temp_dir
+        input & replicates.traversed.files %%~ liftIO . clust True tmp
+        |] $ return ()
+    nodePar "Visualize_LSA_Cluster" [| \x -> do
+        dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
 
 clust :: Bool   -- ^ Whether to discard the first dimension
       -> Maybe FilePath      -- ^ temp dir

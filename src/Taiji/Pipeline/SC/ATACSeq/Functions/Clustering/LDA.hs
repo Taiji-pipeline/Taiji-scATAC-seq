@@ -17,6 +17,11 @@ import qualified Data.Vector.Unboxed.Mutable as UM
 import qualified Data.Text as T
 import Shelly (shelly, run_)
 
+import qualified Language.R                        as R
+import           Language.R.QQ
+import qualified Data.Vector.SEXP as V
+import Language.R.HExp
+
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -70,3 +75,20 @@ showRow (name, xs) = B.intercalate "\t" $ name : map f xs
   where
     f (i,v) = fromJust (packDecimal i) <> "," <> toShortest v
 
+
+{-
+-- | Run the LDA model implemented in cisTopic.
+-- Input matrix: a precomputed matrix with cells as columns, regions as cells
+-- and fragments/reads counts as values.
+-- The rownames of these matrix must contain the region coordinates in
+-- position format (e.g. chr1:123456-134567)
+cisTopic :: FilePath    -- ^ input matrix
+         -> IO ()
+cisTopic input = R.runRegion $ do
+    _ <- [r| library("cisTopic")
+             cisTopicObject <- createcisTopicObject(counts_mel, project.name='cis')
+             cisTopicObject <- runModels(cisTopicObject,
+                topic=30, seed=987, nCores=13, burnin = 120, iterations = 150,
+                addModels=FALSE)
+            cisTopicObject <- selectModel(cisTopicObject)
+-}

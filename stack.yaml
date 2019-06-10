@@ -13,7 +13,7 @@ extra-deps:
   commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
 
 - git:     https://github.com/Taiji-pipeline/Taiji-utils.git
-  commit:  b2563e897fddd89c9f323e09be1696be7b0b972d
+  commit:  14115137475e7eccc6744b3b9054299b0049fb25
 
 - git:     https://github.com/Taiji-pipeline/bio-pipelines.git
   commit:  b9814899ac5d8322bf1e8e04b48712472e807df7
@@ -37,8 +37,12 @@ extra-deps:
       - SciFlow-app
       - SciFlow-drmaa
 
+- git:     https://github.com/kaizhang/bioinformatics-toolkit.git
+  commit:  2a551f1b71ae71996ada231c0d4f9feebdd9e875
+  subdirs:
+      - bioinformatics-toolkit
+
 - distributed-process-monad-control-0.5.1.3
-- bioinformatics-toolkit-0.8.0
 - HsHTSLib-1.9.2
 - drmaa-0.3.0
 - clustering-0.4.1

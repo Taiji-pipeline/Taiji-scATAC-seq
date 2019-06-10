@@ -4,6 +4,7 @@
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.CallPeak
     ( callPeakCluster
+    , mergePeaks
     , mkCellClusterBed
     , subSampleClusterBed
     ) where
@@ -44,6 +45,27 @@ callPeakCluster (cName, bedFl) = do
     r <- liftIO $ callPeaks output bedFl Nothing opts
     return (cName, r)
 
+mergePeaks :: SCATACSeqConfig config
+           => [(B.ByteString, File '[] 'NarrowPeak)]
+           -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
+mergePeaks [] = return Nothing
+mergePeaks input = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Peaks/")
+    let output = dir <> "merged.narrowPeak.gz" 
+    liftIO $ withTemp Nothing $ \tmp -> do
+        shelly $ escaping False $ bashPipeFail bash_ "cat" $
+            map (T.pack . (^._2.location)) input ++
+            [ "|", "sort", "-k1,1", "-k2,2n", "-k3,3n", ">", T.pack tmp ]
+        runResourceT $ runConduit $ streamBed tmp .| 
+            mergeSortedBedWith getBestPeak .| mapC resize .| sinkFileBedGzip output
+    return $ Just $ location .~ output $ emptyFile
+  where
+    getBestPeak = maximumBy $ comparing (fromJust . (^.npPvalue))
+    resize pk = chromStart .~ max 0 (summit - 250) $
+        chromEnd .~ summit + 250 $ pk
+      where
+        summit = pk^.chromStart + fromJust (pk^.npPeak)
+    
 -- | Extract BEDs for each cluster.
 mkCellClusterBed :: SCATACSeqConfig config
                  => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
