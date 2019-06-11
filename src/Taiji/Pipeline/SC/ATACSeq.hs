@@ -72,8 +72,8 @@ builder = do
     nodePar "LSA_Make_Peak_Matrix" 'mkPeakMat $ return ()
     ["Get_Bins", "LSA_Merge_Peaks"] ~> "LSA_Make_Peak_Matrix_Prep"
     path ["LSA_Make_Peak_Matrix_Prep", "LSA_Make_Peak_Matrix"]
-    node "LSA_Merge_Peak_Matrix_Prep" [| \(x, y) -> return $
-        zipExp (x & mapped.replicates._2.files %~ (^._2)) y
+    node "LSA_Merge_Peak_Matrix_Prep" [| \(pk, exps) -> return $ flip map exps $
+        \e -> e & replicates._2.files %~ (\x -> (fromJust pk,x))
         |]$ return ()
     node "LSA_Merge_Peak_Matrix" [| mergeFeatMatrix "cell_by_peak.txt.gz" |] $ return ()
     ["LSA_Merge_Peaks", "LSA_Make_Peak_Matrix"] ~> "LSA_Merge_Peak_Matrix_Prep"

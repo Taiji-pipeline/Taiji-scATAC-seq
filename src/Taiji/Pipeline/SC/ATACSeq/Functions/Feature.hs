@@ -46,7 +46,7 @@ mergeFeatMatrix :: ( Elem 'Gzip tags1 ~ 'True
                    , Elem 'Gzip tags2 ~ 'True
                    , SCATACSeqConfig config )
                 => FilePath
-                -> [SCATACSeq S (File tags1 'Bed, File tags2 'Other)]
+                -> [SCATACSeq S (File tags1 file, File tags2 'Other)]
                 -> ReaderT config IO [SCATACSeq S (File '[Gzip] 'Other)]
 mergeFeatMatrix _ [] = return []
 mergeFeatMatrix filename inputs = do
