@@ -28,10 +28,11 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 performLSA :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-           => SCATACSeq S (File tags 'Other)
+           => FilePath
+           -> SCATACSeq S (File tags 'Other)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
-performLSA input = do
-    dir <- asks ((<> "/LSA") . _scatacseq_output_dir) >>= getPath
+performLSA prefix input = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     tmp <- asks _scatacseq_temp_dir
     let output = printf "%s/%s_rep%d_lsa.tsv.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)

@@ -35,8 +35,8 @@ getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
 getBins input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
-    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_bin_idx.bed.gz" dir (T.unpack $ input^.eid)
+    dir <- asks ((<> "/Feature/Window") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_window_idx.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\fl -> do
         (n, rc) <- binCount fl chrSize res
@@ -54,7 +54,7 @@ mkWindowMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
                => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
                -> ReaderT config IO (SCATACSeq S (File tags 'Other))
 mkWindowMat input = do
-    dir <- asks ((<> "/ReadCount") . _scatacseq_output_dir) >>= getPath
+    dir <- asks ((<> "/Feature/Window/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_window.txt.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do

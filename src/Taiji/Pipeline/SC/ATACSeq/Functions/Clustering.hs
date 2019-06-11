@@ -6,7 +6,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
     , plotClusters
-    , plotClusters'
     , clust
     , lsaClust
     , extractTags
@@ -32,7 +31,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 lsaClust :: FilePath -> Builder ()
 lsaClust prefix = do
-    nodePar "LSA" 'performLSA $ return ()
+    nodePar "LSA" [| performLSA prefix |] $ return ()
     nodePar "Cluster_LSA" [| \input -> do
         tmp <- asks _scatacseq_temp_dir
         input & replicates.traversed.files %%~ liftIO . clust True tmp
@@ -135,10 +134,15 @@ plotClusters :: FilePath
              -> SCATACSeq S [CellCluster]
              -> IO ()
 plotClusters dir input = do
-    let output = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
+    let output2d = printf "%s/%s_rep%d_cluster_2d.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    visualizeCluster output Nothing $ input^.replicates._2.files
+        output3d = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    clusters <- sampleCells (input^.replicates._2.files)
+    visualizeCluster2D output2d Nothing clusters
+    visualizeCluster3D output3d Nothing clusters
 
+{-
 plotClusters' :: SCATACSeqConfig config
               => [CellCluster]
               -> ReaderT config IO ()
@@ -148,14 +152,20 @@ plotClusters' clusters = do
         bcs = Just $ V.fromList $ concatMap
             (map (B.unpack . fst . B.break (=='_') . _cell_barcode) . _cluster_member) clusters
     liftIO $ sampleCells clusters >>= visualizeCluster output bcs
+    -}
 
 sampleCells :: [CellCluster]
             -> IO [CellCluster]
-sampleCells clusters = do
-    gen <- create
-    forM clusters $ \c -> do
-        s <- sampling gen 0.2 $ V.fromList $ _cluster_member c
-        return $ c {_cluster_member = V.toList s}
+sampleCells clusters
+    | ratio >= 1 = return clusters
+    | otherwise = do
+        gen <- create
+        forM clusters $ \c -> do
+            s <- sampling gen ratio $ V.fromList $ _cluster_member c
+            return $ c {_cluster_member = V.toList s}
+  where
+    n = foldl1' (+) $ map (length . _cluster_member) clusters
+    ratio = 1 / (fromIntegral n / 30000)
 
 sampling :: GenIO
          -> Double  -- ^ fraction

@@ -28,7 +28,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , groupCells
     , mergeMatrix
 
-    , visualizeCluster
+    , visualizeCluster2D
+    , visualizeCluster3D
     ) where
 
 import Bio.Data.Bed
@@ -321,16 +322,26 @@ mergeMatrix inputs = do
       where
         f k = HM.lookupDefault undefined k newIdx
 
-visualizeCluster :: FilePath
-                 -> Maybe (V.Vector String)  -- ^ Optional indicator
-                 -> [CellCluster] -> IO ()
-visualizeCluster output marker cs = savePlots output []
-    [scatter3D dat3D viz, scatter dat2D viz]
+visualizeCluster2D :: FilePath
+                   -> Maybe (V.Vector String)  -- ^ Optional indicator
+                   -> [CellCluster] -> IO ()
+visualizeCluster2D output marker cs = savePlots output [] [scatter dat2D viz]
+  where
+    dat2D = flip map cs $ \(CellCluster nm cells) ->
+        (B.unpack nm, map (\(Cell _ x y _ _ _) -> (x, y)) cells)
+    viz = case marker of
+        Nothing -> Continuous $ concatMap
+            (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
+        Just vec -> Categorical $ concatMap
+            (map (\x -> vec V.! _cell_id x) . _cluster_member) cs
+
+visualizeCluster3D :: FilePath
+                   -> Maybe (V.Vector String)  -- ^ Optional indicator
+                   -> [CellCluster] -> IO ()
+visualizeCluster3D output marker cs = savePlots output [] [scatter3D dat3D viz]
   where
     dat3D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map (\(Cell _ x y z _ _) -> (x, y, z)) cells)
-    dat2D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map (\(Cell _ x y _ _ _) -> (x, y)) cells)
     viz = case marker of
         Nothing -> Continuous $ concatMap
             (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs

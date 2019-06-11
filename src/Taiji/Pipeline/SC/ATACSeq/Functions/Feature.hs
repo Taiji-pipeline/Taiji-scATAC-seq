@@ -50,7 +50,7 @@ mergeFeatMatrix :: ( Elem 'Gzip tags1 ~ 'True
                 -> ReaderT config IO [SCATACSeq S (File '[Gzip] 'Other)]
 mergeFeatMatrix _ [] = return []
 mergeFeatMatrix filename inputs = do
-    dir <- asks ((<> "/Merged") . _scatacseq_output_dir) >>= getPath
+    dir <- asks ((<> "/Feature") . _scatacseq_output_dir) >>= getPath
     let output = dir ++ "/" ++ filename
     liftIO $ runResourceT $ runConduit $ mergeMatrix inputs' .| sinkFile output
     return $ return $ (head inputs & eid .~ "Merged") & replicates._2.files .~
