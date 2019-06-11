@@ -49,11 +49,11 @@ builder = do
 --------------------------------------------------------------------------------
 -- LSA
 --------------------------------------------------------------------------------
-    lsaClust "Cluster_by_window/LSA/"
+    lsaClust "/Cluster_by_window/LSA/"
     path ["Make_Count_Matrix", "LSA"]
 
     -- Clustering 1st round
-    namespace "Merged" $ lsaClust "Cluster_by_window/LSA/"
+    namespace "Merged" $ lsaClust "/Cluster_by_window/LSA/"
     path ["Merge_Count_Matrix", "Merged_LSA"]
 
     -- Extract tags
@@ -80,7 +80,7 @@ builder = do
     path ["LSA_Merge_Peak_Matrix_Prep", "LSA_Merge_Peak_Matrix"]
 
     -- Clustering 2nd round
-    namespace "Merged_2nd" $ lsaClust "Cluster_by_peak/LSA/"
+    namespace "Merged_2nd" $ lsaClust "/Cluster_by_peak/LSA/"
     path ["LSA_Merge_Peak_Matrix", "Merged_2nd_LSA"]
 
     -- Extract tags

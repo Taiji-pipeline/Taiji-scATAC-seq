@@ -12,8 +12,10 @@ extra-deps:
 - git:     https://github.com/Taiji-pipeline/Taiji-ATAC-seq.git
   commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
 
-- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
-  commit:  14115137475e7eccc6744b3b9054299b0049fb25
+#- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
+#  commit:  14115137475e7eccc6744b3b9054299b0049fb25
+
+- '../Taiji-utils'
 
 - git:     https://github.com/Taiji-pipeline/bio-pipelines.git
   commit:  b9814899ac5d8322bf1e8e04b48712472e807df7

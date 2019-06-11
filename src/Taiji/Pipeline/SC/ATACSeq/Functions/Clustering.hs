@@ -25,6 +25,7 @@ import Control.Workflow
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
+import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -138,9 +139,14 @@ plotClusters dir input = do
             (input^.replicates._1)
         output3d = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    clusters <- sampleCells (input^.replicates._2.files)
+        stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    clusterStat stat inputData
+    clusters <- sampleCells inputData
     visualizeCluster2D output2d Nothing clusters
     visualizeCluster3D output3d Nothing clusters
+  where
+    inputData = input^.replicates._2.files
 
 {-
 plotClusters' :: SCATACSeqConfig config
