@@ -135,7 +135,7 @@ plotClusters :: FilePath
              -> SCATACSeq S [CellCluster]
              -> IO ()
 plotClusters dir input = do
-    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     visualizeCluster output Nothing $ input^.replicates._2.files
 

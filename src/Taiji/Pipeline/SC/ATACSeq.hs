@@ -42,7 +42,7 @@ builder = do
     node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
-    node "Merge_Count_Matrix" 'mergeFeatMatrix $ return ()
+    node "Merge_Count_Matrix" [| mergeFeatMatrix "cell_by_window.txt.gz" |] $ return ()
     ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
     path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix"]
 
@@ -52,14 +52,45 @@ builder = do
     lsaClust "Cluster_by_window/LSA/"
     path ["Make_Count_Matrix", "LSA"]
 
+    -- Clustering 1st round
     namespace "Merged" $ lsaClust "Cluster_by_window/LSA/"
     path ["Merge_Count_Matrix", "Merged_LSA"]
+
+    -- Extract tags
     namespace "LSA" extractTags
     ["Get_Bed", "Merged_Cluster_LSA"] ~> "LSA_Extract_Tags_Prep"
 
-    nodePar "LSA_Call_Peaks" 'findPeaks $ return ()
-    node "LSA_Merge_Peaks" 'mergePeaks $ return ()
+    -- Call peaks 1st round
+    nodePar "LSA_Call_Peaks" [| findPeaks "/temp/Peak/Cluster/" |] $ return ()
+    node "LSA_Merge_Peaks" [| mergePeaks "/temp/Peak/" |] $ return ()
     path ["LSA_Merge_Tags_Cluster", "LSA_Call_Peaks", "LSA_Merge_Peaks"]
+
+    -- Create cell by peak matrix
+    node "LSA_Make_Peak_Matrix_Prep" [| \(exps, pk) -> return $ flip map exps $
+        \e -> e & replicates._2.files %~ (\(a,_,c) -> (a,fromJust pk,c))
+        |] $ return ()
+    nodePar "LSA_Make_Peak_Matrix" 'mkPeakMat $ return ()
+    ["Get_Bins", "LSA_Merge_Peaks"] ~> "LSA_Make_Peak_Matrix_Prep"
+    path ["LSA_Make_Peak_Matrix_Prep", "LSA_Make_Peak_Matrix"]
+    node "LSA_Merge_Peak_Matrix_Prep" [| \(x, y) -> return $
+        zipExp (x & mapped.replicates._2.files %~ (^._2)) y
+        |]$ return ()
+    node "LSA_Merge_Peak_Matrix" [| mergeFeatMatrix "cell_by_peak.txt.gz" |] $ return ()
+    ["LSA_Merge_Peaks", "LSA_Make_Peak_Matrix"] ~> "LSA_Merge_Peak_Matrix_Prep"
+    path ["LSA_Merge_Peak_Matrix_Prep", "LSA_Merge_Peak_Matrix"]
+
+    -- Clustering 2nd round
+    namespace "Merged_2nd" $ lsaClust "Cluster_by_peak/LSA/"
+    path ["LSA_Merge_Peak_Matrix", "Merged_2nd_LSA"]
+
+    -- Extract tags
+    extractTags
+    ["Get_Bed", "Merged_2nd_Cluster_LSA"] ~> "Extract_Tags_Prep"
+
+    -- Call peaks 2nd round
+    nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/Cluster/" |] $ return ()
+    node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
+    path ["Merge_Tags_Cluster", "Call_Peaks", "Merge_Peaks"]
 
     {-
     node "LSA_Merged" 'performLSAMerged $ return ()

@@ -324,10 +324,13 @@ mergeMatrix inputs = do
 visualizeCluster :: FilePath
                  -> Maybe (V.Vector String)  -- ^ Optional indicator
                  -> [CellCluster] -> IO ()
-visualizeCluster output marker cs = savePlots output [] [scatter3D dat viz]
+visualizeCluster output marker cs = savePlots output []
+    [scatter3D dat3D viz, scatter dat2D viz]
   where
-    dat = flip map cs $ \(CellCluster nm cells) ->
+    dat3D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map (\(Cell _ x y z _ _) -> (x, y, z)) cells)
+    dat2D = flip map cs $ \(CellCluster nm cells) ->
+        (B.unpack nm, map (\(Cell _ x y _ _ _) -> (x, y)) cells)
     viz = case marker of
         Nothing -> Continuous $ concatMap
             (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs

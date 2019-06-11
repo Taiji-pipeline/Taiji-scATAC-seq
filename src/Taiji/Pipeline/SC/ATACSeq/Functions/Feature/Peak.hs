@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
-    ( findPeaks
+    ( mkPeakMat
+    , findPeaks
     , mergePeaks
     , mkCellClusterBed
     , subSampleClusterBed
@@ -15,10 +17,12 @@ import Bio.Data.Bed
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
+import Data.Singletons.Prelude (Elem)
 import Shelly hiding (FilePath)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 {-
 callPeakBulk :: SCATACSeqConfig config
@@ -35,24 +39,41 @@ callPeakBulk input = do
         return (nm, r) )
         -}
 
--- | Call Peaks
+-- | Make the read count matrix.
+mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+          => SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
+          -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+mkPeakMat input = do
+    dir <- asks ((<> "/Feature/") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_peak.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
+        regions <- runResourceT $ runConduit $
+            streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
+        runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
+            groupCells .| mkFeatMat nCell regions .| sinkFile output
+        return $ emptyFile & location .~ output )
+
+-- | Call Peaks for aggregated files
 findPeaks :: SCATACSeqConfig config
-                => (B.ByteString, File '[Gzip] 'Bed)
-                -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
-findPeaks (cName, bedFl) = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Peaks/Cluster/")
+          => FilePath
+          -> (B.ByteString, File '[Gzip] 'Bed)
+          -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
+findPeaks prefix (cName, bedFl) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     opts <- asks _scatacseq_callpeak_opts
-    let output = dir ++ B.unpack cName ++ ".narrowPeak" 
+    let output = dir ++ "/" ++ B.unpack cName ++ ".narrowPeak" 
     r <- liftIO $ callPeaks output bedFl Nothing opts
     return (cName, r)
 
 mergePeaks :: SCATACSeqConfig config
-           => [(B.ByteString, File '[] 'NarrowPeak)]
+           => FilePath
+           -> [(B.ByteString, File '[] 'NarrowPeak)]
            -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
-mergePeaks [] = return Nothing
-mergePeaks input = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Peaks/")
-    let output = dir <> "merged.narrowPeak.gz" 
+mergePeaks _ [] = return Nothing
+mergePeaks prefix input = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
+    let output = dir <> "/merged.narrowPeak.gz" 
     liftIO $ withTemp Nothing $ \tmp -> do
         shelly $ escaping False $ bashPipeFail bash_ "cat" $
             map (T.pack . (^._2.location)) input ++

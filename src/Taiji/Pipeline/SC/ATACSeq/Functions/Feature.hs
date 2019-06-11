@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
     , getBins
     , mkWindowMat
 
+    , mkPeakMat
     , findPeaks
     , mergePeaks
 
@@ -44,12 +45,13 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 mergeFeatMatrix :: ( Elem 'Gzip tags1 ~ 'True
                    , Elem 'Gzip tags2 ~ 'True
                    , SCATACSeqConfig config )
-                => [SCATACSeq S (File tags1 'Bed, File tags2 'Other)]
+                => FilePath
+                -> [SCATACSeq S (File tags1 'Bed, File tags2 'Other)]
                 -> ReaderT config IO [SCATACSeq S (File '[Gzip] 'Other)]
-mergeFeatMatrix [] = return []
-mergeFeatMatrix inputs = do
+mergeFeatMatrix _ [] = return []
+mergeFeatMatrix filename inputs = do
     dir <- asks ((<> "/Merged") . _scatacseq_output_dir) >>= getPath
-    let output = dir ++ "/cell_by_window.txt.gz"
+    let output = dir ++ "/" ++ filename
     liftIO $ runResourceT $ runConduit $ mergeMatrix inputs' .| sinkFile output
     return $ return $ (head inputs & eid .~ "Merged") & replicates._2.files .~
         (location .~ output $ emptyFile)
