@@ -9,19 +9,24 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , clust
     , lsaClust
     , extractTags
+    , extractSubMatrix
     ) where
 
 import qualified Data.ByteString.Char8 as B
+import Data.Binary (encodeFile, decodeFile)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
+import qualified Data.HashMap.Strict as M
 import Bio.Data.Bed
 import Control.Arrow (first)
 import qualified Data.Vector as V
 import System.Random.MWC.Distributions
 import System.Random.MWC
+import System.IO
 import Bio.Utils.Misc (readDouble, readInt)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
+import Data.Conduit.Zlib (gzip)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
@@ -33,22 +38,37 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 lsaClust :: FilePath -> Builder ()
 lsaClust prefix = do
     nodePar "LSA" [| performLSA prefix |] $ return ()
-    nodePar "Cluster_LSA" [| \input -> do
-        tmp <- asks _scatacseq_temp_dir
-        input & replicates.traversed.files %%~ liftIO . clust True tmp
-        |] $ return ()
+    nodePar "Cluster_LSA" [| doClustering prefix |] $ return ()
     nodePar "Visualize_LSA_Cluster" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
 
-extractTags :: Builder ()
-extractTags = do
-    node "Extract_Tags_Prep"  [| return . getClusterBarcodes |] $ return ()
+extractTags :: FilePath -> Builder ()
+extractTags prefix = do
+    node "Extract_Tags_Prep"  [| liftIO . getClusterBarcodes |] $ return ()
     nodePar "Extract_Tags" 'getBedCluster $ return ()
-    node "Merge_Tags_Cluster" 'mergeBedCluster $ return ()
-    path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Cluster"]
+    node "Merge_Tags_Cluster_Prep" [| \input -> return $
+        map (first head . unzip) $ groupBy ((==) `on` fst) $
+        sortBy (comparing fst) $ concat $ input^..folded.replicates._2.files
+        |] $ return ()
+    nodePar "Merge_Tags_Cluster" [| mergeBedCluster prefix |] $ return ()
+    path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Cluster_Prep"
+        , "Merge_Tags_Cluster"]
+
+doClustering :: SCATACSeqConfig config
+             => FilePath
+             -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
+             -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
+doClustering prefix input = do
+    tmp <- asks _scatacseq_temp_dir
+    dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+        clust True tmp fl >>= encodeFile output
+        return $ location .~ output $ emptyFile )
 
 clust :: Bool   -- ^ Whether to discard the first dimension
       -> Maybe FilePath      -- ^ temp dir
@@ -77,76 +97,83 @@ clust discard dir (coverage, mat) = withTempDir dir $ \tmpD -> do
         B.readFile fl
     seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
         mapC ((\[a,b] -> (a,b)) . B.split '\t')
-    f (i, (bc, dep), [x,y,z]) = Cell i x y z bc $ readInt dep
+    f (i, (bc, dep), [x,y]) = Cell i x y 0 bc $ readInt dep
     f _ = error "formatting error"
 {-# INLINE clust #-}
 
-getClusterBarcodes :: ([SCATACSeq S file], [SCATACSeq S [CellCluster]])
-                   -> [(SCATACSeq S (file, [(B.ByteString, [B.ByteString])]))]
-getClusterBarcodes (inputs, [clusters]) = flip map inputs $ \input ->
-    let res = flip map (clusters^.replicates._2.files) $ \CellCluster{..} ->
-            (_cluster_name, mapMaybe (getBarcode (input^.eid)) _cluster_member)
-    in input & replicates.traverse.files %~ (\f -> (f, res))
+getClusterBarcodes :: ([SCATACSeq S file], [SCATACSeq S (File '[] 'Other)])
+                   -> IO [(SCATACSeq S (file, [(B.ByteString, [B.ByteString])]))]
+getClusterBarcodes (inputs, clusters) = do
+    clusters' <- case clusters of
+        [x] -> zip (repeat "") <$> decodeFile (x^.replicates._2.files.location)
+        xs -> fmap concat $ forM xs $ \x ->
+            zip (repeat $ B.pack $ T.unpack $ x^.eid) <$>
+            decodeFile (x^.replicates._2.files.location)
+    return $ flip map inputs $ \input ->
+        let res = flip map clusters' $ \(prefix, CellCluster{..}) ->
+                (prefix <> _cluster_name, mapMaybe (getBarcode (input^.eid)) _cluster_member)
+        in input & replicates.traverse.files %~ (\f -> (f, res))
   where
     getBarcode e x | B.unpack (B.init i) == T.unpack e = Just bc
                    | otherwise = Nothing
       where
         (i, bc) = B.breakEnd (=='_') $ _cell_barcode x
-getClusterBarcodes _ = []
 
 -- | Extract BEDs for each cluster.
 getBedCluster :: SCATACSeqConfig config
               => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
                              , [(B.ByteString, [B.ByteString])] )  -- ^ clusters
               -> ReaderT config IO
-                    (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed)])
+                    (SCATACSeq S [(B.ByteString, File '[] 'Bed)])
 getBedCluster input = do
     let idRep = asDir $ "/temp/" <> T.unpack (input^.eid) <>
             "_rep" <> show (input^.replicates._1)
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
-    input & replicates.traverse.files %%~ liftIO . ( \(bed, cs) -> do
-        let sinks = sequenceConduits $ flip map cs $ \(cName, bc) -> do
-                let output = dir ++ "/" ++ B.unpack cName ++ ".bed.gz"
-                    cells = S.fromList bc
-                    fl = location .~ output $ emptyFile
-                filterC (\x -> fromJust ((x::BED)^.name) `S.member` cells) .|
-                    sinkFileBedGzip output
-                return (cName, fl)
-        runResourceT $ runConduit $
-            streamBedGzip (bed^.location) .| sinks )
+    input & replicates.traverse.files %%~ liftIO . ( \(bed, _) -> do
+        let outputs = M.fromList $
+                map (\x -> (x, dir ++ "/" ++ B.unpack x ++ ".bed")) $
+                S.toList $ S.fromList $ M.elems clusters
+        fileHandles <- mapM (\x -> openFile x WriteMode) outputs
+        let f x = let h = M.lookupDefault undefined bc fileHandles
+                      bc = M.lookupDefault (error $ show nm) nm clusters
+                      nm = fromJust ((x::BED)^.name) 
+                  in liftIO $ B.hPutStrLn h $ toLine x 
+        runResourceT $ runConduit $ streamBedGzip (bed^.location) .| mapM_C f
+        return $ M.toList $ fmap (\x -> location .~ x $ emptyFile) outputs )
+  where
+    clusters = M.fromListWith (error "same barcode") $
+        concatMap (\(x, ys) -> zip ys $ repeat x) $ input^.replicates._2.files._2
 
 -- | Extract BEDs for each cluster.
 mergeBedCluster :: SCATACSeqConfig config
-                => [SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed)]]
-                -> ReaderT config IO [(B.ByteString, File '[Gzip] 'Bed)]
-mergeBedCluster inputs = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Bed/Cluster/")
-    liftIO $ forM clusters $ \(cName, fls) -> do
-        let output = dir <> B.unpack cName <> ".bed.gz"
+                => FilePath  -- ^ prefix
+                -> (B.ByteString, [File '[] 'Bed])
+                -> ReaderT config IO (B.ByteString, File '[Gzip] 'Bed)
+mergeBedCluster prefix (cName, fls) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
+    let output = dir <> B.unpack cName <> ".bed.gz"
+    liftIO $ do
         shelly $ escaping False $ do
-            run_ "cat" $ map (\x -> T.pack $ x^.location) fls ++ [">", T.pack output]
+            run_ "cat" $ map (\x -> T.pack $ x^.location) fls ++
+                ["|", "gzip", "-c", ">", T.pack output]
             run_ "rm" $ map (\x -> T.pack $ x^.location) fls
         return (cName, location .~ output $ emptyFile)
-  where
-    clusters = map (first head . unzip) $ groupBy ((==) `on` fst) $
-        sortBy (comparing fst) $ concat $ inputs^..folded.replicates._2.files
 
 plotClusters :: FilePath
-             -> SCATACSeq S [CellCluster]
+             -> SCATACSeq S (File '[] 'Other)
              -> IO ()
 plotClusters dir input = do
+    inputData <- decodeFile $ input^.replicates._2.files.location
     let output2d = printf "%s/%s_rep%d_cluster_2d.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        output3d = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
+        --output3d = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
+        --    (input^.replicates._1)
         stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     clusterStat stat inputData
     clusters <- sampleCells inputData
     visualizeCluster2D output2d Nothing clusters
-    visualizeCluster3D output3d Nothing clusters
-  where
-    inputData = input^.replicates._2.files
+    --visualizeCluster3D output3d Nothing clusters
 
 {-
 plotClusters' :: SCATACSeqConfig config
@@ -179,3 +206,46 @@ sampling :: GenIO
 sampling gen frac v = V.take n <$> uniformShuffle v gen
   where
     n = truncate $ frac * fromIntegral (V.length v)
+
+{-
+subClustering :: Bool   -- ^ Whether to discard the first dimension
+              -> (File '[] 'Tsv, File '[Gzip] 'Tsv)
+              -> [Cell]
+              -> IO (Dendrogram B.ByteString)
+subClustering discard (idx, val) cells = do
+    dat <- runResourceT $ runConduit $ zipSources idxC valC .|
+        filterC ((`S.member` cells') . fst) .| sinkVector
+        :: IO (V.Vector (B.ByteString, V.Vector Double))
+    return $ fmap fst $ hclust Ward dat (euclidean `on` snd)
+  where
+    cells' = S.fromList $ map _cell_barcode cells
+    idxC = sourceFile (idx^.location) .| linesUnboundedAsciiC .|
+        mapC (head . B.split '\t') 
+    valC = sourceFile (val^.location) .| multiple ungzip .|
+        linesUnboundedAsciiC .| mapC (V.fromList .
+            (if discard then tail else id) . map readDouble . B.split '\t')
+-}
+
+extractSubMatrix :: SCATACSeqConfig config
+                 => ( [SCATACSeq S (File tags 'Other)]
+                    , [SCATACSeq S (File '[] 'Other)] )
+                 -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
+extractSubMatrix ([input], [clFl]) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/Cluster/")
+    liftIO $ do
+        clusters <- decodeFile $ clFl^.replicates._2.files.location
+        mat <- mkSpMatrix id $ input^.replicates._2.files.location
+        let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
+                (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
+                gzip .| (sinkFile output >> return res)
+              where
+                res = input & eid .~ T.pack (B.unpack _cluster_name)
+                            & replicates._2.files.location .~ output
+                output = dir <> B.unpack _cluster_name <> "_mat.txt.gz"
+                header = B.pack $ printf "Sparse matrix: %d x %d" nCell
+                    (_num_col mat)
+                ids = S.fromList $ map _cell_barcode _cluster_member
+                nCell = S.size ids
+        runResourceT $ runConduit $ streamRows mat .|
+            sequenceSinks (map mkSink clusters)
+extractSubMatrix _ = return []

@@ -4,26 +4,32 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
-    ( seurat
-    , clusterStat
+    ( clusterStat
     ) where
 
 import Data.Int (Int32)
 import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Vector as V
 import Data.List
+import Data.List.Ordered (nubSort)
 import Data.Ord
 import Data.Function (on)
+import qualified Data.Text as T
+{-
 import qualified Language.R                        as R
 import           Language.R.QQ
 import qualified Data.Vector.SEXP as V
 import Language.R.HExp
+-}
 
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot.ECharts
 import Taiji.Utils.Plot
 import Taiji.Prelude
 
+{-
 -- | Perform clustering using the Seurat library (SNN+graph_modularity).
 seurat :: [String]   -- ^ Sample barcodes/names.
        -> [[Double]]   -- ^ Columns are features, rows are samples.
@@ -50,28 +56,24 @@ seurat names xs = R.runRegion $ do
     xs_ = concat xs
     features = map show $ [1 .. length (head xs)]
     ncol = fromIntegral $ length $ head xs :: Double
+    -}
 
 clusterStat :: FilePath -> [CellCluster] -> IO ()
-clusterStat output clusters = savePlots output [] [chart]
+clusterStat output clusters = savePlots output []
+    [ stackBar $ DF.mapCols normalize df
+    , stackBar $ DF.mapCols normalize $ DF.transpose df
+    , heatmap $ DF.orderDataFrame id $ DF.spearman df
+    , heatmap $ DF.orderDataFrame id $ DF.spearman $ DF.transpose df ]
   where
-    chart = stackBar "" (map B.unpack allTissues) $
-        map (\(c, x) -> (B.unpack c, map (\t -> fromIntegral $ M.lookupDefault 0 t x) allTissues)) byCluster
-    allTissues = map fst byTissue
-    allClusters = map fst byCluster
-    byCluster :: [(B.ByteString, M.HashMap B.ByteString Int)]
-    byCluster = M.toList $ foldl' f M.empty clusters
-      where
-        f m CellCluster{..} = foldl' g m $ map (\x -> (_cluster_name, tissueName x)) _cluster_member
-        g m (k, v) = M.alter fun k m
-          where
-            fun Nothing = Just $ M.singleton v 1
-            fun (Just x) = Just $ M.insertWith (+) v 1 x
-    byTissue :: [(B.ByteString, M.HashMap B.ByteString Int)]
-    byTissue = M.toList $ foldl' f M.empty clusters
-      where
-        f m CellCluster{..} = foldl' g m $ map (\x -> (tissueName x, _cluster_name)) _cluster_member
-        g m (k, v) = M.alter fun k m
-          where
-            fun Nothing = Just $ M.singleton v 1
-            fun (Just x) = Just $ M.insertWith (+) v 1 x
-    tissueName Cell{..} = B.init $ fst $ B.breakEnd (=='_') _cell_barcode
+    df = DF.mkDataFrame rownames colnames $
+        map (\x -> map (\i -> fromIntegral $ M.lookupDefault 0 i x) colnames) rows
+    (rownames, rows) = unzip $ map f clusters
+    colnames = nubSort $ concatMap M.keys rows
+    f CellCluster{..} = ( T.pack $ B.unpack _cluster_name,
+        M.fromListWith (+) $ map (\x -> (tissueName x, 1)) _cluster_member )
+    tissueName Cell{..} = T.pack $ B.unpack $ B.init $ fst $
+        B.breakEnd (=='_') _cell_barcode
+    normalize xs = V.map (\x -> round' $ x / s) xs
+      where 
+        round' x = fromIntegral (round $ x * 1000) / 1000
+        s = V.foldl1' (+) xs

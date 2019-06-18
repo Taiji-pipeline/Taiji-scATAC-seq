@@ -49,6 +49,7 @@ builder = do
 --------------------------------------------------------------------------------
 -- LSA
 --------------------------------------------------------------------------------
+    -- Clustering in each sample
     lsaClust "/Cluster_by_window/LSA/"
     path ["Make_Count_Matrix", "LSA"]
 
@@ -56,8 +57,8 @@ builder = do
     namespace "Merged" $ lsaClust "/Cluster_by_window/LSA/"
     path ["Merge_Count_Matrix", "Merged_LSA"]
 
-    -- Extract tags
-    namespace "LSA" extractTags
+    -- Extract tags for each cluster
+    namespace "LSA" $ extractTags "/temp/Bed/Cluster/"
     ["Get_Bed", "Merged_Cluster_LSA"] ~> "LSA_Extract_Tags_Prep"
 
     -- Call peaks 1st round
@@ -83,39 +84,40 @@ builder = do
     namespace "Merged_2nd" $ lsaClust "/Cluster_by_peak/LSA/"
     path ["LSA_Merge_Peak_Matrix", "Merged_2nd_LSA"]
 
-    -- Extract tags
-    extractTags
+    -- Subclustering
+    node "Extract_Sub_Matrix" 'extractSubMatrix $ return ()
+    ["LSA_Merge_Peak_Matrix", "Merged_2nd_Cluster_LSA"] ~> "Extract_Sub_Matrix"
+    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/"
+    path ["Extract_Sub_Matrix", "SubCluster_LSA"]
+
+    -- Extract tags for each cluster
+    extractTags "/Bed/Cluster/"
     ["Get_Bed", "Merged_2nd_Cluster_LSA"] ~> "Extract_Tags_Prep"
 
-    -- Call peaks 2nd round
+    -- Extract tags for subclusters
+    namespace "SubCluster" $ extractTags "/Bed/SubCluster/"
+    ["Get_Bed", "SubCluster_Cluster_LSA"] ~> "SubCluster_Extract_Tags_Prep"
+
+
+    -- Call peaks final round
     nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/Cluster/" |] $ return ()
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Merge_Tags_Cluster", "Call_Peaks", "Merge_Peaks"]
 
-    {-
-    node "LSA_Merged" 'performLSAMerged $ return ()
-    node "Cluster_LSA_Merged" [| \input -> do
-        tmp <- asks _scatacseq_temp_dir
-        case input of
-            Nothing -> return []
-            Just f -> liftIO $ clust True tmp f
-        |] $ memory .= 20
-    node "Plot_Cluster_Merged" [| \input -> if null input
-        then return ()
-        else plotClusters' input
-        |] $ return ()
-    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix", "LSA_Merged",
-        "Cluster_LSA_Merged", "Plot_Cluster_Merged"]
+    node "Cluster_Correlation" 'clusterCorrelation $ return ()
+    ["Call_Peaks", "Merge_Peaks"] ~> "Cluster_Correlation"
 
-    node "Make_Bed_Cluster_Prep"  [| return . getClusterBarcodes |] $ return ()
-    ["Get_Bed", "Cluster_LSA_Merged"] ~> "Make_Bed_Cluster_Prep"
-    nodePar "Make_Bed_Cluster" 'getBedCluster $ return ()
-    node "Merge_Bed_Cluster" 'mergeBedCluster $ return ()
-    nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
-    node "Merge_Peaks" 'mergePeaks $ return ()
-    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster", "Merge_Bed_Cluster",
-        "Call_Peak_Cluster", "Merge_Peaks"]
-        -}
+    -- Call peaks SubCluster
+    nodePar "SubCluster_Call_Peaks" [| findPeaks "/Feature/Peak/SubCluster/" |] $ return ()
+    node "SubCluster_Merge_Peaks" [| mergePeaks "/Feature/Peak/SubCluster/" |] $ return ()
+    path ["SubCluster_Merge_Tags_Cluster", "SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"]
+    node "SubCluster_Correlation" 'clusterCorrelation $ return ()
+    ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
+
+    -- Estimate gene expression
+    nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
+    node "Make_Expr_Table" [| mkExprTable "expression_profile.tsv" |] $ return ()
+    path ["Merge_Tags_Cluster", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
     {-
     -- LDA
@@ -157,8 +159,3 @@ builder = do
     path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
     -}
 
-    {-
-    nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
-    node "Make_Expr_Table" 'mkExprTable $ return ()
-    path ["Call_Peak_Cluster_Prep", "Estimate_Gene_Expr", "Make_Expr_Table"]
-    -}

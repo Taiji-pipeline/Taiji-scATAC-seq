@@ -27,6 +27,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
@@ -45,7 +46,7 @@ library
                      , bio-experiments
                      , bioinformatics-toolkit >= 0.8.0
                      , conduit-extra
-                     , unordered-containers
+                     , clustering
                      , case-insensitive
                      , containers
                      , conduit
@@ -58,6 +59,7 @@ library
                      , IntervalMap
                      , inline-r
                      , mtl
+                     , matrices
                      , SciFlow >= 0.7.0
                      , text
                      , temporary
@@ -68,6 +70,7 @@ library
                      , shelly
                      , statistics >= 0.15.0.0
                      , vector
+                     , unordered-containers
                      , Taiji-utils
   default-language:    Haskell2010
 

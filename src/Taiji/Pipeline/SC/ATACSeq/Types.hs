@@ -8,7 +8,6 @@ module Taiji.Pipeline.SC.ATACSeq.Types
     ) where
 
 import           Data.Binary (Binary(..))
-import           Data.Aeson
 import Bio.Data.Experiment.Types
 import Bio.Data.Experiment.Replicate
 import Bio.Pipeline.Utils (Directory)
@@ -18,11 +17,7 @@ import GHC.Generics (Generic)
 newtype SCATACSeq container file = SCATACSeq (CommonFields container file)
      deriving (Generic, Experiment)
 
-instance FromJSON (container (Replicate file)) =>
-    FromJSON (SCATACSeq container file)
-
-instance ToJSON (container (Replicate file)) =>
-    ToJSON (SCATACSeq container file)
+instance Show (container (Replicate file)) => Show (SCATACSeq container file)
 
 instance Binary (container (Replicate file)) =>
     Binary (SCATACSeq container file)

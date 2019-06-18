@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
     ( mkPeakMat
@@ -9,20 +10,28 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
     , mergePeaks
     , mkCellClusterBed
     , subSampleClusterBed
+    , clusterCorrelation
     ) where
 
 import           Bio.Pipeline
 import qualified Data.HashSet as S
+import Control.Monad.ST (runST)
 import Bio.Data.Bed
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import Data.Singletons.Prelude (Elem)
 import Shelly hiding (FilePath)
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector as V
+import qualified Data.Matrix.Unboxed as MU
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import qualified Taiji.Utils.DataFrame as DF
+import Taiji.Utils.Plot
+import Taiji.Utils.Plot.ECharts
 
 {-
 callPeakBulk :: SCATACSeqConfig config
@@ -139,3 +148,40 @@ subSample n input output = shelly $ escaping False $ silently $
     bashPipeFail bash_ "zcat"
         [ T.pack input, "|", "shuf", "-n", T.pack $ show n
         , "|", "gzip", "-c", ">", T.pack output ]
+
+clusterCorrelation :: SCATACSeqConfig config
+                   => ( [(B.ByteString, File '[] 'NarrowPeak)]
+                      , Maybe (File '[Gzip] 'NarrowPeak) )
+                   -> ReaderT config IO ()
+clusterCorrelation (input, Just refPeak) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")
+    let output = dir <> "cluster_correlation.html"
+    liftIO $ do
+        ref <- runResourceT $ runConduit $
+            streamBedGzip (refPeak^.location) .| sinkList
+        peaks <- mapM (readBed . (^.location)) peakFls
+        savePlots output [] [ heatmap $ DF.reorderRows (DF.orderByCluster id) $
+            DF.reorderColumns (DF.orderByCluster id) $
+            DF.mkDataFrame names' names' $ peakCor peaks ref ]
+  where
+    names' = map (T.pack . B.unpack) names
+    (names, peakFls) = unzip input
+clusterCorrelation _ = return ()
+
+peakCor :: [[NarrowPeak]] 
+        -> [BED3]  -- ^ Peak list
+        -> [[Double]]
+peakCor peaks refPeak = MU.toLists $ MU.generate (n, n) $ \(i,j) ->
+    jaccardIndex (values V.! i) (values V.! j)
+  where
+    n = V.length values
+    values = V.fromList $ map (getValue refPeak) peaks
+    getValue peakList query = runST $ runConduit $ yieldMany peakList .|
+        intersectBedWith f query .| sinkVector
+      where
+        f _ [] = False
+        f _ _ = True
+    jaccardIndex x y = fromIntegral m / fromIntegral n
+      where
+        m = U.length $ U.filter id $ U.zipWith (&&) x y
+        n = U.length $ U.filter id $ U.zipWith (||) x y

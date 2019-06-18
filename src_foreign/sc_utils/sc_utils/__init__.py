@@ -44,7 +44,7 @@ def lsiTransform(args):
     data = InputData(args.input)
     n_dim = 30
 
-    model = LsiModel(data, num_topics=n_dim, chunksize=10000)
+    model = LsiModel(data, num_topics=n_dim, onepass=False, power_iters=2, chunksize=10000)
     data_transformed = corpus2dense(model[data], n_dim).T
     np.savetxt(args.output, data_transformed, delimiter='\t')
 
@@ -68,15 +68,15 @@ def reduceDimension(args):
     else:
         ldaTransform(args)
 
-def getEmbedding(mat, output, method="umap"):
-    if(method == "tsne"):
-        from MulticoreTSNE import MulticoreTSNE as TSNE
-        tsne = TSNE(n_jobs=4, n_components=3, perplexity=15)
-        embedding = tsne.fit_transform(mat)
-    else:
+def getEmbedding(mat, output, method="tsne"):
+    if(method == "umap"):
         import umap
         embedding = umap.UMAP(random_state=42,
-            n_components=3, min_dist=0).fit_transform(mat)
+            n_components=2, min_dist=0).fit_transform(mat)
+    else:
+        from MulticoreTSNE import MulticoreTSNE as TSNE
+        tsne = TSNE(n_jobs=4, n_components=2, perplexity=30)
+        embedding = tsne.fit_transform(mat)
     np.savetxt(output, embedding, delimiter='\t')
 
 # regress out a variable
@@ -112,10 +112,12 @@ def clustering(args):
         data_transformed = np.apply_along_axis(normalize, 0, data_transformed)
 
     if (args.discard):
-        data_transformed = data_transformed[1:]
+        data_transformed = data_transformed[..., 1:]
 
     if (args.scale):
         data_transformed = np.apply_along_axis(scaling, 1, data_transformed)
+
+    print(data_transformed.shape)
 
     print("Start KNN")
     adj = kneighbors_graph(data_transformed, 20, mode='distance')
