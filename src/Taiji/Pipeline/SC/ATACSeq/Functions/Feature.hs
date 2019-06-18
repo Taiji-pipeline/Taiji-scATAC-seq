@@ -5,18 +5,11 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
-    ( mkCutSiteIndex
-    , getBins
-    , mkWindowMat
-
-    , mkPeakMat
-    , findPeaks
-    , mergePeaks
-    , clusterCorrelation
-
-    , mergeFeatMatrix
-    , estimateExpr
-    , mkExprTable
+    ( mergeFeatMatrix
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -34,6 +27,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
+import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
 
 mergeFeatMatrix :: ( Elem 'Gzip tags1 ~ 'True
                    , Elem 'Gzip tags2 ~ 'True

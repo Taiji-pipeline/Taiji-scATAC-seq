@@ -3,7 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 
-module Taiji.Pipeline.SC.ATACSeq.Functions.Motif
+module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
     ( getOpenRegion
     , findMotifsPre
     , findMotifs
@@ -28,10 +28,10 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 findMotifsPre :: SCATACSeqConfig config
-              => Double
-              -> Maybe (File '[Gzip] 'Bed)
+              => Double   -- ^ Motif finding cutoff
+              -> Maybe (File '[Gzip] 'NarrowPeak)   -- ^ Regions to look for
               -> ReaderT config IO
-                  [(B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)]
+                  [(B.ByteString, File '[Gzip] 'NarrowPeak, File '[] 'Other)]
 findMotifsPre _ Nothing = return []
 findMotifsPre p (Just region) = do
     motifFile <- fromMaybe (error "Motif file is not specified!") <$>
@@ -45,14 +45,14 @@ findMotifsPre p (Just region) = do
 
 -- | Identify motif binding sites.
 findMotifs :: SCATACSeqConfig config
-           => (B.ByteString, File '[Gzip] 'Bed, File '[Gzip] 'Other)
+           => (B.ByteString, File '[Gzip] 'NarrowPeak, File '[] 'Other)
            -> ReaderT config IO (B.ByteString, Maybe (File '[] 'BigBed))
 findMotifs (chr, openChromatin, motifFl) = do
     seqIndex <- getGenomeIndex
     chrSize <- liftIO $ withGenome seqIndex $
         return . filter ((==chr). fst) . getChrSizes
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/TFBS"))
-    let output = dir ++ "/" ++ B.unpack chr ++ ".bb"
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Feature/TF/"))
+    let output = dir ++ B.unpack chr ++ ".bb"
     liftIO $ withGenome seqIndex $ \g -> withTempFile "./" "tmp_tbfs.bed" $ \tmpFl h -> do
         hClose h
         motifs <- decodeFile (motifFl^.location) :: IO [CutoffMotif]

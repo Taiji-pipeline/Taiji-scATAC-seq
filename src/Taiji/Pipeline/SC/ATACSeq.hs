@@ -119,6 +119,11 @@ builder = do
     node "Make_Expr_Table" [| mkExprTable "expression_profile.tsv" |] $ return ()
     path ["Merge_Tags_Cluster", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
+    -- Motif finding
+    node "Find_TFBS_Prep" [| findMotifsPre 5e-5 |] $ return ()
+    nodePar "Find_TFBS" 'findMotifs $ return ()
+    path ["SubCluster_Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
+
     {-
     -- LDA
     nodePar "LDA" 'performLDA $ return ()
@@ -144,13 +149,12 @@ builder = do
         "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
         -}
 
+    {-
     nodePar "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
     path ["Get_Bed", "Make_CutSite_Index"]
 
     node "Get_Open_Region" 'getOpenRegion $ return ()
-    node "Find_TFBS_Prep" [| findMotifsPre 5e-5 |] $ return ()
-    nodePar "Find_TFBS" 'findMotifs $ return ()
-    path ["Get_Bed", "Get_Open_Region", "Find_TFBS_Prep", "Find_TFBS"]
+    -}
 
     {-
     -- Snap pipeline
