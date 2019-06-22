@@ -18,7 +18,7 @@ builder = do
     node "Download_Data" 'downloadData $
         doc .= "Download data."
     node "Get_Fastq" [| return . getFastq |] $ return ()
-    node "Make_Index" 'mkIndex $ doc .= "Generate the BWA index."
+    node "Make_Index" 'mkIndices $ doc .= "Generate the BWA index."
     path ["Read_Input", "Download_Data", "Get_Fastq", "Make_Index"]
  
     node "Align_Prep" [| return . fst |] $ return ()

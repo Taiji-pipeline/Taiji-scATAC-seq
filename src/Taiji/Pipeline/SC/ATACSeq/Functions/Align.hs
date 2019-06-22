@@ -5,7 +5,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
-    , mkIndex
+    , mkIndices
     , filterBamSort
     , qualityControl
     ) where
@@ -17,21 +17,37 @@ import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
+import Shelly hiding (FilePath)
+import System.IO
+import           Bio.Seq.IO (mkIndex)
+import           System.FilePath               (takeDirectory)
 
 import Taiji.Prelude hiding (groupBy, frip)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 
-mkIndex :: SCATACSeqConfig config
-        => [a] -> ReaderT config IO ()
-mkIndex input
+mkIndices :: SCATACSeqConfig config => [a] -> ReaderT config IO ()
+mkIndices input
     | null input = return ()
     | otherwise = do
-        genome <- asks (fromJust . _scatacseq_genome_fasta)
+        genome <- asks $ fromJust . _scatacseq_genome_fasta
+
         -- Generate BWA index
         dir <- asks (fromJust . _scatacseq_bwa_index)
         _ <- liftIO $ bwaMkIndex genome dir
+
+        -- Generate genome index
+        seqIndex <- asks $ fromMaybe
+            (error "Genome index file was not specified!") .
+            _scatacseq_genome_index
+        fileExist <- liftIO $ shelly $ test_f $ fromText $ T.pack seqIndex
+        liftIO $ if fileExist
+            then hPutStrLn stderr "Sequence index exists. Skipped."
+            else do
+                shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
+                hPutStrLn stderr "Generating sequence index"
+                mkIndex [genome] seqIndex
         return ()
 
 tagAlign :: SCATACSeqConfig config
