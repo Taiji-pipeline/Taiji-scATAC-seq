@@ -5,6 +5,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
+    , mkIndex
     , filterBamSort
     , qualityControl
     ) where
@@ -21,6 +22,17 @@ import Taiji.Prelude hiding (groupBy, frip)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
+
+mkIndex :: SCATACSeqConfig config
+        => [a] -> ReaderT config IO ()
+mkIndex input
+    | null input = return ()
+    | otherwise = do
+        genome <- asks (fromJust . _scatacseq_genome_fasta)
+        -- Generate BWA index
+        dir <- asks (fromJust . _scatacseq_bwa_index)
+        _ <- liftIO $ bwaMkIndex genome dir
+        return ()
 
 tagAlign :: SCATACSeqConfig config
          => SCATACSeq S ( Either (SomeTags 'Fastq)

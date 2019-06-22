@@ -18,6 +18,11 @@ builder = do
     node "Download_Data" 'downloadData $
         doc .= "Download data."
     node "Get_Fastq" [| return . getFastq |] $ return ()
+    node "Make_Index" 'mkIndex $ doc .= "Generate the BWA index."
+    path ["Read_Input", "Download_Data", "Get_Fastq", "Make_Index"]
+ 
+    node "Align_Prep" [| return . fst |] $ return ()
+    ["Get_Fastq", "Make_Index"] ~> "Align_Prep"
     nodePar "Align" 'tagAlign $ do
         nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
@@ -25,8 +30,7 @@ builder = do
     nodePar "Filter_Bam" 'filterBamSort $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     nodePar "QC" 'qualityControl $ return ()
-    path [ "Read_Input", "Download_Data", "Get_Fastq", "Align", "Filter_Bam"
-         , "QC" ]
+    path ["Align_Prep", "Align", "Filter_Bam", "QC"]
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix
