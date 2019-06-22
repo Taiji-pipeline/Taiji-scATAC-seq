@@ -15,7 +15,6 @@ import           Bio.HTS
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
-import Data.Either (fromRight)
 import qualified Data.Text as T
 
 import Taiji.Prelude hiding (groupBy, frip)
@@ -24,34 +23,47 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 
 tagAlign :: SCATACSeqConfig config
-         => SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq)
-         -> ReaderT config IO ( SCATACSeq S (File '[PairedEnd] 'Bam) )
+         => SCATACSeq S ( Either (SomeTags 'Fastq)
+                (SomeTags 'Fastq, SomeTags 'Fastq) )
+         -> ReaderT config IO ( SCATACSeq S
+                (Either (File '[] 'Bam) (File '[PairedEnd] 'Bam)) )
 tagAlign input = do
     dir <- asks ((<> "/Bam") . _scatacseq_output_dir) >>= getPath
     idx <- asks (fromJust . _scatacseq_bwa_index)
     let output = printf "%s/%s_rep%d.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . ( \(f1,f2) ->
-        let f1' = fromSomeTags f1 :: File '[] 'Fastq
-            f2' = fromSomeTags f2 :: File '[] 'Fastq
-        in fromRight undefined <$> bwaAlign output idx (Right (f1', f2'))
-            (defaultBWAOpts & bwaCores .~ 8)
+    input & replicates.traverse.files %%~ liftIO . ( \fl -> case fl of
+        Left f ->
+            let f' = fromSomeTags f :: File '[] 'Fastq
+            in bwaAlign output idx (Left f') $ defaultBWAOpts & bwaCores .~ 8
+        Right (f1,f2) ->
+            let f1' = fromSomeTags f1 :: File '[] 'Fastq
+                f2' = fromSomeTags f2 :: File '[] 'Fastq
+            in bwaAlign output idx (Right (f1', f2')) $
+                defaultBWAOpts & bwaCores .~ 8
         )
 
 filterBamSort :: SCATACSeqConfig config
-              => SCATACSeq S (File '[PairedEnd] 'Bam)
-              -> ReaderT config IO
-                  (SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam))
+              => SCATACSeq S (Either (File '[] 'Bam) (File '[PairedEnd] 'Bam))
+              -> ReaderT config IO ( SCATACSeq S ( Either
+                  (File '[NameSorted] 'Bam)
+                  (File '[NameSorted, PairedEnd] 'Bam) ))
 filterBamSort input = do
     dir <- asks ((<> "/Bam") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_filt.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . filterBam "./" output
+    input & replicates.traverse.files %%~ liftIO . either
+        (fmap Left . fun output) (fmap Right . filterBam "./" output)
+  where
+    fun output x = withTemp (Just "./") $ \f ->
+        filterBam "./" f x >>= sortBamByName "./" output
 
 qualityControl :: SCATACSeqConfig config
-             => SCATACSeq S (File '[NameSorted, PairedEnd] 'Bam)
-             -> ReaderT config IO
-                (SCATACSeq S ( File '[NameSorted, Gzip] 'Bed  -- ^ filtered reads
+               => SCATACSeq S ( Either
+                   (File '[NameSorted] 'Bam)
+                   (File '[NameSorted, PairedEnd] 'Bam) )
+               -> ReaderT config IO
+                   (SCATACSeq S ( File '[NameSorted, Gzip] 'Bed  -- ^ filtered reads
                              , File '[NameSorted] 'Bam        -- ^ mito reads
                              , File '[] 'Tsv ))               -- ^ Stat
 qualityControl input = do
@@ -75,12 +87,12 @@ qualityControl input = do
             return ( location .~ output1 $ emptyFile
                    , location .~ mitoReads $ emptyFile
                    , location .~ output2 $ emptyFile )
-    input & replicates.traverse.files %%~ liftIO . f . (^.location)
+    input & replicates.traverse.files %%~ liftIO . f . either
+        (^.location) (^.location)
   where
     tagsOutputSink out = concatMapC (fmap fst . filterCell) .|
         concatC .| sinkFileBedGzip out
     qcFileSink out = mapC (showStat . snd) .| unlinesAsciiC .| sinkFile out
-
 
 filterCell :: (a, Stat) -> Maybe a 
 filterCell (x, Stat{..})
@@ -96,7 +108,7 @@ filterReads :: BAMHeader
 filterReads hdr promoters bam = runState filterFn $ Stat bc 0 0 0 0
   where
     filterFn = do
-        (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
+        (tags, mito) <- {-rmAbnoramlFragment bam >>= -} rmDup bam >>= rmChrM hdr
         let beds = mapMaybe (fmap changeName . bamToBed hdr) tags
         frip promoters beds
         totalReads beds

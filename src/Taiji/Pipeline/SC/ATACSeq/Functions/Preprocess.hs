@@ -32,13 +32,15 @@ downloadData input = input & traverse.replicates.traverse.files.traverse %%~
         liftIO $ downloadFiles dir fl )
 
 getFastq :: [RAWInput]
-         -> [ SCATACSeq S (SomeTags 'Fastq, SomeTags 'Fastq) ]
+         -> [ SCATACSeq S ( Either
+            (SomeTags 'Fastq) (SomeTags 'Fastq, SomeTags 'Fastq) )]
 getFastq input = concatMap split $ concatMap split $
     input & mapped.replicates.mapped.files %~ f
   where
-    f fls = map (bimap castFile castFile) $
-        filter (\(x,y) -> getFileType x == Fastq && getFileType y == Fastq) $
-        rights fls
+    f fls = map (bimap castFile (bimap castFile castFile)) $
+        filter (either (\x -> getFileType x == Fastq) g) fls
+      where
+        g (x,y) = getFileType x == Fastq && getFileType y == Fastq
 
 getSortedBed :: [RAWInput]
              -> [ SCATACSeq S (File '[NameSorted, Gzip] 'Bed) ]
