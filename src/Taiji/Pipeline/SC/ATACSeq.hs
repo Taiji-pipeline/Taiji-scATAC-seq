@@ -29,7 +29,7 @@ builder = do
          , "QC" ]
 
 --------------------------------------------------------------------------------
--- Cell by Window matrix
+-- Creating Cell by Window matrix
 --------------------------------------------------------------------------------
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
         (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
@@ -53,7 +53,7 @@ builder = do
     lsaClust "/Cluster_by_window/LSA/"
     path ["Make_Count_Matrix", "LSA"]
 
-    -- Clustering 1st round
+    -- Clustering 1st round (By Window)
     namespace "Merged" $ lsaClust "/Cluster_by_window/LSA/"
     path ["Merge_Count_Matrix", "Merged_LSA"]
 
@@ -76,7 +76,7 @@ builder = do
     node "LSA_Merge_Peak_Matrix_Prep" [| \(pk, exps) -> return $ flip map exps $
         \e -> e & replicates._2.files %~ (\x -> (fromJust pk,x))
         |]$ return ()
-    node "LSA_Merge_Peak_Matrix" [| mergeFeatMatrix "cell_by_peak.txt.gz" |] $ return ()
+    node "LSA_Merge_Peak_Matrix" [| mergeFeatMatrix "cell_by_peak_1st_round.txt.gz" |] $ return ()
     ["LSA_Merge_Peaks", "LSA_Make_Peak_Matrix"] ~> "LSA_Merge_Peak_Matrix_Prep"
     path ["LSA_Merge_Peak_Matrix_Prep", "LSA_Merge_Peak_Matrix"]
 
@@ -101,7 +101,7 @@ builder = do
 
     -- Call peaks final round
     nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/Cluster/" |] $ return ()
-    node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
+    node "Merge_Peaks" [| mergePeaks "/Feature/Peak/Cluster/" |] $ return ()
     path ["Merge_Tags_Cluster", "Call_Peaks", "Merge_Peaks"]
 
     node "Cluster_Correlation" 'clusterCorrelation $ return ()
@@ -109,10 +109,16 @@ builder = do
 
     -- Call peaks SubCluster
     nodePar "SubCluster_Call_Peaks" [| findPeaks "/Feature/Peak/SubCluster/" |] $ return ()
-    node "SubCluster_Merge_Peaks" [| mergePeaks "/Feature/Peak/SubCluster/" |] $ return ()
+    node "SubCluster_Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["SubCluster_Merge_Tags_Cluster", "SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"]
     node "SubCluster_Correlation" 'clusterCorrelation $ return ()
     ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
+
+--------------------------------------------------------------------------------
+-- Creating Cell by Peak matrix
+--------------------------------------------------------------------------------
+
+
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()

@@ -53,7 +53,7 @@ mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
           -> ReaderT config IO (SCATACSeq S (File tags 'Other))
 mkPeakMat input = do
-    dir <- asks ((<> "/Feature/") . _scatacseq_output_dir) >>= getPath
+    dir <- asks ((<> "/Feature/Peak/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_peak.txt.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
@@ -75,6 +75,7 @@ findPeaks prefix (cName, bedFl) = do
     r <- liftIO $ callPeaks output bedFl Nothing opts
     return (cName, r)
 
+-- | Merge peaks
 mergePeaks :: SCATACSeqConfig config
            => FilePath
            -> [(B.ByteString, File '[] 'NarrowPeak)]
