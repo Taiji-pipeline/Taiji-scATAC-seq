@@ -2,6 +2,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
 module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
     , SCATACSeqConfig(..)
@@ -17,7 +19,7 @@ import GHC.Generics (Generic)
 newtype SCATACSeq container file = SCATACSeq (CommonFields container file)
      deriving (Generic, Experiment)
 
-instance Show (container (Replicate file)) => Show (SCATACSeq container file)
+deriving instance Show (container (Replicate file)) => Show (SCATACSeq container file)
 
 instance Binary (container (Replicate file)) =>
     Binary (SCATACSeq container file)
