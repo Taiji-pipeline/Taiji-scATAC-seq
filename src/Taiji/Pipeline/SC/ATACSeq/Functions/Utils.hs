@@ -306,7 +306,7 @@ mergeMatrix inputs = do
             unlinesAsciiC .| gzip
       where
         source = forM_ ms $ \(sample, m) -> streamRows m .| 
-            mapC (first (\x -> sample <> "_" <> x))
+            mapC (first (\x -> sample <> "+" <> x))
         nCell = foldl' (+) 0 $ map (_num_row . snd) ms
         nBin = _num_col $ snd $ head ms
         header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin

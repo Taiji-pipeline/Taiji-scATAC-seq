@@ -35,27 +35,30 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
-lsaClust :: FilePath -> Builder ()
+-- | Perform LSA analysis.
+lsaClust :: FilePath   -- ^ Directory to save the results
+         -> Builder ()
 lsaClust prefix = do
-    nodePar "LSA" [| performLSA prefix |] $ return ()
-    nodePar "Cluster_LSA" [| doClustering prefix |] $ return ()
-    nodePar "Visualize_LSA_Cluster" [| \x -> do
+    nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
+    nodePar "LSA_Cluster" [| doClustering prefix |] $ return ()
+    nodePar "LSA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["LSA", "Cluster_LSA", "Visualize_LSA_Cluster"]
+    path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
 
-extractTags :: FilePath -> Builder ()
+-- | Extract tags for clusters.
+extractTags :: FilePath   -- ^ Directory to save the results
+            -> Builder ()
 extractTags prefix = do
     node "Extract_Tags_Prep"  [| liftIO . getClusterBarcodes |] $ return ()
     nodePar "Extract_Tags" 'getBedCluster $ return ()
-    node "Merge_Tags_Cluster_Prep" [| \input -> return $
+    node "Merge_Tags_Prep" [| \input -> return $
         map (first head . unzip) $ groupBy ((==) `on` fst) $
         sortBy (comparing fst) $ concat $ input^..folded.replicates._2.files
         |] $ return ()
-    nodePar "Merge_Tags_Cluster" [| mergeBedCluster prefix |] $ return ()
-    path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Cluster_Prep"
-        , "Merge_Tags_Cluster"]
+    nodePar "Merge_Tags" [| mergeBedCluster prefix |] $ return ()
+    path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Prep", "Merge_Tags"]
 
 doClustering :: SCATACSeqConfig config
              => FilePath
@@ -117,7 +120,7 @@ getClusterBarcodes (inputs, clusters) = do
     getBarcode e x | B.unpack (B.init i) == T.unpack e = Just bc
                    | otherwise = Nothing
       where
-        (i, bc) = B.breakEnd (=='_') $ _cell_barcode x
+        (i, bc) = B.breakEnd (=='+') $ _cell_barcode x
 
 -- | Extract BEDs for each cluster.
 getBedCluster :: SCATACSeqConfig config

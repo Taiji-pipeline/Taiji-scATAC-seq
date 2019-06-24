@@ -24,110 +24,99 @@ builder = do
     node "Align_Prep" [| return . fst |] $ return ()
     ["Get_Fastq", "Make_Index"] ~> "Align_Prep"
     nodePar "Align" 'tagAlign $ do
-        nCore .= 8
+        nCore .= 4
+        memory .= 10
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterBamSort $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     nodePar "QC" 'qualityControl $ return ()
     path ["Align_Prep", "Align", "Filter_Bam", "QC"]
+    node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
+        (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
+    [ "Download_Data", "QC"] ~> "Get_Bed"
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix
 --------------------------------------------------------------------------------
-    node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
-        (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
     nodePar "Get_Bins" 'getBins $ return ()
-    nodePar "Make_Count_Matrix" 'mkWindowMat $ return ()
-    [ "Download_Data", "QC"] ~> "Get_Bed"
-    path ["Get_Bed", "Get_Bins", "Make_Count_Matrix"]
+    nodePar "Make_Window_Matrix" 'mkWindowMat $ return ()
+    path ["Get_Bed", "Get_Bins", "Make_Window_Matrix"]
 
     -- merged matrix
-    node "Merge_Count_Matrix_Prep" [| \(x, y) -> return $
+    node "Merge_Window_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
-    node "Merge_Count_Matrix" [| mergeFeatMatrix "cell_by_window.txt.gz" |] $ return ()
-    ["Get_Bins", "Make_Count_Matrix"] ~> "Merge_Count_Matrix_Prep"
-    path ["Merge_Count_Matrix_Prep", "Merge_Count_Matrix"]
+    node "Merge_Window_Matrix" [| mergeFeatMatrix "/Feature/Window/merged_cell_by_window.txt.gz" |] $ return ()
+    ["Get_Bins", "Make_Window_Matrix"] ~> "Merge_Window_Matrix_Prep"
+    path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
 
 --------------------------------------------------------------------------------
 -- LSA
 --------------------------------------------------------------------------------
     -- Clustering in each sample
-    lsaClust "/Cluster_by_window/LSA/"
-    path ["Make_Count_Matrix", "LSA"]
+    namespace "Each" $ lsaClust "/Cluster_by_window/LSA/Each/"
+    path ["Make_Window_Matrix", "Each_LSA_Reduce"]
 
     -- Clustering 1st round (By Window)
-    namespace "Merged" $ lsaClust "/Cluster_by_window/LSA/"
-    path ["Merge_Count_Matrix", "Merged_LSA"]
+    namespace "Window" $ lsaClust "/Cluster_by_window/LSA/"
+    path ["Merge_Window_Matrix", "Window_LSA_Reduce"]
 
     -- Extract tags for each cluster
-    namespace "LSA" $ extractTags "/temp/Bed/Cluster/"
-    ["Get_Bed", "Merged_Cluster_LSA"] ~> "LSA_Extract_Tags_Prep"
+    namespace "Window_LSA" $ extractTags "/temp/Bed/Cluster/"
+    ["Get_Bed", "Window_LSA_Cluster"] ~> "Window_LSA_Extract_Tags_Prep"
 
     -- Call peaks 1st round
-    nodePar "LSA_Call_Peaks" [| findPeaks "/temp/Peak/Cluster/" |] $ return ()
-    node "LSA_Merge_Peaks" [| mergePeaks "/temp/Peak/" |] $ return ()
-    path ["LSA_Merge_Tags_Cluster", "LSA_Call_Peaks", "LSA_Merge_Peaks"]
-
-    -- Create cell by peak matrix
-    node "LSA_Make_Peak_Matrix_Prep" [| \(exps, pk) -> return $ flip map exps $
-        \e -> e & replicates._2.files %~ (\(a,_,c) -> (a,fromJust pk,c))
-        |] $ return ()
-    nodePar "LSA_Make_Peak_Matrix" 'mkPeakMat $ return ()
-    ["Get_Bins", "LSA_Merge_Peaks"] ~> "LSA_Make_Peak_Matrix_Prep"
-    path ["LSA_Make_Peak_Matrix_Prep", "LSA_Make_Peak_Matrix"]
-    node "LSA_Merge_Peak_Matrix_Prep" [| \(pk, exps) -> return $ flip map exps $
-        \e -> e & replicates._2.files %~ (\x -> (fromJust pk,x))
-        |]$ return ()
-    node "LSA_Merge_Peak_Matrix" [| mergeFeatMatrix "cell_by_peak_1st_round.txt.gz" |] $ return ()
-    ["LSA_Merge_Peaks", "LSA_Make_Peak_Matrix"] ~> "LSA_Merge_Peak_Matrix_Prep"
-    path ["LSA_Merge_Peak_Matrix_Prep", "LSA_Merge_Peak_Matrix"]
+    genPeakMat "/temp/Peak/" (Just "LSA_1st") 
+        "Window_LSA_Merge_Tags" "Get_Bins"
 
     -- Clustering 2nd round
-    namespace "Merged_2nd" $ lsaClust "/Cluster_by_peak/LSA/"
-    path ["LSA_Merge_Peak_Matrix", "Merged_2nd_LSA"]
+    namespace "Peak" $ lsaClust "/Cluster_by_peak/LSA/"
+    path ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Reduce"]
 
     -- Subclustering
     node "Extract_Sub_Matrix" 'extractSubMatrix $ return ()
-    ["LSA_Merge_Peak_Matrix", "Merged_2nd_Cluster_LSA"] ~> "Extract_Sub_Matrix"
+    ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
     namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/"
-    path ["Extract_Sub_Matrix", "SubCluster_LSA"]
+    path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
 
+
+--------------------------------------------------------------------------------
+-- Creating Cell by Peak matrix
+--------------------------------------------------------------------------------
     -- Extract tags for each cluster
     extractTags "/Bed/Cluster/"
-    ["Get_Bed", "Merged_2nd_Cluster_LSA"] ~> "Extract_Tags_Prep"
+    ["Get_Bed", "Peak_LSA_Cluster"] ~> "Extract_Tags_Prep"
 
     -- Extract tags for subclusters
     namespace "SubCluster" $ extractTags "/Bed/SubCluster/"
-    ["Get_Bed", "SubCluster_Cluster_LSA"] ~> "SubCluster_Extract_Tags_Prep"
-
+    ["Get_Bed", "SubCluster_LSA_Cluster"] ~> "SubCluster_Extract_Tags_Prep"
 
     -- Call peaks final round
-    nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/Cluster/" |] $ return ()
-    node "Merge_Peaks" [| mergePeaks "/Feature/Peak/Cluster/" |] $ return ()
-    path ["Merge_Tags_Cluster", "Call_Peaks", "Merge_Peaks"]
+    genPeakMat "/Feature/Peak/Cluster/" Nothing "Merge_Tags" "Get_Bins"
 
     node "Cluster_Correlation" 'clusterCorrelation $ return ()
     ["Call_Peaks", "Merge_Peaks"] ~> "Cluster_Correlation"
 
     -- Call peaks SubCluster
-    nodePar "SubCluster_Call_Peaks" [| findPeaks "/Feature/Peak/SubCluster/" |] $ return ()
-    node "SubCluster_Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
-    path ["SubCluster_Merge_Tags_Cluster", "SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"]
+    genPeakMat "/Feature/Peak/SubCluster/" (Just "SubCluster")
+        "SubCluster_Merge_Tags" "Get_Bins"
+
     node "SubCluster_Correlation" 'clusterCorrelation $ return ()
     ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
 
 --------------------------------------------------------------------------------
--- Creating Cell by Peak matrix
+-- Call CRE interactions
 --------------------------------------------------------------------------------
 
+    --node "Cicero" 'cicero $ return ()
+    --["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
 
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
     node "Make_Expr_Table" [| mkExprTable "expression_profile.tsv" |] $ return ()
-    path ["Merge_Tags_Cluster", "Estimate_Gene_Expr", "Make_Expr_Table"]
+    path ["Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
     -- Motif finding
     node "Find_TFBS_Prep" [| findMotifsPre 5e-5 |] $ return ()
