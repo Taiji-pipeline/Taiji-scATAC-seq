@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , plotClusters
     , clust
     , lsaClust
+    , ldaClust
     , extractTags
     , extractSubMatrix
     ) where
@@ -42,12 +43,24 @@ lsaClust :: FilePath   -- ^ Directory to save the results
          -> Builder ()
 lsaClust prefix = do
     nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
-    nodePar "LSA_Cluster" [| doClustering prefix |] $ return ()
+    nodePar "LSA_Cluster" [| doClustering prefix True |] $ return ()
     nodePar "LSA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
+
+-- | Perform LDA analysis.
+ldaClust :: FilePath   -- ^ Directory to save the results
+         -> Builder ()
+ldaClust prefix = do
+    nodePar "LDA_Reduce" [| performLDA prefix |] $ return ()
+    nodePar "LDA_Cluster" [| doClustering prefix False |] $ return ()
+    nodePar "LDA_Viz" [| \x -> do
+        dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["LDA_Reduce", "LDA_Cluster", "LDA_Viz"]
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
@@ -64,15 +77,16 @@ extractTags prefix = do
 
 doClustering :: SCATACSeqConfig config
              => FilePath
+             -> Bool   -- ^ whether to discard 1st dimension
              -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
              -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
-doClustering prefix input = do
+doClustering prefix discard input = do
     tmp <- asks _scatacseq_temp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        clust True tmp fl >>= encodeFile output
+        clust discard tmp fl >>= encodeFile output
         return $ location .~ output $ emptyFile )
 
 clust :: Bool   -- ^ Whether to discard the first dimension

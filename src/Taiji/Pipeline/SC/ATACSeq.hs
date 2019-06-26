@@ -52,6 +52,13 @@ builder = do
     path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
 
 --------------------------------------------------------------------------------
+-- LDA
+--------------------------------------------------------------------------------
+    -- Clustering in each sample
+    namespace "Each" $ ldaClust "/Cluster_by_window/LDA/Each/"
+    path ["Make_Window_Matrix", "Each_LDA_Reduce"]
+
+--------------------------------------------------------------------------------
 -- LSA
 --------------------------------------------------------------------------------
     -- Clustering in each sample
