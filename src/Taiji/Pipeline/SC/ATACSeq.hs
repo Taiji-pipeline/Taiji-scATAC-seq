@@ -109,8 +109,8 @@ builder = do
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
-    --node "Cicero" 'cicero $ return ()
-    --["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
+    node "Cicero" 'cicero $ return ()
+    ["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
 
 
     -- Estimate gene expression
@@ -155,10 +155,12 @@ builder = do
     node "Get_Open_Region" 'getOpenRegion $ return ()
     -}
 
-    {-
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
-    nodePar "Snap_Cluster" [| liftIO . getClusters |] $ return ()
-    path ["Get_Bed", "Snap_Pre", "Snap_Cluster"]
-    -}
+    nodePar "Snap_Cluster" 'getClusters $ return ()
+    nodePar "Snap_Viz" [| \x -> do
+        dir <- asks ((<> "/Snap/" ) . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Get_Bed", "Snap_Pre", "Snap_Cluster", "Snap_Viz"]
 

@@ -7,6 +7,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Cicero
   (cicero) where
 
 import Bio.Data.Bed
+import Bio.Seq.IO
 import Bio.Utils.Misc (readInt)
 import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lex.Integral (packDecimal)
@@ -20,14 +21,27 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 
-cicero :: ( Maybe (File '[Gzip] 'NarrowPeak)
+cicero :: SCATACSeqConfig config
+       => ( Maybe (File '[Gzip] 'NarrowPeak)
           , [SCATACSeq S (File '[Gzip] 'Other)] )
-       -> IO (Maybe FilePath)
+       -> ReaderT config IO (Maybe FilePath)
 cicero (Just peakFl, [matFl]) = do
-    peaks <- runResourceT $ runConduit $ streamBedGzip (peakFl^.location) .| sinkList
-    mat <- mkSpMatrix readInt $ matFl^.replicates._2.files.location
-    mkAtacCDS "test.txt" peaks mat
-    return $ Just "test.txt"
+    dir <- asks ((<> "/Cicero") . _scatacseq_output_dir) >>= getPath
+    let output = dir <> "/cicero.tsv"
+    genome <- asks (fromJust . _scatacseq_genome_index)
+    liftIO $ do
+        chrSizes <- withGenome genome $ return . getChrSizes
+        peaks <- runResourceT $ runConduit $ streamBedGzip (peakFl^.location) .| sinkList
+        mat <- mkSpMatrix readInt $ matFl^.replicates._2.files.location
+        withTempDir Nothing $ \tmpdir -> do
+            --let count = tmpdir <> "/count"
+            let count = "count.txt"
+                chr = tmpdir <> "/chr"
+            B.writeFile chr $ B.unlines $
+                map (\(a,b) -> a <> "\t" <> B.pack (show b)) chrSizes
+            mkAtacCDS count peaks mat
+            getConnection output chr count
+    return $ Just output
 cicero _ = return Nothing
 
 -- | Create a sparse matrix that can be used as the input for "make_atac_cds"
@@ -61,23 +75,19 @@ mkAtacCDS output peaks mat = runResourceT $ runConduit $
 -- cell1    -0.7084047      -0.7232994
 -- cell2    -4.4767964       0.8237284
 -- cell3     1.4870098      -0.4723493
-
-{-
-xxx :: FilePath  -- ^ Chromosome size file
-    -> FilePath  -- ^ Count matrix
-    -> [[Double]] -- ^ Reduced dimension
-    -> IO ()
-xxx chr cds dat = R.runRegion $
-    [r| library(cicero)
+getConnection :: FilePath  -- ^ Output
+              -> FilePath  -- ^ Chromosome size file
+              -> FilePath  -- ^ Count matrix
+              -> IO ()
+getConnection output chr cds = R.runRegion $ do
+    _ <- [r| library(cicero)
         input_cds <- make_atac_cds(cds_hs, binarize = TRUE)
-        coords <- matrix(mat_hs, nrow=n_hs, byrow=T)
-        rownames(coords) <- row.names(pData(input_cds))
-        cicero_cds <- make_cicero_cds(input_cds, reduced_coordinates = coords)
+        input_cds <- reduceDimension(input_cds, max_components = 2, num_dim=6,
+                      reduction_method = 'tSNE', norm_method = "none")
+        tsne_coords <- t(reducedDimA(input_cds))
+        row.names(tsne_coords) <- row.names(pData(input_cds))
+        cicero_cds <- make_cicero_cds(input_cds, reduced_coordinates = tsne_coords)
         conns <- run_cicero(cicero_cds, chr_hs)
+        write.table(conns, file=output_hs)
     |]
     return ()
-  where
-    mat = concat dat
-    n = fromIntegral $ length dat :: Double
-
-    -}

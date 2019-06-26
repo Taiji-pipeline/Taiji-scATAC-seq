@@ -5,6 +5,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
     , plotClusters
     , clust
     , lsaClust
@@ -31,6 +32,7 @@ import Data.Conduit.Zlib (gzip)
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
+import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -171,9 +173,9 @@ plotClusters dir input = do
             (input^.replicates._1)
         --output3d = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
         --    (input^.replicates._1)
-        stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    clusterStat stat inputData
+        --stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
+        --    (input^.replicates._1)
+    --clusterStat stat inputData
     clusters <- sampleCells inputData
     visualizeCluster2D output2d Nothing clusters
     --visualizeCluster3D output3d Nothing clusters
@@ -244,7 +246,7 @@ extractSubMatrix ([input], [clFl]) = do
               where
                 res = input & eid .~ T.pack (B.unpack _cluster_name)
                             & replicates._2.files.location .~ output
-                output = dir <> B.unpack _cluster_name <> "_mat.txt.gz"
+                output = dir <> B.unpack _cluster_name <> "_subMat.txt.gz"
                 header = B.pack $ printf "Sparse matrix: %d x %d" nCell
                     (_num_col mat)
                 ids = S.fromList $ map _cell_barcode _cluster_member
