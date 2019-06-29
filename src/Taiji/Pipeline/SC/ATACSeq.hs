@@ -164,10 +164,11 @@ builder = do
 
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
-    nodePar "Snap_Cluster" 'getClusters $ return ()
+    nodePar "Snap_Reduce" 'performSnap $ return ()
+    nodePar "Snap_Cluster" [| doClustering "/Snap/" True |] $ return ()
     nodePar "Snap_Viz" [| \x -> do
         dir <- asks ((<> "/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["Get_Bed", "Snap_Pre", "Snap_Cluster", "Snap_Viz"]
+    path ["Get_Bed", "Snap_Pre", "Snap_Reduce", "Snap_Cluster", "Snap_Viz"]
 

@@ -12,6 +12,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , ldaClust
     , extractTags
     , extractSubMatrix
+    , doClustering
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -32,7 +33,6 @@ import Data.Conduit.Zlib (gzip)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
-import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
