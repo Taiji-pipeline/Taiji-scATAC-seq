@@ -28,12 +28,51 @@ class InputData:
             yield vec.T * u
 '''
 
+def diffusionMap(args):
+    data = InputData(args.input)
+    n_dim = 15
+    t = 1
+    print("Read Data")
+    indptr = [0]
+    indices = []
+    mat = []
+    for row in iter(data):
+        for (i,x) in row:
+            indices.append(i)
+            mat.append(1)
+        indptr.append(len(indices))
+    mat = sp.sparse.csr_matrix((mat, indices, indptr), dtype=int)
+    (n,_) = mat.get_shape()
+
+    print("Compute similarity matrix")
+    jm = mat.dot(mat.T).todense()
+    s = mat.sum(axis=1).dot(np.ones((1,n)))
+    jm = jm / (s + s.T - jm)
+    np.fill_diagonal(jm, 0)
+    print("Normalization")
+    s = jm.sum(axis=1).dot(np.ones((1,n)))
+    jm = jm / s
+
+    print("Reduction")
+    (evals, evecs) = sp.sparse.linalg.eigs(jm, k=n_dim+1, which='LR')
+    ix = evals.argsort()[::-1][1:]
+    evals = np.real(evals[ix])
+    evecs = np.real(evecs[:, ix])
+    dmap = np.matmul(evecs, np.diag(evals**t))
+    np.savetxt(args.output, dmap, delimiter='\t')
+
+
 def ldaTransform(args):
     from gensim.models.ldamodel import LdaModel
-    data = InputData(args.input)
-    n_dim = 30
+    import logging
+    logging.basicConfig(filename='gensim.log',
+        format="%(asctime)s:%(levelname)s:%(message)s",
+        level=logging.INFO)
 
-    model = LdaModel(data, num_topics=n_dim, chunksize=10000, random_state=2347, passes=20, update_every=0)
+    data = InputData(args.input)
+    n_dim = 15
+
+    model = LdaModel(data, num_topics=n_dim, chunksize=10000, random_state=2347, passes=40, iterations=5000, eval_every=10)
     data_transformed = corpus2dense(model[data], n_dim).T
     np.savetxt(args.output, data_transformed, delimiter='\t')
 
@@ -42,7 +81,7 @@ def lsiTransform(args):
     from gensim.models import LsiModel
 
     data = InputData(args.input)
-    n_dim = 30
+    n_dim = 15
 
     model = LsiModel(data, num_topics=n_dim, onepass=False, power_iters=2, chunksize=10000)
     data_transformed = corpus2dense(model[data], n_dim).T
@@ -65,24 +104,35 @@ def lsiTransform(args):
 def reduceDimension(args):
     if(args.method == "svd"):
         lsiTransform(args)
+    elif(args.method == "dm"):
+        diffusionMap(args)
     else:
         ldaTransform(args)
 
-def getEmbedding(mat, output, method="tsne"):
+def getEmbedding(mat, output, method="umap"):
+    print(method)
     if(method == "umap"):
         import umap
-        embedding = umap.UMAP(random_state=42,
+        e1 = umap.UMAP(random_state=42,
             n_components=2, min_dist=0).fit_transform(mat)
+        e2 = umap.UMAP(random_state=42,
+            n_components=3, min_dist=0).fit_transform(mat)
+        embedding = np.concatenate((e1, e2), axis=1)
+    elif(method == "none"):
+        e1 = mat[...,:2]
+        e2 = mat[...,:3]
+        embedding = np.concatenate((e1, e2), axis=1)
     else:
         from MulticoreTSNE import MulticoreTSNE as TSNE
-        tsne = TSNE(n_jobs=4, n_components=2, perplexity=30)
-        embedding = tsne.fit_transform(mat)
+        e1 = TSNE(n_jobs=4, n_components=2, perplexity=30).fit_transform(mat)
+        e2 = TSNE(n_jobs=4, n_components=3, perplexity=30).fit_transform(mat)
+        embedding = np.concatenate((e1, e2), axis=1)
     np.savetxt(output, embedding, delimiter='\t')
 
 # regress out a variable
 def regressOut(X, y):
     from sklearn.linear_model import Lasso
-    reg = Lasso(alpha=0.5).fit(X, y)
+    reg = Lasso(alpha=0.1).fit(X, y)
     return np.subtract(y.flatten(), reg.predict(X))
 
 def clustering(args):
@@ -136,4 +186,4 @@ def clustering(args):
 
     if(args.embed):
         print("Create Embedding:")
-        getEmbedding(data_transformed, args.embed)
+        getEmbedding(data_transformed, args.embed, method=args.embed_method)

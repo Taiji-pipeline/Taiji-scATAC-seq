@@ -28,8 +28,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , groupCells
     , mergeMatrix
 
-    , visualizeCluster2D
-    , visualizeCluster3D
+    , visualizeCluster
     ) where
 
 import Bio.Data.Bed
@@ -45,7 +44,6 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
-import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
@@ -322,28 +320,20 @@ mergeMatrix inputs = do
       where
         f k = HM.lookupDefault undefined k newIdx
 
-visualizeCluster2D :: FilePath
-                   -> Maybe (V.Vector String)  -- ^ Optional indicator
-                   -> [CellCluster] -> IO ()
-visualizeCluster2D output marker cs = savePlots output [] [scatter dat2D viz]
+visualizeCluster :: FilePath
+                 -> [CellCluster]
+                 -> IO ()
+visualizeCluster output cs = savePlots output []
+    [ scatter3D dat3D viz1
+    , scatter3D dat3D viz2
+    , scatter dat2D viz1 ]
   where
     dat2D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map (\(Cell _ x y _ _ _) -> (x, y)) cells)
-    viz = case marker of
-        Nothing -> Continuous $ concatMap
-            (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
-        Just vec -> Categorical $ concatMap
-            (map (\x -> vec V.! _cell_id x) . _cluster_member) cs
-
-visualizeCluster3D :: FilePath
-                   -> Maybe (V.Vector String)  -- ^ Optional indicator
-                   -> [CellCluster] -> IO ()
-visualizeCluster3D output marker cs = savePlots output [] [scatter3D dat3D viz]
-  where
+        (B.unpack nm, map _cell_2d cells)
     dat3D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map (\(Cell _ x y z _ _) -> (x, y, z)) cells)
-    viz = case marker of
-        Nothing -> Continuous $ concatMap
-            (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
-        Just vec -> Categorical $ concatMap
-            (map (\x -> vec V.! _cell_id x) . _cluster_member) cs
+        (B.unpack nm, map _cell_3d cells)
+    viz1 = Continuous $ concatMap
+        (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
+    viz2 = Categorical $ concatMap
+        (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
+    getName = B.unpack . B.init . fst . B.breakEnd (=='_') . B.init . fst . B.breakEnd (=='_') 

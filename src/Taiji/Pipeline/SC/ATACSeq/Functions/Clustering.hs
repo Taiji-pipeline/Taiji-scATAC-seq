@@ -6,13 +6,16 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
+    , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
     , plotClusters
     , clust
     , lsaClust
     , ldaClust
+    , dmClust
     , extractTags
     , extractSubMatrix
     , doClustering
+    , defClustOpt
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -34,6 +37,7 @@ import Data.Conduit.Zlib (gzip)
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
+import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -43,7 +47,7 @@ lsaClust :: FilePath   -- ^ Directory to save the results
          -> Builder ()
 lsaClust prefix = do
     nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
-    nodePar "LSA_Cluster" [| doClustering prefix True |] $ return ()
+    nodePar "LSA_Cluster" [| doClustering prefix defClustOpt |] $ return ()
     nodePar "LSA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -55,12 +59,26 @@ ldaClust :: FilePath   -- ^ Directory to save the results
          -> Builder ()
 ldaClust prefix = do
     nodePar "LDA_Reduce" [| performLDA prefix |] $ return ()
-    nodePar "LDA_Cluster" [| doClustering prefix False |] $ return ()
+    nodePar "LDA_Cluster" [| doClustering prefix defClustOpt |] $ return ()
     nodePar "LDA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["LDA_Reduce", "LDA_Cluster", "LDA_Viz"]
+
+-- | Perform LSA analysis.
+dmClust :: FilePath   -- ^ Directory to save the results
+        -> Builder ()
+dmClust prefix = do
+    nodePar "DM_Reduce" [| performDM prefix |] $ return ()
+    nodePar "DM_Cluster" [| doClustering prefix $ ClustOpt False "umap" True
+        |] $ return ()
+    nodePar "DM_Viz" [| \x -> do
+        dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["DM_Reduce", "DM_Cluster", "DM_Viz"]
+  where
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
@@ -77,30 +95,40 @@ extractTags prefix = do
 
 doClustering :: SCATACSeqConfig config
              => FilePath
-             -> Bool   -- ^ whether to discard 1st dimension
+             -> ClustOpt
              -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
              -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
-doClustering prefix discard input = do
+doClustering prefix opt input = do
     tmp <- asks _scatacseq_temp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        clust discard tmp fl >>= encodeFile output
+        clust opt tmp fl >>= encodeFile output
         return $ location .~ output $ emptyFile )
 
-clust :: Bool   -- ^ Whether to discard the first dimension
+data ClustOpt = ClustOpt
+    { _discard_first :: Bool
+    , _embedding_method :: String
+    , _regression :: Bool
+    }
+
+defClustOpt :: ClustOpt
+defClustOpt = ClustOpt True "umap" False
+
+clust :: ClustOpt
       -> Maybe FilePath      -- ^ temp dir
       -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
       -> IO [CellCluster]
-clust discard dir (coverage, mat) = withTempDir dir $ \tmpD -> do
+clust ClustOpt{..} dir (coverage, mat) = withTempDir dir $ \tmpD -> do
       runResourceT $ runConduit $ seqDepthC .| mapC snd .|
           unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
       shelly $ run_ "sc_utils" $ [ "clust",
-          --"--coverage", T.pack tmpD <> "/coverage",
           "--embed", T.pack tmpD <> "/embed",
+          "--embed-method", T.pack _embedding_method,
           T.pack $ mat^.location, T.pack tmpD <> "/clust" ] ++
-            if discard then ["--discard"] else []
+            if _discard_first then ["--discard"] else [] ++
+            if _regression then ["--coverage", T.pack tmpD <> "/coverage"] else []
 
       let sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
@@ -116,7 +144,7 @@ clust discard dir (coverage, mat) = withTempDir dir $ \tmpD -> do
         B.readFile fl
     seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
         mapC ((\[a,b] -> (a,b)) . B.split '\t')
-    f (i, (bc, dep), [x,y]) = Cell i x y 0 bc $ readInt dep
+    f (i, (bc, dep), [d1,d2,d3,d4,d5]) = Cell i (d1,d2) (d3,d4,d5) bc $ readInt dep
     f _ = error "formatting error"
 {-# INLINE clust #-}
 
@@ -183,16 +211,13 @@ plotClusters :: FilePath
              -> IO ()
 plotClusters dir input = do
     inputData <- decodeFile $ input^.replicates._2.files.location
-    let output2d = printf "%s/%s_rep%d_cluster_2d.html" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        --output3d = printf "%s/%s_rep%d_cluster_3d.html" dir (T.unpack $ input^.eid)
-        --    (input^.replicates._1)
         --stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
         --    (input^.replicates._1)
     --clusterStat stat inputData
     clusters <- sampleCells inputData
-    visualizeCluster2D output2d Nothing clusters
-    --visualizeCluster3D output3d Nothing clusters
+    visualizeCluster output clusters
 
 {-
 plotClusters' :: SCATACSeqConfig config

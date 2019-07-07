@@ -59,6 +59,13 @@ builder = do
     path ["Make_Window_Matrix", "Each_LDA_Reduce"]
 
 --------------------------------------------------------------------------------
+-- DM
+--------------------------------------------------------------------------------
+    -- Clustering in each sample
+    namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
+    path ["Make_Window_Matrix", "Each_DM_Reduce"]
+
+--------------------------------------------------------------------------------
 -- LSA
 --------------------------------------------------------------------------------
     -- Clustering in each sample
@@ -165,7 +172,7 @@ builder = do
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
     nodePar "Snap_Reduce" 'performSnap $ return ()
-    nodePar "Snap_Cluster" [| doClustering "/Snap/" True |] $ return ()
+    nodePar "Snap_Cluster" [| doClustering "/Snap/" defClustOpt |] $ return ()
     nodePar "Snap_Viz" [| \x -> do
         dir <- asks ((<> "/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x

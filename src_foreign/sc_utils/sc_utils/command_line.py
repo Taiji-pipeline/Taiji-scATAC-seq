@@ -12,7 +12,7 @@ subparsers = parser.add_subparsers(title="sub commands")
 parser_run = subparsers.add_parser('reduce', help='dimension reduction')
 parser_run.add_argument('input', type=str, help='gzipped input file')
 parser_run.add_argument('output', type=str, help='output matrix in .npy format')
-parser_run.add_argument('--method', help='algorithm: svd, lda')
+parser_run.add_argument('--method', help='algorithm: svd, lda, dm')
 parser_run.set_defaults(func=sc.reduceDimension)
 
 # create the parser for the "clust" command
