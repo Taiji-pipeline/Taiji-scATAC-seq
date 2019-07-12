@@ -11,10 +11,14 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 
 import qualified Data.ByteString.Char8 as B
 import Bio.Seq.IO
+import Bio.Utils.Misc (readInt)
+import Data.ByteString.Lex.Integral (packDecimal)
+import Bio.Data.Bed
 import Shelly hiding (FilePath)
 import qualified Data.Text as T
 import System.IO.Temp (withTempFile)
 import System.IO
+import Data.Conduit.Internal (zipSources)
 
 import qualified Language.R                        as R
 import           Language.R.QQ
@@ -22,6 +26,7 @@ import Language.R.HExp
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 snapPre :: SCATACSeqConfig config
         => SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
@@ -93,3 +98,46 @@ snap rownames mat input = R.runRegion $ do
         close(gz1)
     |]
     return ()
+
+snap' :: FilePath   -- ^ column names
+      -> FilePath   -- ^ Sparse Matrix
+      -> IO ()
+snap' nameFl matFl = withTempDir (Just "./") $ \tmpdir -> do
+    regions <- runResourceT $ runConduit $ streamBedGzip nameFl .| mapC f .| sinkList
+    let ridx = tmpdir <> "/ridx.txt"
+        cidx = tmpdir <> "/cidx.txt"
+        vals = tmpdir <> "/vals.txt"
+    mat <- mkSpMatrix readInt matFl
+    rows <- parseSpMat ridx cidx vals mat
+    R.runRegion $ do
+        _ <- [r| library("Matrix")
+                i <- scan(ridx_hs, integer())
+                j <- scan(cidx_hs, integer())
+                vals <- scan(vals_hs, integer())
+                mat <- sparseMatrix(i,j,x=vals)
+                colnames(mat) <- regions_hs
+                rownames(mat) <- rows_hs
+        |]
+        return ()
+  where
+    f :: BED -> String
+    f bed = B.unpack (bed^.chrom) <> ":" <> show (bed^.chromStart) <> "-" <>
+        show (bed^.chromEnd)
+
+parseSpMat :: FilePath  -- ^ row index
+           -> FilePath  -- ^ col index
+           -> FilePath  -- ^ value
+           -> SpMatrix Int
+           -> IO [String]
+parseSpMat ridx cidx vals mat = do
+    (res,_,_,_) <- runResourceT $ runConduit $
+        zipSources (iterateC succ 0) (streamRows mat) .| mapC f .|
+        getZipSink ((,,,) <$> ZipSink sink1 <*> ZipSink sink2 <*> ZipSink sink3 <*> ZipSink sink4)
+    return res
+  where
+    sink1 = mapC fst .| sinkList
+    sink2 = concatMapC (map (fromJust . packDecimal) . (^._1) . snd) .| intersperseC " " .| sinkFile ridx
+    sink3 = concatMapC (map (fromJust . packDecimal) . (^._2) . snd) .| intersperseC " " .| sinkFile cidx
+    sink4 = concatMapC (map (fromJust . packDecimal) . (^._3) . snd) .| intersperseC " " .| sinkFile vals
+    f (i, (bc, xs)) = (B.unpack bc
+        , unzip3 $ map (\(i, (j,x)) -> (i,j,x)) $ zip (repeat i) xs)

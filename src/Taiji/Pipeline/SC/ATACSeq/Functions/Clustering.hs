@@ -15,8 +15,9 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , extractTags
     , extractSubMatrix
     , doClustering
+    , Embedding(..)
+    , Normalization(..)
     , ClustOpt(..)
-    , defClustOpt
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -48,7 +49,7 @@ lsaClust :: FilePath   -- ^ Directory to save the results
          -> Builder ()
 lsaClust prefix = do
     nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
-    nodePar "LSA_Cluster" [| doClustering prefix defClustOpt |] $ return ()
+    nodePar "LSA_Cluster" [| doClustering prefix $ ClustOpt UnitBall UMAP |] $ return ()
     nodePar "LSA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -60,7 +61,7 @@ ldaClust :: FilePath   -- ^ Directory to save the results
          -> Builder ()
 ldaClust prefix = do
     nodePar "LDA_Reduce" [| performLDA prefix |] $ return ()
-    nodePar "LDA_Cluster" [| doClustering prefix defClustOpt |] $ return ()
+    nodePar "LDA_Cluster" [| doClustering prefix $ ClustOpt None UMAP |] $ return ()
     nodePar "LDA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -72,7 +73,7 @@ dmClust :: FilePath   -- ^ Directory to save the results
         -> Builder ()
 dmClust prefix = do
     nodePar "DM_Reduce" [| performDM prefix |] $ return ()
-    nodePar "DM_Cluster" [| doClustering prefix $ ClustOpt False "umap" False
+    nodePar "DM_Cluster" [| doClustering prefix $ ClustOpt None UMAP
         |] $ return ()
     nodePar "DM_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
@@ -108,14 +109,18 @@ doClustering prefix opt input = do
         clust opt tmp fl >>= encodeFile output
         return $ location .~ output $ emptyFile )
 
-data ClustOpt = ClustOpt
-    { _discard_first :: Bool
-    , _embedding_method :: String
-    , _regression :: Bool
-    }
+data Embedding = UMAP
+               | TSNE
 
-defClustOpt :: ClustOpt
-defClustOpt = ClustOpt True "umap" False
+data Normalization = Drop1st
+                   | UnitBall
+                   | Regression
+                   | None
+
+data ClustOpt = ClustOpt
+    { _normalization :: Normalization
+    , _embedding_method :: Embedding
+    }
 
 clust :: ClustOpt
       -> Maybe FilePath      -- ^ temp dir
@@ -124,18 +129,22 @@ clust :: ClustOpt
 clust ClustOpt{..} dir (coverage, mat) = withTempDir dir $ \tmpD -> do
       runResourceT $ runConduit $ seqDepthC .| mapC snd .|
           unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
-      shelly $ run_ "sc_utils" $ [ "clust",
-          "--embed", T.pack tmpD <> "/embed",
-          "--embed-method", T.pack _embedding_method,
-          T.pack $ mat^.location, T.pack tmpD <> "/clust" ] ++
-            if _discard_first then ["--discard"] else [] ++
-            if _regression then ["--coverage", T.pack tmpD <> "/coverage"] else []
-
-      let sourceCells = getZipSource $ (,,) <$>
+      let embed = case _embedding_method of
+              UMAP -> ["--embed-method", "umap"]
+              TSNE -> ["--embed-method", "tsne"]
+          normalize = case _normalization of
+              Drop1st -> ["--discard"]
+              Regression -> ["--coverage", T.pack tmpD <> "/coverage"]
+              UnitBall -> ["--scale"]
+              None -> []
+          sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
               ZipSource seqDepthC <*>
               ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
                 mapC (map readDouble . B.split '\t') )
+      shelly $ run_ "sc_utils" $ [ "clust", T.pack $ mat^.location
+          , T.pack tmpD <> "/clust", "--embed", T.pack tmpD <> "/embed" ] ++
+          embed ++ normalize
       cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
       clusters <- readClusters $ tmpD <> "/clust"
       return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
@@ -243,7 +252,7 @@ sampleCells clusters
             return $ c {_cluster_member = V.toList s}
   where
     n = foldl1' (+) $ map (length . _cluster_member) clusters
-    ratio = 1 / (fromIntegral n / 30000)
+    ratio = 1 / (fromIntegral n / 100000)
 
 sampling :: GenIO
          -> Double  -- ^ fraction

@@ -172,7 +172,7 @@ builder = do
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
     nodePar "Snap_Reduce" 'performSnap $ return ()
-    nodePar "Snap_Cluster" [| doClustering "/Snap/" defClustOpt{_discard_first=False} |] $ return ()
+    nodePar "Snap_Cluster" [| doClustering "/Snap/" $ ClustOpt None UMAP |] $ return ()
     nodePar "Snap_Viz" [| \x -> do
         dir <- asks ((<> "/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x

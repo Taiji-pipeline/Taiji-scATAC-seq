@@ -18,7 +18,7 @@ def diffusionMap(args):
             mat.append(1)
         indptr.append(len(indices))
     mat = sp.sparse.csr_matrix((mat, indices, indptr), dtype=int)
-    (n,_) = mat.get_shape()
+    (n,m) = mat.get_shape()
 
     coverage = mat.sum(axis=1)
 
@@ -27,14 +27,11 @@ def diffusionMap(args):
     s = coverage.dot(np.ones((1,n)))
     jm = jm / (s + s.T - jm)
 
-    print(jm)
-
-    jm = regression(jm, coverage)
-    jm = jm.clip(min=0)
+    jm = regression(jm, coverage/m)
     jm = (jm + jm.T) / 2
-    print(jm)
+    jm = jm.clip(min=0)
 
-    np.fill_diagonal(jm, 0)
+    #np.fill_diagonal(jm, 0)
 
     print("Normalization")
     s = jm.sum(axis=1).dot(np.ones((1,n)))
@@ -42,6 +39,7 @@ def diffusionMap(args):
 
     print("Reduction")
     (evals, evecs) = sp.sparse.linalg.eigs(jm, k=n_dim+1, which='LR')
+    print(evecs[:,1])
     ix = evals.argsort()[::-1][1:]
     evals = np.real(evals[ix])
     evecs = np.real(evecs[:, ix])
@@ -49,7 +47,16 @@ def diffusionMap(args):
     np.savetxt(args.output, dmap, delimiter='\t')
 
 def regression(mat, coverage):
-    s = np.sqrt(np.matmul(coverage, coverage.T))
-    X = s.flatten().reshape(s.size, 1)
-    y = mat.flatten().reshape(mat.size, 1)
-    return regressOut(X,y).reshape(mat.shape)
+    n, m = mat.shape
+
+    X = 1 / coverage.dot(np.ones((1,n)))
+    X = 1 / (X + X.T - 1)
+    X = X.reshape(m*n, 1)
+
+    y = mat.flatten().reshape(m*n, 1)
+
+    print(sp.stats.spearmanr(X, y))
+    y_ = regressOut(X,y)
+    print(sp.stats.spearmanr(X, y_.reshape(m*n, 1)))
+    return y_.reshape(n,m)
+
