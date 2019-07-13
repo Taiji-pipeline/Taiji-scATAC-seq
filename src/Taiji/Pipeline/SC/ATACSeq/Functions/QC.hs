@@ -52,7 +52,9 @@ plotStat input = do
             show (input^.replicates._1) <> ".html"
     liftIO $ do
         stats <- readStats $ input^.replicates._2.files._3.location
-        let plt = contour $ zip (map (fromIntegral . _uniq_reads) stats) $ map _te stats
+        let plt = contour $ zip
+                (map (logBase 10 . fromIntegral . _uniq_reads) stats) $
+                map _te stats
         savePlots output [plt] []
 
 readStats :: FilePath -> IO [Stat]
@@ -155,7 +157,7 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
     te = U.maximum $ normalize vec 
       where
         vec = U.create $ do
-            v <- UM.replicate 2000 0.5
+            v <- UM.replicate 2000 0.1
             forM_ input $ \r -> do
                 let cutsite = getCutSite r
                 forM_ (IM.elems $ intersecting regions cutsite) $
