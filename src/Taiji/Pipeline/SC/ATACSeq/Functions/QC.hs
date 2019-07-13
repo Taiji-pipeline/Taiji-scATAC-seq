@@ -155,7 +155,7 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
     te = U.maximum $ normalize vec 
       where
         vec = U.create $ do
-            v <- UM.replicate 2000 (0 :: Int)
+            v <- UM.replicate 2000 0.5
             forM_ input $ \r -> do
                 let cutsite = getCutSite r
                 forM_ (IM.elems $ intersecting regions cutsite) $
@@ -163,10 +163,9 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
                         then cutsite^.chromStart - (x - 1000)
                         else 1999 - (x + 1000 - cutsite^.chromStart)
             return v
-    normalize vec = slideAverage 25 $ U.map ((/bk) . fromIntegral) vec
+    normalize vec = slideAverage 25 $ U.map (/bk) vec
       where
-        bk = min 0.001 $ fromIntegral
-            (U.sum (U.take 100 vec) + U.sum (U.drop 1900 vec)) / 200
+        bk = (U.sum (U.take 100 vec) + U.sum (U.drop 1900 vec)) / 200
     getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
       where
         i = if isRev bam then endLoc bam - 1 else startLoc bam
