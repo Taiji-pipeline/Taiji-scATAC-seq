@@ -325,8 +325,8 @@ visualizeCluster :: FilePath
                  -> IO ()
 visualizeCluster output cs = savePlots output []
     [ scatter3D dat3D viz1
-    , scatter3D dat3D viz2
-    , scatter dat2D viz1 ]
+    , scatter dat2D viz1
+    , scatter dat2D viz2 ]
   where
     dat2D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map _cell_2d cells)

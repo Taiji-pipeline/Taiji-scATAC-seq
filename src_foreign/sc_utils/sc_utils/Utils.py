@@ -20,8 +20,8 @@ class InputData:
                 yield [convert(item.split(",")) for item in line.strip().split("\t")[1:]]
 
 # regress out a variable
-def regressOut(X, y):
+def regress(X, y):
     model = LinearRegression().fit(X, y)
-    return np.subtract(y, model.predict(X))
+    return model.predict(X)
 
 

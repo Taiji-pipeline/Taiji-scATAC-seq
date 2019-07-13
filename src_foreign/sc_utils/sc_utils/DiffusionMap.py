@@ -2,12 +2,12 @@ import scipy as sp
 import numpy as np
 import math
 
-from .Utils import InputData, regressOut
+from .Utils import InputData, regress
 
 def diffusionMap(args):
     data = InputData(args.input)
     n_dim = 15
-    t = 1
+    t = 5
     print("Read Data")
     indptr = [0]
     indices = []
@@ -39,12 +39,12 @@ def diffusionMap(args):
 
     print("Reduction")
     (evals, evecs) = sp.sparse.linalg.eigs(jm, k=n_dim+1, which='LR')
-    print(evecs[:,1])
-    ix = evals.argsort()[::-1][1:]
+    ix = evals.argsort()[::-1]
     evals = np.real(evals[ix])
     evecs = np.real(evecs[:, ix])
     dmap = np.matmul(evecs, np.diag(evals**t))
-    np.savetxt(args.output, dmap, delimiter='\t')
+    print(dmap[:,0])
+    np.savetxt(args.output, dmap[:, 1:], delimiter='\t')
 
 def regression(mat, coverage):
     n, m = mat.shape
@@ -56,7 +56,7 @@ def regression(mat, coverage):
     y = mat.flatten().reshape(m*n, 1)
 
     print(sp.stats.spearmanr(X, y))
-    y_ = regressOut(X,y)
+    y_ = y / regress(X,y)
     print(sp.stats.spearmanr(X, y_.reshape(m*n, 1)))
     return y_.reshape(n,m)
 

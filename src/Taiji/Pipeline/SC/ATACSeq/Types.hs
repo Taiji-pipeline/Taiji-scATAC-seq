@@ -3,18 +3,20 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
     , SCATACSeqConfig(..)
+    , qcDir
     ) where
 
 import           Data.Binary (Binary(..))
 import Bio.Data.Experiment.Types
 import Bio.Data.Experiment.Replicate
-import Bio.Pipeline.Utils (Directory)
-import Bio.Pipeline.CallPeaks (CallPeakOpts)
 import GHC.Generics (Generic)
+
+import Taiji.Prelude
 
 newtype SCATACSeq container file = SCATACSeq (CommonFields container file)
      deriving (Generic, Experiment)
@@ -34,3 +36,6 @@ class SCATACSeqConfig config where
     _scatacseq_callpeak_opts :: config -> CallPeakOpts
     _scatacseq_annotation :: config -> Maybe FilePath
     _scatacseq_temp_dir :: config -> Maybe FilePath
+
+qcDir :: SCATACSeqConfig config => ReaderT config IO FilePath
+qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")

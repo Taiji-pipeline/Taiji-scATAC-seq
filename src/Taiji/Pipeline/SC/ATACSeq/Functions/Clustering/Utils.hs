@@ -7,23 +7,12 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
     ( clusterStat
     ) where
 
-import Data.Int (Int32)
 import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Vector as V
-import Data.List
 import Data.List.Ordered (nubSort)
-import Data.Ord
-import Data.Function (on)
 import qualified Data.Text as T
-{-
-import qualified Language.R                        as R
-import           Language.R.QQ
-import qualified Data.Vector.SEXP as V
-import Language.R.HExp
--}
 
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot.ECharts
 import Taiji.Utils.Plot
@@ -70,10 +59,10 @@ clusterStat output clusters = savePlots output []
     (rownames, rows) = unzip $ map f clusters
     colnames = nubSort $ concatMap M.keys rows
     f CellCluster{..} = ( T.pack $ B.unpack _cluster_name,
-        M.fromListWith (+) $ map (\x -> (tissueName x, 1)) _cluster_member )
+        M.fromListWith (+) $ map (\x -> (tissueName x, 1::Int)) _cluster_member )
     tissueName Cell{..} = T.pack $ B.unpack $ B.init $ fst $
         B.breakEnd (=='+') _cell_barcode
     normalize xs = V.map (\x -> round' $ x / s) xs
       where 
-        round' x = fromIntegral (round $ x * 1000) / 1000
+        round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
         s = V.foldl1' (+) xs

@@ -1,50 +1,77 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ( Stat(..)
+    , plotStat
+    , readStats
     , showStat
     , decodeStat
     , rmAbnoramlFragment
     , rmChrM
     , rmDup
-    , frip
     , baseCoverageStat
     , totalReads
+    , tssEnrichment
     ) where
 
 import           Bio.Data.Bam
 import           Bio.HTS
 import Control.Monad.State.Strict
+import Bio.Utils.Functions (slideAverage)
 import           Bio.Data.Bed
+import           Bio.Data.Bed.Types
 import Bio.Utils.Misc (readInt, readDouble)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
+import qualified Data.Text as T
+import qualified Data.IntervalMap.Strict      as IM
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed.Mutable as UM
 
-import Taiji.Prelude hiding (frip)
+import Taiji.Prelude
+import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Utils.Plot
+import Taiji.Utils.Plot.Vega
 
 data Stat = Stat
     { _cell_barcode :: B.ByteString
     , _dup_rate :: Double
     , _mito_rate :: Double
-    , _frip :: Double
+    , _te :: Double
     , _uniq_reads :: Int }
+
+plotStat :: SCATACSeqConfig config
+         => SCATACSeq S (a, b, File '[] 'Tsv )
+         -> ReaderT config IO ()
+plotStat input = do
+    dir <- qcDir
+    let output = dir <> "qc_" <> T.unpack (input^.eid) <> "_rep" <>
+            show (input^.replicates._1) <> ".html"
+    liftIO $ do
+        stats <- readStats $ input^.replicates._2.files._3.location
+        let plt = contour $ zip (map (fromIntegral . _uniq_reads) stats) $ map _te stats
+        savePlots output [plt] []
+
+readStats :: FilePath -> IO [Stat]
+readStats = fmap (map decodeStat . B.lines) . B.readFile
 
 showStat :: Stat -> B.ByteString
 showStat Stat{..} = B.intercalate "\t" $
     [ _cell_barcode
     , B.pack $ show _dup_rate
     , B.pack $ show _mito_rate
-    , B.pack $ show _frip
+    , B.pack $ show _te
     , B.pack $ show _uniq_reads ]
 {-# INLINE showStat #-}
 
 decodeStat :: B.ByteString -> Stat
 decodeStat x = Stat bc (readDouble dupRate) (readDouble mitoRate)
-    (readDouble frip) (readInt uniq)
+    (readDouble te) (readInt uniq)
   where
-    [bc, dupRate, mitoRate, frip, uniq] = B.split '\t' x
+    [bc, dupRate, mitoRate, te, uniq] = B.split '\t' x
 {-# INLINE decodeStat #-}
 
 baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
@@ -117,14 +144,29 @@ rmChrM header input = do
                 in chr /= "chrM" && chr /= "M"
 {-# INLINE rmChrM #-}
 
--- | Fraction of Reads in Promoter
-frip :: BEDTree a -> [BED] -> State Stat ()
-frip promoter input = modify' $ \x -> x{_frip=rate}
-  where
-    n = fromIntegral $ length $ filter (isIntersected promoter) input
-    rate = n / fromIntegral (length input)
-{-# INLINE frip #-}
-
 totalReads :: [a] -> State Stat ()
 totalReads x = modify' $ \s -> s{_uniq_reads=length x}
 {-# INLINE totalReads #-}
+
+tssEnrichment :: BEDTree (Int, Bool)   -- ^ TSS
+              -> BAMHeader -> [BAM] -> State Stat ()
+tssEnrichment regions header input = modify' $ \x -> x{_te = te}
+  where
+    te = U.maximum $ normalize vec 
+      where
+        vec = U.create $ do
+            v <- UM.replicate 2000 (0 :: Int)
+            forM_ input $ \r -> do
+                let cutsite = getCutSite r
+                forM_ (IM.elems $ intersecting regions cutsite) $
+                    \(x, str) -> UM.unsafeModify v (+1) $ if str
+                        then cutsite^.chromStart - (x - 1000)
+                        else 1999 - (x + 1000 - cutsite^.chromStart)
+            return v
+    normalize vec = slideAverage 25 $ U.map ((/bk) . fromIntegral) vec
+      where
+        bk = min 0.001 $ fromIntegral
+            (U.sum (U.take 100 vec) + U.sum (U.drop 1900 vec)) / 200
+    getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
+      where
+        i = if isRev bam then endLoc bam - 1 else startLoc bam

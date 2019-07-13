@@ -9,7 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
 
 import           Data.Bifunctor                (bimap)
 import Bio.Pipeline
-import Data.Either (rights, lefts)
+import Data.Either (lefts)
 import Bio.Data.Experiment.Parser
 
 import Taiji.Prelude

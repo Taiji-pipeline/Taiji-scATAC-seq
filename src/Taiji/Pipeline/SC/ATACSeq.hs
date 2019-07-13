@@ -30,11 +30,17 @@ builder = do
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterBamSort $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
-    nodePar "QC" 'qualityControl $ return ()
-    path ["Align_Prep", "Align", "Filter_Bam", "QC"]
-    node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ 
-        (traverse.replicates._2.files %~ (^._1) $ x) |] $ return ()
-    [ "Download_Data", "QC"] ~> "Get_Bed"
+    nodePar "Remove_Duplicates" 'deDuplicates $ return ()
+    nodePar "Filter_Cell" 'filterCell $ return ()
+    path ["Align_Prep", "Align", "Filter_Bam", "Remove_Duplicates", "Filter_Cell"]
+    node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |] $ return ()
+    [ "Download_Data", "Filter_Cell"] ~> "Get_Bed"
+
+--------------------------------------------------------------------------------
+-- QC
+--------------------------------------------------------------------------------
+    node "QC" [| mapM_ plotStat |] $ return ()
+    ["Remove_Duplicates"] ~> "QC"
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix
