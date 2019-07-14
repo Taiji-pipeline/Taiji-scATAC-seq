@@ -58,7 +58,7 @@ plotStat input = do
         let plt = contour $ zip
                 (map (logBase 10 . fromIntegral . _uniq_reads) stats) $
                 map _te stats
-            opt = option [jmacroE| {
+            axes = option [jmacroE| {
                 axes: [
                     {
                         domain: false, grid: true, orient: "bottom",
@@ -69,8 +69,32 @@ plotStat input = do
                     }
                 ]
             } |]
-            n = length $ filter (\x -> _te x >= 6 && _uniq_reads x >= 1000) stats
-        savePlots output [plt <> title ("pass QC: " <> show n) <> opt] []
+            hline = option [jmacroE| {
+                marks: {
+                    type: "rule",
+                    encode: {
+                        enter: {
+                            x2: {signal: "width"},
+                            y: {value: 4, scale: "y"},
+                            strokeDash: {value: [4,4]}
+                        }
+                    }
+                }
+            } |]
+            vline = option [jmacroE| {
+                marks: {
+                    type: "rule",
+                    encode: {
+                        enter: {
+                            y2: {signal: "height"},
+                            x: {value: 3, scale: "x"},
+                            strokeDash: {value: [4,4]}
+                        }
+                    }
+                }
+            } |]
+            n = length $ filter (\x -> _te x >= 4 && _uniq_reads x >= 1000) stats
+        savePlots output [plt <> title ("pass QC: " <> show n) <> axes <> vline <> hline] []
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . B.lines) . B.readFile

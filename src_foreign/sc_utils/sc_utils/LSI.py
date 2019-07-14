@@ -10,7 +10,8 @@ def lsiTransform(args):
     data = InputData(args.input)
     n_dim = 15
 
-    model = LsiModel(data, num_topics=n_dim, onepass=False, power_iters=2, chunksize=10000)
+    #model = LsiModel(data, num_topics=n_dim, onepass=False, power_iters=2, chunksize=10000)
+    model = LsiModel(data, num_topics=n_dim, chunksize=10000)
     data_transformed = corpus2dense(model[data], n_dim).T
     np.savetxt(args.output, data_transformed, delimiter='\t')
 
