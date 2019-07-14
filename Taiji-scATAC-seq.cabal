@@ -60,6 +60,7 @@ library
                      , filepath
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
+                     , jmacro
                      , inline-r
                      , mtl
                      , matrices

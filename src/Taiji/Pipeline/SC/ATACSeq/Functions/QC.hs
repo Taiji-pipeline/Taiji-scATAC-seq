@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ( Stat(..)
@@ -19,6 +20,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import           Bio.Data.Bam
 import           Bio.HTS
 import Control.Monad.State.Strict
+import Language.Javascript.JMacro
 import Bio.Utils.Functions (slideAverage)
 import           Bio.Data.Bed
 import           Bio.Data.Bed.Types
@@ -56,8 +58,19 @@ plotStat input = do
         let plt = contour $ zip
                 (map (logBase 10 . fromIntegral . _uniq_reads) stats) $
                 map _te stats
-            n = length $ filter (\x -> _te x >= 3 && _uniq_reads x >= 1000) stats
-        savePlots output [plt <> title ("pass QC: " <> show n)] []
+            opt = option [jmacroE| {
+                axes: [
+                    {
+                        domain: false, grid: true, orient: "bottom",
+                        scale: "x", title: "log10(Reads)"
+                    }, {
+                        domain: false, grid: true, orient: "left",
+                        scale: "y", title: "TSS enrichment"
+                    }
+                ]
+            } |]
+            n = length $ filter (\x -> _te x >= 6 && _uniq_reads x >= 1000) stats
+        savePlots output [plt <> title ("pass QC: " <> show n) <> opt] []
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . B.lines) . B.readFile
@@ -159,7 +172,7 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
     te = U.maximum $ normalize vec 
       where
         vec = U.create $ do
-            v <- UM.replicate 2000 0.1
+            v <- UM.replicate 2000 0.05
             forM_ input $ \r -> do
                 let cutsite = getCutSite r
                 forM_ (IM.elems $ intersecting regions cutsite) $
