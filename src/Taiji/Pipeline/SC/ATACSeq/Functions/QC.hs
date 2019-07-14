@@ -51,11 +51,13 @@ plotStat input = do
     let output = dir <> "qc_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
     liftIO $ do
-        stats <- readStats $ input^.replicates._2.files._3.location
+        stats <- fmap (filter ((>=100) . _uniq_reads)) $ readStats $
+            input^.replicates._2.files._3.location
         let plt = contour $ zip
                 (map (logBase 10 . fromIntegral . _uniq_reads) stats) $
                 map _te stats
-        savePlots output [plt] []
+            n = length $ filter (\x -> _te x >= 3 && _uniq_reads x >= 1000) stats
+        savePlots output [plt <> title ("pass QC: " <> show n)] []
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . B.lines) . B.readFile
