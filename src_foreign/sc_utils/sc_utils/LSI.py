@@ -2,6 +2,7 @@ import scipy as sp
 import numpy as np
 from gensim.models.lsimodel import stochastic_svd
 from gensim.models import LsiModel
+from gensim.matutils import corpus2dense, corpus2csc
 
 from .Utils import InputData
 

@@ -55,19 +55,43 @@ plotStat input = do
     liftIO $ do
         stats <- fmap (filter ((>=100) . _uniq_reads)) $ readStats $
             input^.replicates._2.files._3.location
-        let plt = contour $ zip
-                (map (logBase 10 . fromIntegral . _uniq_reads) stats) $
+        let plt = contour $ zip (map (fromIntegral . _uniq_reads) stats) $
                 map _te stats
             axes = option [jmacroE| {
                 axes: [
                     {
                         domain: false, grid: true, orient: "bottom",
-                        scale: "x", title: "log10(Reads)"
+                        scale: "x", title: "number of reads"
                     }, {
                         domain: false, grid: true, orient: "left",
                         scale: "y", title: "TSS enrichment"
                     }
                 ]
+            } |]
+            scales = option [jmacroE| {
+                scales: [ {
+                    name: "x",
+                    type: "log",
+                    round: true,
+                    nice: true,
+                    zero: false,
+                    domain: {data: "source", field: "x"},
+                    range: "width"
+                }, {
+                    name: "y",
+                    type: "linear",
+                    round: true,
+                    nice: true,
+                    zero: false,
+                    domain: {data: "source", field: "y"},
+                    range: "height"
+                }, {
+                    name: "color",
+                    type: "linear",
+                    zero: true,
+                    domain: {data: "contours", field: "value"},
+                    range: "heatmap"
+                } ]
             } |]
             hline = option [jmacroE| {
                 marks: {
@@ -87,14 +111,14 @@ plotStat input = do
                     encode: {
                         enter: {
                             y2: {signal: "height"},
-                            x: {value: 3, scale: "x"},
+                            x: {value: 1000, scale: "x"},
                             strokeDash: {value: [4,4]}
                         }
                     }
                 }
             } |]
             n = length $ filter (\x -> _te x >= 4 && _uniq_reads x >= 1000) stats
-        savePlots output [plt <> title ("pass QC: " <> show n) <> axes <> vline <> hline] []
+        savePlots output [plt <> title ("pass QC: " <> show n) <> axes <> vline <> hline <> scales] []
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . B.lines) . B.readFile
