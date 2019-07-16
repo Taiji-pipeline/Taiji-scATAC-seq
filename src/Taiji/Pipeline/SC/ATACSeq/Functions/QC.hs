@@ -220,11 +220,11 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
     te = U.maximum $ normalize vec 
       where
         vec = U.create $ do
-            v <- UM.replicate 2000 0.05
+            v <- UM.replicate 2000 0.01
             forM_ input $ \r -> do
                 let cutsite = getCutSite r
-                forM_ (IM.elems $ intersecting regions cutsite) $
-                    \(x, str) -> UM.unsafeModify v (+1) $ if str
+                forM_ (IM.elems $ intersecting regions cutsite) $ \(x, str) ->
+                    UM.unsafeModify v (+1) $ if str
                         then cutsite^.chromStart - (x - 1000)
                         else 1999 - (x + 1000 - cutsite^.chromStart)
             return v
@@ -233,4 +233,4 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
         bk = (U.sum (U.take 100 vec) + U.sum (U.drop 1900 vec)) / 200
     getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
       where
-        i = if isRev bam then endLoc bam - 1 else startLoc bam
+        i = if isRev bam then endLoc bam - 76 else startLoc bam + 75

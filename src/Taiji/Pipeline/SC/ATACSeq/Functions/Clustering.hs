@@ -252,7 +252,7 @@ sampleCells clusters
             return $ c {_cluster_member = V.toList s}
   where
     n = foldl1' (+) $ map (length . _cluster_member) clusters
-    ratio = 1 / (fromIntegral n / 100000)
+    ratio = 1 / (fromIntegral n / 30000)
 
 sampling :: GenIO
          -> Double  -- ^ fraction

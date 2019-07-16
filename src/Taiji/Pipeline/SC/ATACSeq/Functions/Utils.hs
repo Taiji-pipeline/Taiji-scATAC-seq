@@ -336,4 +336,4 @@ visualizeCluster output cs = savePlots output []
         (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
     viz2 = Categorical $ concatMap
         (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
-    getName = B.unpack . B.init . fst . B.breakEnd (=='_') . B.init . fst . B.breakEnd (=='_') 
+    getName = B.unpack . B.init . fst . B.breakEnd (=='+') 

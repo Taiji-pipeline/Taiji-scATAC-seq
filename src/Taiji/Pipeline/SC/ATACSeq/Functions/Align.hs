@@ -135,7 +135,7 @@ filterReads :: BAMHeader
 filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0
   where
     filterFn = do
-        (tags, mito) <- {-rmAbnoramlFragment bam >>= -} rmDup bam >>= rmChrM hdr
+        (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
         tssEnrichment tss hdr tags
         totalReads tags
         return (tags, mito)
