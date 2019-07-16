@@ -7,6 +7,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
    ( snapPre
    , performSnap
+   , mkSnapMat
    ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -99,10 +100,26 @@ snap rownames mat input = R.runRegion $ do
     |]
     return ()
 
-snap' :: FilePath   -- ^ column names
+
+
+
+mkSnapMat :: SCATACSeqConfig config 
+          => SCATACSeq S ((File tags 'Bed, File tags 'Bed, Int), File t 'Other)
+          -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
+mkSnapMat input = input & replicates.traverse.files %%~ ( \((_,x,_), y) -> do
+    dir <- asks ((<> "/Snap/") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_snap.rds" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    liftIO $ snap' output (x^.location) (y^.location)
+    return $ location .~ output $ emptyFile
+    )
+
+
+snap' :: FilePath -- ^ output
+      -> FilePath   -- ^ column names
       -> FilePath   -- ^ Sparse Matrix
       -> IO ()
-snap' nameFl matFl = withTempDir (Just "./") $ \tmpdir -> do
+snap' output nameFl matFl = withTempDir (Just "./") $ \tmpdir -> do
     regions <- runResourceT $ runConduit $ streamBedGzip nameFl .| mapC f .| sinkList
     let ridx = tmpdir <> "/ridx.txt"
         cidx = tmpdir <> "/cidx.txt"
@@ -111,16 +128,17 @@ snap' nameFl matFl = withTempDir (Just "./") $ \tmpdir -> do
     rows <- parseSpMat ridx cidx vals mat
     R.runRegion $ do
         _ <- [r| library("Matrix")
-                i <- scan(ridx_hs, integer())
-                j <- scan(cidx_hs, integer())
-                vals <- scan(vals_hs, integer())
-                mat <- sparseMatrix(i,j,x=vals)
-                colnames(mat) <- regions_hs
-                rownames(mat) <- rows_hs
+                 i <- scan(ridx_hs, integer())
+                 j <- scan(cidx_hs, integer())
+                 vals <- scan(vals_hs, integer())
+                 mat <- sparseMatrix(i,j,x=vals)
+                 colnames(mat) <- regions_hs
+                 rownames(mat) <- rows_hs
+                 saveRDS(mat, file=output_hs)
         |]
         return ()
   where
-    f :: BED -> String
+    f :: BED3 -> String
     f bed = B.unpack (bed^.chrom) <> ":" <> show (bed^.chromStart) <> "-" <>
         show (bed^.chromEnd)
 
@@ -140,4 +158,4 @@ parseSpMat ridx cidx vals mat = do
     sink3 = concatMapC (map (fromJust . packDecimal) . (^._2) . snd) .| intersperseC " " .| sinkFile cidx
     sink4 = concatMapC (map (fromJust . packDecimal) . (^._3) . snd) .| intersperseC " " .| sinkFile vals
     f (i, (bc, xs)) = (B.unpack bc
-        , unzip3 $ map (\(i, (j,x)) -> (i,j,x)) $ zip (repeat i) xs)
+        , unzip3 $ map (\(i, (j,x)) -> (i,j,if x > 0 then 1 else 0)) $ zip (repeat i) xs)

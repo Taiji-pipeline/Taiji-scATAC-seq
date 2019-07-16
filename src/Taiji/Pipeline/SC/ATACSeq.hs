@@ -185,3 +185,8 @@ builder = do
         |] $ return ()
     path ["Get_Bed", "Snap_Pre", "Snap_Reduce", "Snap_Cluster", "Snap_Viz"]
 
+    node "Snap_Mat_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
+    nodePar "Snap_Mat" 'mkSnapMat $ return ()
+    ["Get_Bins", "Make_Window_Matrix"] ~> "Snap_Mat_Prep"
+    path ["Snap_Mat_Prep", "Snap_Mat"]
+

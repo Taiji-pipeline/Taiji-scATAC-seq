@@ -27,9 +27,12 @@ def diffusionMap(args):
     s = coverage.dot(np.ones((1,n)))
     jm = jm / (s + s.T - jm)
 
-    jm = regression(jm, coverage/m)
-    jm = (jm + jm.T) / 2
-    jm = jm.clip(min=0)
+    # Gaussian kernel
+    jm = np.exp(jm / -0.1)
+
+    #jm = regression(jm, coverage/m)
+    #jm = (jm + jm.T) / 2
+    #jm = jm.clip(min=0)
 
     #np.fill_diagonal(jm, 0)
 

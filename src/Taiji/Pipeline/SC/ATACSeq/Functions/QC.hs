@@ -61,7 +61,8 @@ plotStat input = do
                 axes: [
                     {
                         domain: false, grid: true, orient: "bottom",
-                        scale: "x", title: "number of reads"
+                        scale: "x", title: "number of reads",
+                        labelSeparation: 15, labelOverlap: true
                     }, {
                         domain: false, grid: true, orient: "left",
                         scale: "y", title: "TSS enrichment"
@@ -99,7 +100,7 @@ plotStat input = do
                     encode: {
                         enter: {
                             x2: {signal: "width"},
-                            y: {value: 4, scale: "y"},
+                            y: {value: 5, scale: "y"},
                             strokeDash: {value: [4,4]}
                         }
                     }
@@ -117,7 +118,7 @@ plotStat input = do
                     }
                 }
             } |]
-            n = length $ filter (\x -> _te x >= 4 && _uniq_reads x >= 1000) stats
+            n = length $ filter (\x -> _te x >= 5 && _uniq_reads x >= 1000) stats
         savePlots output [plt <> title ("pass QC: " <> show n) <> axes <> vline <> hline <> scales] []
 
 readStats :: FilePath -> IO [Stat]
@@ -220,17 +221,17 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
     te = U.maximum $ normalize vec 
       where
         vec = U.create $ do
-            v <- UM.replicate 2000 0.01
+            v <- UM.replicate 4000 0
             forM_ input $ \r -> do
                 let cutsite = getCutSite r
                 forM_ (IM.elems $ intersecting regions cutsite) $ \(x, str) ->
                     UM.unsafeModify v (+1) $ if str
-                        then cutsite^.chromStart - (x - 1000)
-                        else 1999 - (x + 1000 - cutsite^.chromStart)
+                        then cutsite^.chromStart - (x - 2000)
+                        else 3999 - (x + 2000 - cutsite^.chromStart)
             return v
     normalize vec = slideAverage 25 $ U.map (/bk) vec
       where
-        bk = (U.sum (U.take 100 vec) + U.sum (U.drop 1900 vec)) / 200
+        bk = (U.sum (U.take 100 vec) + U.sum (U.drop 3900 vec)) / 200 + 0.1
     getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
       where
         i = if isRev bam then endLoc bam - 76 else startLoc bam + 75

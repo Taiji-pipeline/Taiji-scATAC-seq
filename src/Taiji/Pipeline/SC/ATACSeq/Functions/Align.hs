@@ -164,5 +164,5 @@ filterCell input = do
   where
     changeName x = let bc = fmap extractBarcode $ x^.name
                    in name .~ bc $ x
-    passQC Stat{..} = _uniq_reads >= 1000 && _te >= 4
+    passQC Stat{..} = _uniq_reads >= 1000 && _te >= 5
 {-# INLINE filterCell #-}
