@@ -23,6 +23,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , decodeRowWith
     , encodeRowWith
 
+    , filterCols
+
       -- * Feature matrix
     , mkFeatMat
     , groupCells
@@ -251,6 +253,22 @@ encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
     f (i,v) = fromJust (packDecimal i) <> "," <> encoder v
 {-# INLINE encodeRowWith #-}
 
+filterCols :: FilePath   -- ^ New matrix
+           -> [Int]      -- ^ Columns to be removed
+           -> FilePath   -- ^ Old matrix
+           -> IO ()
+filterCols output idx input = do
+    mat <- mkSpMatrix id input
+    let header = B.pack $ printf "Sparse matrix: %d x %d" (_num_row mat) (_num_col mat - length idx)
+        newIdx = U.fromList $ zipWith (-) [0 .. _num_col mat - 1] $ go (-1,0) (sort idx)
+        f = map (first (newIdx U.!)) . filter (not . (`S.member` idx') . fst)
+        idx' = S.fromList idx
+    runResourceT $ runConduit $ streamRows mat .| mapC (second f) .|
+        (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
+        gzip .| sinkFile output
+  where
+    go (prev, c) (i:x) = replicate (i-prev) c ++ go (i, c+1) x
+    go (_, c) [] = repeat c
 
 -- | Generating the cell by feature count matrix as a gzipped stream.
 -- The input stream is raw tags grouped by cells.
@@ -325,8 +343,8 @@ visualizeCluster :: FilePath
                  -> IO ()
 visualizeCluster output cs = savePlots output []
     [ scatter3D dat3D viz1
-    , scatter dat2D viz1
-    , scatter dat2D viz2 ]
+    , scatter dat2D viz1 <> toolbox
+    , scatter dat2D viz2 <> toolbox ]
   where
     dat2D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map _cell_2d cells)

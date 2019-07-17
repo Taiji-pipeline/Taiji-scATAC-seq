@@ -7,7 +7,7 @@ from .Utils import InputData, regress
 def diffusionMap(args):
     data = InputData(args.input)
     n_dim = 15
-    t = 5
+    t = 1
     print("Read Data")
     indptr = [0]
     indices = []
@@ -28,7 +28,7 @@ def diffusionMap(args):
     jm = jm / (s + s.T - jm)
 
     # Gaussian kernel
-    jm = np.exp(jm / -0.1)
+    jm = np.exp(- (1 - jm) / 0.1)
 
     #jm = regression(jm, coverage/m)
     #jm = (jm + jm.T) / 2

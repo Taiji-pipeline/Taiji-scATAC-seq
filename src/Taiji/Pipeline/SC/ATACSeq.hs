@@ -185,8 +185,18 @@ builder = do
         |] $ return ()
     path ["Get_Bed", "Snap_Pre", "Snap_Reduce", "Snap_Cluster", "Snap_Viz"]
 
-    node "Snap_Mat_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
     nodePar "Snap_Mat" 'mkSnapMat $ return ()
-    ["Get_Bins", "Make_Window_Matrix"] ~> "Snap_Mat_Prep"
-    path ["Snap_Mat_Prep", "Snap_Mat"]
+    nodePar "Snap_new_Cluster" [| doClustering "/Snap_new/" $ ClustOpt None UMAP |] $ return ()
+    nodePar "Snap_new_Viz" [| \x -> do
+        dir <- asks ((<> "/Snap_new/" ) . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Make_Window_Matrix", "Snap_Mat", "Snap_new_Cluster", "Snap_new_Viz"]
 
+    nodePar "Snap_Merged_Reduce" 'mkSnapMat $ return ()
+    nodePar "Snap_Merged_Cluster" [| doClustering "/Cluster_by_window/Snap/" $ ClustOpt None UMAP |] $ return ()
+    nodePar "Snap_Merged_Viz" [| \x -> do
+        dir <- asks ((<> "/Cluster_by_window/Snap/" ) . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Merge_Window_Matrix", "Snap_Merged_Reduce", "Snap_Merged_Cluster", "Snap_Merged_Viz"]

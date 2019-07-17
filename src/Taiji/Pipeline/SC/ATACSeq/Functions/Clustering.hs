@@ -40,6 +40,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
+import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -223,23 +224,11 @@ plotClusters dir input = do
     inputData <- decodeFile $ input^.replicates._2.files.location
     let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        --stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
-        --    (input^.replicates._1)
-    --clusterStat stat inputData
+        stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    when (B.elem '+' $ _cell_barcode $ head $ _cluster_member $ head inputData) $ clusterStat stat inputData
     clusters <- sampleCells inputData
     visualizeCluster output clusters
-
-{-
-plotClusters' :: SCATACSeqConfig config
-              => [CellCluster]
-              -> ReaderT config IO ()
-plotClusters' clusters = do
-    dir <- asks ((<> "/Cluster") . _scatacseq_output_dir) >>= getPath
-    let output = dir <> "/cluster.html"
-        bcs = Just $ V.fromList $ concatMap
-            (map (B.unpack . fst . B.break (=='_') . _cell_barcode) . _cluster_member) clusters
-    liftIO $ sampleCells clusters >>= visualizeCluster output bcs
-    -}
 
 sampleCells :: [CellCluster]
             -> IO [CellCluster]
@@ -260,25 +249,6 @@ sampling :: GenIO
 sampling gen frac v = V.take n <$> uniformShuffle v gen
   where
     n = truncate $ frac * fromIntegral (V.length v)
-
-{-
-subClustering :: Bool   -- ^ Whether to discard the first dimension
-              -> (File '[] 'Tsv, File '[Gzip] 'Tsv)
-              -> [Cell]
-              -> IO (Dendrogram B.ByteString)
-subClustering discard (idx, val) cells = do
-    dat <- runResourceT $ runConduit $ zipSources idxC valC .|
-        filterC ((`S.member` cells') . fst) .| sinkVector
-        :: IO (V.Vector (B.ByteString, V.Vector Double))
-    return $ fmap fst $ hclust Ward dat (euclidean `on` snd)
-  where
-    cells' = S.fromList $ map _cell_barcode cells
-    idxC = sourceFile (idx^.location) .| linesUnboundedAsciiC .|
-        mapC (head . B.split '\t') 
-    valC = sourceFile (val^.location) .| multiple ungzip .|
-        linesUnboundedAsciiC .| mapC (V.fromList .
-            (if discard then tail else id) . map readDouble . B.split '\t')
--}
 
 extractSubMatrix :: SCATACSeqConfig config
                  => ( [SCATACSeq S (File tags 'Other)]

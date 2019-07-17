@@ -6,6 +6,9 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap (performDM) w
 
 import Data.ByteString.Lex.Integral (packDecimal)
 import Data.Singletons.Prelude (Elem)
+import Bio.Utils.Functions (scale)
+import qualified Data.Vector.Unboxed.Mutable as UM
+import qualified Data.Vector.Unboxed as U
 import Bio.Utils.Misc (readInt)
 import qualified Data.Text as T
 import Shelly (shelly, run_)
@@ -25,8 +28,17 @@ performDM prefix input = do
         rownames = printf "%s/%s_rep%d_dm.rownames.txt" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        diffusionMap output fl
         sp <- mkSpMatrix readInt $ fl^.location
+
+        vec <- UM.replicate (_num_col sp) 0
+        runResourceT $ runConduit $ streamRows sp .| concatMapC snd .|
+            mapC fst .| mapM_C (UM.unsafeModify vec (+1))
+        v <- scale <$> U.unsafeFreeze vec
+        let idx = U.toList $ U.imapMaybe
+                (\i x -> if x < -2 || x > 2 then Just i else Nothing) v
+        filterCols "xxx" idx $ fl^.location
+        diffusionMap output "xxx"
+
         runResourceT $ runConduit $
             streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
         return ( location .~ rownames $ emptyFile
@@ -35,9 +47,8 @@ performDM prefix input = do
     f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 
 
-diffusionMap :: Elem 'Gzip tags ~ 'True
-             => FilePath
-             -> File tags 'Other
+diffusionMap :: FilePath
+             -> FilePath
              -> IO ()
 diffusionMap output input = shelly $ run_ "sc_utils"
-    ["reduce", "--method", "dm", T.pack $ input^.location, T.pack output]
+    ["reduce", "--method", "dm", T.pack input, T.pack output]

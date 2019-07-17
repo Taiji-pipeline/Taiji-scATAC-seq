@@ -80,7 +80,7 @@ plotStat input = do
                     range: "width"
                 }, {
                     name: "y",
-                    type: "linear",
+                    type: "symlog",
                     round: true,
                     nice: true,
                     zero: false,
