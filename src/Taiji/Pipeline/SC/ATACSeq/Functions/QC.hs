@@ -15,6 +15,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , baseCoverageStat
     , totalReads
     , tssEnrichment
+    , readTSS
     ) where
 
 import           Bio.Data.Bam
@@ -23,12 +24,14 @@ import Control.Monad.State.Strict
 import Language.Javascript.JMacro
 import Bio.Utils.Functions (slideAverage)
 import           Bio.Data.Bed
+import Bio.RealWorld.GENCODE
 import           Bio.Data.Bed.Types
 import Bio.Utils.Misc (readInt, readDouble)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
 import qualified Data.Text as T
+import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
@@ -65,7 +68,8 @@ plotStat input = do
                         labelSeparation: 15, labelOverlap: true
                     }, {
                         domain: false, grid: true, orient: "left",
-                        scale: "y", title: "TSS enrichment"
+                        scale: "y", title: "TSS enrichment",
+                        labelSeparation: 5, labelOverlap: true
                     }
                 ]
             } |]
@@ -80,7 +84,7 @@ plotStat input = do
                     range: "width"
                 }, {
                     name: "y",
-                    type: "symlog",
+                    type: "linear",
                     round: true,
                     nice: true,
                     zero: false,
@@ -235,3 +239,13 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
     getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
       where
         i = if isRev bam then endLoc bam - 76 else startLoc bam + 75
+
+readTSS :: FilePath -> IO (BEDTree (Int, Bool))
+readTSS = fmap (bedToTree const . concatMap fn) . readGenes
+  where
+    fn Gene{..} = map g $ nubSort tss
+      where
+        g x = (BED3 geneChrom (x - 2000) (x + 2000), (x, geneStrand))
+        tss | geneStrand = geneLeft : map fst geneTranscripts
+            | otherwise = geneRight : map snd geneTranscripts
+

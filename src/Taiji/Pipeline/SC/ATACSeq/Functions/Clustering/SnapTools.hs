@@ -20,6 +20,7 @@ import qualified Data.Text as T
 import System.IO.Temp (withTempFile)
 import System.IO
 import Data.Conduit.Internal (zipSources)
+import qualified Data.Vector as V
 
 import qualified Language.R                        as R
 import           Language.R.QQ
@@ -130,7 +131,7 @@ snap' rownames matOutput matFl = withTempDir (Just "./") $ \tmpdir -> do
         rname = tmpdir <> "/rname.txt"
     mat <- mkSpMatrix readInt matFl
     rows <- parseSpMat ridx cidx vals mat
-    writeFile rname $ unwords rows
+    B.writeFile rname $ B.unwords $ V.toList rows
     R.runRegion $ do
         _ <- [r| library("SnapATAC")
                  library("Rcpp")
@@ -346,16 +347,16 @@ parseSpMat :: FilePath  -- ^ row index
            -> FilePath  -- ^ col index
            -> FilePath  -- ^ value
            -> SpMatrix Int
-           -> IO [String]
+           -> IO (V.Vector B.ByteString)
 parseSpMat ridx cidx vals mat = do
     (res,_,_,_) <- runResourceT $ runConduit $
         zipSources (iterateC succ 0) (streamRows mat) .| mapC f .|
         getZipSink ((,,,) <$> ZipSink sink1 <*> ZipSink sink2 <*> ZipSink sink3 <*> ZipSink sink4)
     return res
   where
-    sink1 = mapC fst .| sinkList
+    sink1 = mapC fst .| sinkVector
     sink2 = concatMapC (map (fromJust . packDecimal) . (^._1) . snd) .| intersperseC " " .| sinkFile ridx
     sink3 = concatMapC (map (fromJust . packDecimal) . (^._2) . snd) .| intersperseC " " .| sinkFile cidx
     sink4 = concatMapC (map (fromJust . packDecimal) . (^._3) . snd) .| intersperseC " " .| sinkFile vals
-    f (i, (bc, xs)) = (B.unpack bc
+    f (i, (bc, xs)) = (bc
         , unzip3 $ map (\(i, (j,_)) -> (i+1,j+1,1)) $ zip (repeat i) xs)

@@ -12,10 +12,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ) where
 
 import Bio.Data.Bed
-import Bio.Data.Bed.Types
 import Bio.Data.Bam
 import           Bio.HTS
-import Bio.RealWorld.GENCODE
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
@@ -100,18 +98,13 @@ deDuplicates :: SCATACSeqConfig config
                               , File '[] 'Tsv ))               -- ^ Stat
 deDuplicates input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bam"))
-    genes <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust
+    tss <- asks _scatacseq_annotation >>= liftIO . readTSS . fromJust
     let outputBam = printf "%s/%s_rep%d_srt_filt.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         outputStat = printf "%s/%s_rep%d_stat.txt" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         outputMito = printf "%s/%s_rep%d_mito.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        tss = bedToTree const $ flip map genes $ \g -> 
-            let chr = geneChrom g
-                str = geneStrand g
-                x = if str then geneLeft g else geneRight g
-            in (BED3 chr (x - 1000) (x + 1000), (x, str))
         f fl = do
             header <- getBamHeader fl
             _ <- runResourceT $ runConduit $ streamBam fl .|
