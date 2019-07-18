@@ -1,4 +1,5 @@
 import gzip
+import scipy as sp
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
@@ -24,4 +25,15 @@ def regress(X, y):
     model = LinearRegression().fit(X, y)
     return model.predict(X)
 
-
+def readMatrix(fl):
+    data = InputData(fl)
+    indptr = [0]
+    indices = []
+    mat = []
+    for row in iter(data):
+        for (i,x) in row:
+            indices.append(i)
+            mat.append(x)
+        indptr.append(len(indices))
+    mat = sp.sparse.csr_matrix((mat, indices, indptr), dtype=int)
+    return mat

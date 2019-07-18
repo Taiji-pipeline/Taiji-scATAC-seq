@@ -46,7 +46,8 @@ data Stat = Stat
     , _dup_rate :: Double
     , _mito_rate :: Double
     , _te :: Double
-    , _uniq_reads :: Int }
+    , _uniq_reads :: Int
+    , _doublet_score :: Double }
 
 plotStat :: SCATACSeqConfig config
          => SCATACSeq S (a, b, File '[] 'Tsv )
@@ -104,7 +105,7 @@ plotStat input = do
                     encode: {
                         enter: {
                             x2: {signal: "width"},
-                            y: {value: 5, scale: "y"},
+                            y: {value: 7, scale: "y"},
                             strokeDash: {value: [4,4]}
                         }
                     }
@@ -122,7 +123,7 @@ plotStat input = do
                     }
                 }
             } |]
-            n = length $ filter (\x -> _te x >= 5 && _uniq_reads x >= 1000) stats
+            n = length $ filter (\x -> _te x >= 7 && _uniq_reads x >= 1000) stats
         savePlots output [plt <> title ("pass QC: " <> show n) <> axes <> vline <> hline <> scales] []
 
 readStats :: FilePath -> IO [Stat]
@@ -134,14 +135,15 @@ showStat Stat{..} = B.intercalate "\t" $
     , B.pack $ show _dup_rate
     , B.pack $ show _mito_rate
     , B.pack $ show _te
-    , B.pack $ show _uniq_reads ]
+    , B.pack $ show _uniq_reads
+    , B.pack $ show _doublet_score ]
 {-# INLINE showStat #-}
 
 decodeStat :: B.ByteString -> Stat
 decodeStat x = Stat bc (readDouble dupRate) (readDouble mitoRate)
-    (readDouble te) (readInt uniq)
+    (readDouble te) (readInt uniq) (readDouble ds)
   where
-    [bc, dupRate, mitoRate, te, uniq] = B.split '\t' x
+    [bc, dupRate, mitoRate, te, uniq, ds] = B.split '\t' x
 {-# INLINE decodeStat #-}
 
 baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
@@ -233,7 +235,7 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
                         then cutsite^.chromStart - (x - 2000)
                         else 3999 - (x + 2000 - cutsite^.chromStart)
             return v
-    normalize vec = slideAverage 25 $ U.map (/bk) vec
+    normalize vec = slideAverage 5 $ U.map (/bk) vec
       where
         bk = (U.sum (U.take 100 vec) + U.sum (U.drop 3900 vec)) / 200 + 0.1
     getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
@@ -248,4 +250,3 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
         g x = (BED3 geneChrom (x - 2000) (x + 2000), (x, geneStrand))
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
-

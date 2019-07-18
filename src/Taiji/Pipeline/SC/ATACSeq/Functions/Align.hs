@@ -125,7 +125,7 @@ filterReads :: BAMHeader
             -> BEDTree (Int, Bool)   -- ^ TSS
             -> [BAM]
             -> (([BAM], [BAM]), Stat)
-filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0
+filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0 0
   where
     filterFn = do
         (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
@@ -157,5 +157,5 @@ filterCell input = do
   where
     changeName x = let bc = fmap extractBarcode $ x^.name
                    in name .~ bc $ x
-    passQC Stat{..} = _uniq_reads >= 1000 && _te >= 5
+    passQC Stat{..} = _uniq_reads >= 1000 && _te >= 7
 {-# INLINE filterCell #-}

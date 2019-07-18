@@ -18,6 +18,7 @@ setup(name='sc_utils',
           'python-igraph',
           'umap-learn',
           'leidenalg',
-          'MulticoreTSNE'
+          'MulticoreTSNE',
+          'scrublet'
       ],
       zip_safe=False)
