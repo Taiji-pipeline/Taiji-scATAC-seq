@@ -15,6 +15,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , extractTags
     , extractSubMatrix
     , doClustering
+    , getBedCluster
+    , getClusterBarcodes
     , Embedding(..)
     , Normalization(..)
     , ClustOpt(..)
@@ -159,6 +161,7 @@ clust ClustOpt{..} dir (coverage, mat) = withTempDir dir $ \tmpD -> do
     f _ = error "formatting error"
 {-# INLINE clust #-}
 
+-- | Get barcodes
 getClusterBarcodes :: ([SCATACSeq S file], [SCATACSeq S (File '[] 'Other)])
                    -> IO [(SCATACSeq S (file, [(B.ByteString, [B.ByteString])]))]
 getClusterBarcodes (inputs, clusters) = do

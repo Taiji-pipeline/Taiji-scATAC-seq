@@ -20,7 +20,7 @@ import Bio.Data.Bed
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
-import Data.Singletons.Prelude (Elem)
+import Data.Singletons.Prelude (Elem, SingI)
 import Shelly hiding (FilePath)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector as V
@@ -65,9 +65,9 @@ mkPeakMat prefix input = do
         return $ emptyFile & location .~ output )
 
 -- | Call Peaks for aggregated files
-findPeaks :: SCATACSeqConfig config
+findPeaks :: (SingI tags, SCATACSeqConfig config)
           => FilePath
-          -> (B.ByteString, File '[Gzip] 'Bed)
+          -> (B.ByteString, File tags 'Bed)
           -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
 findPeaks prefix (cName, bedFl) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
@@ -133,11 +133,11 @@ subSampleClusterBed input = do
             "_rep" <> show (input^.replicates._1) <> "_Subsample"
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
     input & replicates.traverse.files %%~ liftIO . ( \fls -> 
-        fmap catMaybes $ forM fls $ \(name, bed, n) -> if n >= depth
+        fmap catMaybes $ forM fls $ \(nm, bed, n) -> if n >= depth
             then do
-                let output = dir ++ "/" ++ B.unpack name ++ ".bed.gz"
+                let output = dir ++ "/" ++ B.unpack nm ++ ".bed.gz"
                 subSample depth (bed^.location) output
-                return $ Just (name, location .~ output $ emptyFile)
+                return $ Just (nm, location .~ output $ emptyFile)
             else return Nothing )
   where
     -- decide the sequencing depth
@@ -183,7 +183,5 @@ peakCor peaks refPeak = MU.toLists $ MU.generate (n, n) $ \(i,j) ->
       where
         f _ [] = False
         f _ _ = True
-    jaccardIndex x y = fromIntegral m / fromIntegral n
-      where
-        m = U.length $ U.filter id $ U.zipWith (&&) x y
-        n = U.length $ U.filter id $ U.zipWith (||) x y
+    jaccardIndex x y = fromIntegral (U.length $ U.filter id $ U.zipWith (&&) x y) /
+        fromIntegral (U.length $ U.filter id $ U.zipWith (||) x y)

@@ -4,6 +4,7 @@
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
 import           Control.Workflow
+import qualified Data.Text as T
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
@@ -49,11 +50,6 @@ builder = do
     nodePar "Make_Window_Matrix" 'mkWindowMat $ return ()
     path ["Get_Bed", "Get_Bins", "Make_Window_Matrix"]
 
-
-    nodePar "Detect_Doublet" 'detectDoublet $ return ()
-    path ["Make_Window_Matrix", "Detect_Doublet"]
-
-
     -- merged matrix
     node "Merge_Window_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
@@ -63,11 +59,35 @@ builder = do
     path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
 
 --------------------------------------------------------------------------------
--- LDA
+-- Process each sample
 --------------------------------------------------------------------------------
     -- Clustering in each sample
-    namespace "Each" $ ldaClust "/Cluster_by_window/LDA/Each/"
-    path ["Make_Window_Matrix", "Each_LDA_Reduce"]
+    namespace "Each" $ lsaClust "/Cluster_by_window/LSA/Each/"
+    path ["Make_Window_Matrix", "Each_LSA_Reduce"]
+
+    -- Extract tags for each cluster
+    node "Each_Extract_Tags_Prep"  [| liftIO . getClusterBarcodes |] $ return ()
+    nodePar "Each_Extract_Tags" 'getBedCluster $ return ()
+    ["Get_Bed", "Each_LSA_Cluster"] ~> "Each_Extract_Tags_Prep"
+    path ["Each_Extract_Tags_Prep", "Each_Extract_Tags"]
+
+    -- Make cell by peak matrix
+    nodePar "Each_Call_Peaks" [| \input -> input & replicates.traverse.files %%~ 
+        mapM (findPeaks "/temp/Peaks/Each/") |] $ return ()
+    nodePar "Each_Merge_Peaks" [| \input -> input & replicates.traverse.files %%~ 
+        mergePeaks ("/temp/Peaks/Each/" <> T.unpack (input^.eid) <> "/") |] $ return ()
+    path ["Each_Extract_Tags", "Each_Call_Peaks", "Each_Merge_Peaks"]
+
+    node "Each_Make_Peak_Matrix_Prep" [| \(x, y) -> flip map (zipExp x y) $ \input ->
+        input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
+        |] $ return ()
+    nodePar "Each_Make_Peak_Matrix" [| mkPeakMat "/temp/Peaks/Each/" |] $ return ()
+    ["Get_Bins", "Each_Merge_Peaks"] ~> "Each_Make_Peak_Matrix_Prep"
+    path ["Each_Make_Peak_Matrix_Prep", "Each_Make_Peak_Matrix"]
+
+    nodePar "Detect_Doublet" 'detectDoublet $ return ()
+    path ["Each_Make_Peak_Matrix", "Detect_Doublet"]
+
 
 --------------------------------------------------------------------------------
 -- DM
@@ -79,10 +99,6 @@ builder = do
 --------------------------------------------------------------------------------
 -- LSA
 --------------------------------------------------------------------------------
-    -- Clustering in each sample
-    namespace "Each" $ lsaClust "/Cluster_by_window/LSA/Each/"
-    path ["Make_Window_Matrix", "Each_LSA_Reduce"]
-
     -- Clustering 1st round (By Window)
     namespace "Window" $ lsaClust "/Cluster_by_window/LSA/"
     path ["Merge_Window_Matrix", "Window_LSA_Reduce"]
