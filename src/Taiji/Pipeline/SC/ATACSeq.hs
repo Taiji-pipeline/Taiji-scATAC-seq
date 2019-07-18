@@ -49,6 +49,11 @@ builder = do
     nodePar "Make_Window_Matrix" 'mkWindowMat $ return ()
     path ["Get_Bed", "Get_Bins", "Make_Window_Matrix"]
 
+
+    nodePar "Detect_Doublet" 'detectDoublet $ return ()
+    path ["Make_Window_Matrix", "Detect_Doublet"]
+
+
     -- merged matrix
     node "Merge_Window_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y

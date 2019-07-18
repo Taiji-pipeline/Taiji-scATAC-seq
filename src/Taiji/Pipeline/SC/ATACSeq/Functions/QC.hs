@@ -16,6 +16,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , totalReads
     , tssEnrichment
     , readTSS
+    , detectDoublet
     ) where
 
 import           Bio.Data.Bam
@@ -35,6 +36,7 @@ import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
+import Shelly (shelly, run_)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -250,3 +252,37 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
         g x = (BED3 geneChrom (x - 2000) (x + 2000), (x, geneStrand))
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
+
+detectDoublet :: SCATACSeqConfig config
+              => SCATACSeq S (File tags 'Other)
+              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
+detectDoublet input = do
+    dir <- qcDir
+    let output = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
+            show (input^.replicates._1) <> ".txt"
+        outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
+            show (input^.replicates._1) <> ".html"
+    input & replicates.traverse.files %%~ liftIO . (\fl -> do
+        shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack output]
+        [thres, sc, sim_sc] <- B.lines <$> B.readFile output
+        let th = read $ B.unpack thres :: Double
+            dat1 = mkHist (map readDouble $ B.words sc) th
+            dat2 = mkHist (map readDouble $ B.words sim_sc) th
+        savePlots outputPlot [dat1, dat2] []
+        return $ location .~ output $ emptyFile
+        )
+  where
+    mkHist xs ref = plt <> rule
+      where
+        plt = hist xs
+        rule = option [jmacroE| {
+            layer: {
+                mark: "rule",
+                data: {values: [{ref: `ref`}]},
+                encoding: {
+                    x: { field: "ref"},
+                    color: {value: "red"},
+                    size: {value: 1}
+                }
+            }
+       } |]
