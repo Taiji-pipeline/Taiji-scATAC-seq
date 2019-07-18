@@ -33,21 +33,6 @@ import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.ECharts
 
-{-
-callPeakBulk :: SCATACSeqConfig config
-             => SCATACSeq S (File tags 'Bed)
-             -> ReaderT config IO (SCATACSeq S (File '[] 'NarrowPeak))
-callPeakBulk input = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Peaks"))
-    let output = printf "%s/%s_rep%d_filt.bed.gz" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    opts <- asks _scatacseq_callpeak_opts
-    input & replicates.traverse.files %%~ liftIO . ( \(nm, fl) -> do
-        let output = dir ++ "/" ++ B.unpack nm ++ ".narrowPeak" 
-        r <- callPeaks output fl Nothing opts
-        return (nm, r) )
-        -}
-
 -- | Make the read count matrix.
 mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath

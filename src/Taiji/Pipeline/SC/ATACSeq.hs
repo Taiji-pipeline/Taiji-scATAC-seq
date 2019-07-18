@@ -78,7 +78,7 @@ builder = do
         mergePeaks ("/temp/Peaks/Each/" <> T.unpack (input^.eid) <> "/") |] $ return ()
     path ["Each_Extract_Tags", "Each_Call_Peaks", "Each_Merge_Peaks"]
 
-    node "Each_Make_Peak_Matrix_Prep" [| \(x, y) -> flip map (zipExp x y) $ \input ->
+    node "Each_Make_Peak_Matrix_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
         input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
         |] $ return ()
     nodePar "Each_Make_Peak_Matrix" [| mkPeakMat "/temp/Peaks/Each/" |] $ return ()
