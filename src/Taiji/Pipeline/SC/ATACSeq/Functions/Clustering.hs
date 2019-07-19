@@ -216,7 +216,8 @@ extractBedByBarcode :: (Elem 'Gzip tags ~ 'True, Elem 'NameSorted tags ~ 'True)
                     -> IO [File '[] 'Bed]
 extractBedByBarcode outputs bcs input = do
     fileHandles <- V.fromList <$> mapM (\x -> openFile x WriteMode) outputs
-    let bcIdx = M.fromList $ concat $ zipWith (\i x -> zip x $ repeat i) [0..] bcs
+    let bcIdx = M.fromListWith (error "same barcode") $ concat $
+            zipWith (\i x -> zip x $ repeat i) [0..] bcs
         f x = let idx = M.lookupDefault (error $ show nm) nm bcIdx
                   nm = fromJust ((head x :: BED) ^. name) 
               in liftIO $ B.hPutStrLn (fileHandles V.! idx) $ B.unlines $ map toLine x 

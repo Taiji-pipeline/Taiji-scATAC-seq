@@ -86,9 +86,11 @@ builder = do
 
     -- Make cell by peak matrix
     nodePar "Each_Call_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-        mapM (findPeaks "/temp/Peaks/Each/") |] $ return ()
+        mapM (findPeaks $ "/temp/Peak/Each/" <> T.unpack (input^.eid) <> "/") 
+        |] $ return ()
     nodePar "Each_Merge_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-        mergePeaks ("/temp/Peaks/Each/" <> T.unpack (input^.eid) <> "/") |] $ return ()
+        mergePeaks ("/temp/Peak/Each/" <> T.unpack (input^.eid) <> "/")
+        |] $ return ()
     path ["Each_Extract_Tags", "Each_Call_Peaks", "Each_Merge_Peaks"]
 
     node "Each_Make_Peak_Matrix_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
