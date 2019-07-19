@@ -24,7 +24,7 @@ import System.IO
 import           Bio.Seq.IO (mkIndex)
 import           System.FilePath               (takeDirectory)
 
-import Taiji.Prelude hiding (groupBy, _cell_barcode)
+import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
@@ -125,7 +125,7 @@ filterReads :: BAMHeader
             -> BEDTree (Int, Bool)   -- ^ TSS
             -> [BAM]
             -> (([BAM], [BAM]), Stat)
-filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0 0
+filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0
   where
     filterFn = do
         (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
@@ -146,7 +146,7 @@ filterCell input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bamFl, _, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _cell_barcode $ filter passQC stats
+        let cells = S.fromList $ map _barcode $ filter passQC stats
         header <- getBamHeader $ bamFl^.location
         runResourceT $ runConduit $ streamBam (bamFl^.location) .|
             bamToBedC header .| mapC changeName .|

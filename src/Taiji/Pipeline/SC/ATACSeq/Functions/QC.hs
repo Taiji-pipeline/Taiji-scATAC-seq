@@ -44,12 +44,11 @@ import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
 
 data Stat = Stat
-    { _cell_barcode :: B.ByteString
+    { _barcode :: B.ByteString
     , _dup_rate :: Double
     , _mito_rate :: Double
     , _te :: Double
-    , _uniq_reads :: Int
-    , _doublet_score :: Double }
+    , _uniq_reads :: Int }
 
 plotStat :: SCATACSeqConfig config
          => SCATACSeq S (a, b, File '[] 'Tsv )
@@ -67,7 +66,7 @@ plotStat input = do
                 axes: [
                     {
                         domain: false, grid: true, orient: "bottom",
-                        scale: "x", title: "number of reads",
+                        scale: "x", title: "number of fragments",
                         labelSeparation: 15, labelOverlap: true
                     }, {
                         domain: false, grid: true, orient: "left",
@@ -133,19 +132,18 @@ readStats = fmap (map decodeStat . B.lines) . B.readFile
 
 showStat :: Stat -> B.ByteString
 showStat Stat{..} = B.intercalate "\t" $
-    [ _cell_barcode
+    [ _barcode
     , B.pack $ show _dup_rate
     , B.pack $ show _mito_rate
     , B.pack $ show _te
-    , B.pack $ show _uniq_reads
-    , B.pack $ show _doublet_score ]
+    , B.pack $ show _uniq_reads ]
 {-# INLINE showStat #-}
 
 decodeStat :: B.ByteString -> Stat
 decodeStat x = Stat bc (readDouble dupRate) (readDouble mitoRate)
-    (readDouble te) (readInt uniq) (readDouble ds)
+    (readDouble te) (readInt uniq)
   where
-    [bc, dupRate, mitoRate, te, uniq, ds] = B.split '\t' x
+    [bc, dupRate, mitoRate, te, uniq] = B.split '\t' x
 {-# INLINE decodeStat #-}
 
 baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
@@ -218,8 +216,9 @@ rmChrM header input = do
                 in chr /= "chrM" && chr /= "M"
 {-# INLINE rmChrM #-}
 
-totalReads :: [a] -> State Stat ()
-totalReads x = modify' $ \s -> s{_uniq_reads=length x}
+totalReads :: [BAM] -> State Stat ()
+totalReads x = modify' $ \s -> s
+    {_uniq_reads = length $ filter (isFirstSegment . flag) x}
 {-# INLINE totalReads #-}
 
 tssEnrichment :: BEDTree (Int, Bool)   -- ^ TSS

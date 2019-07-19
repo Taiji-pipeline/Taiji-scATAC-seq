@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
@@ -17,6 +18,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , doClustering
     , getBedCluster
     , getClusterBarcodes
+    , extractBedByBarcode 
     , Embedding(..)
     , Normalization(..)
     , ClustOpt(..)
@@ -27,6 +29,7 @@ import Data.Binary (encodeFile, decodeFile)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
+import Data.Singletons.Prelude (Elem)
 import Bio.Data.Bed
 import Control.Arrow (first)
 import qualified Data.Vector as V
@@ -204,6 +207,20 @@ getBedCluster input = do
   where
     clusters = M.fromListWith (error "same barcode") $
         concatMap (\(x, ys) -> zip ys $ repeat x) $ input^.replicates._2.files._2
+
+extractBedByBarcode :: Elem 'Gzip tags ~ 'True
+                    => [FilePath]   -- ^ Outputs
+                    -> [[B.ByteString]]  -- ^ Barcodes
+                    -> File tags 'Bed
+                    -> IO [File '[] 'Bed]
+extractBedByBarcode outputs bcs input = do
+    fileHandles <- V.fromList <$> mapM (\x -> openFile x WriteMode) outputs
+    let bcIdx = M.fromList $ concat $ zipWith (\i x -> zip x $ repeat i) [0..] bcs
+        f x = let idx = M.lookupDefault (error $ show nm) nm bcIdx
+                  nm = fromJust ((x::BED)^.name) 
+              in liftIO $ B.hPutStrLn (fileHandles V.! idx) $ toLine x 
+    runResourceT $ runConduit $ streamBedGzip (input^.location) .| mapM_C f
+    return $ map (\x -> location .~ x $ emptyFile) outputs
 
 -- | Extract BEDs for each cluster.
 mergeBedCluster :: SCATACSeqConfig config

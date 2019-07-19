@@ -4,7 +4,9 @@
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
 import           Control.Workflow
+import Data.Binary (decodeFile)
 import qualified Data.Text as T
+import qualified Data.ByteString.Char8 as B
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
@@ -66,8 +68,19 @@ builder = do
     path ["Make_Window_Matrix", "Each_LSA_Reduce"]
 
     -- Extract tags for each cluster
-    node "Each_Extract_Tags_Prep"  [| liftIO . getClusterBarcodes |] $ return ()
-    nodePar "Each_Extract_Tags" 'getBedCluster $ return ()
+    node "Each_Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
+    nodePar "Each_Extract_Tags" [| \input -> input & replicates.traverse.files %%~ ( \(bed, cl) -> do
+        let idRep = asDir $ "/temp/Bed/Each/" <> T.unpack (input^.eid) <>
+                "_rep" <> show (input^.replicates._1)
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
+        clusters <- liftIO $ decodeFile $ cl^.location
+        let (nm, bcs) = unzip $ flip map clusters $ \c ->
+                (_cluster_name c, map _cell_barcode $ _cluster_member c)
+            outputs = map (\x -> dir <> "/" <> B.unpack x <> ".bed") nm
+        fls <- liftIO $ extractBedByBarcode outputs bcs bed
+        return $ zip nm fls
+        )
+        |] $ return ()
     ["Get_Bed", "Each_LSA_Cluster"] ~> "Each_Extract_Tags_Prep"
     path ["Each_Extract_Tags_Prep", "Each_Extract_Tags"]
 
