@@ -26,7 +26,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
 
 import qualified Data.ByteString.Char8 as B
 import Data.Binary (encodeFile, decodeFile)
-import Data.Conduit.List (groupBy)
+import qualified Data.Conduit.List as CL
 import qualified Data.Text as T
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
@@ -47,7 +47,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
-import Taiji.Prelude hiding (groupBy)
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
@@ -221,7 +221,7 @@ extractBedByBarcode outputs bcs input = do
                   nm = fromJust ((head x :: BED) ^. name) 
               in liftIO $ B.hPutStrLn (fileHandles V.! idx) $ B.unlines $ map toLine x 
     runResourceT $ runConduit $ streamBedGzip (input^.location) .|
-        groupBy ((==) `on` (^.name)) .| mapM_C f
+        CL.groupBy ((==) `on` (^.name)) .| mapM_C f
     return $ map (\x -> location .~ x $ emptyFile) outputs
 
 -- | Extract BEDs for each cluster.
