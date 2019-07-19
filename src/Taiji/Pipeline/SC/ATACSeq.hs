@@ -96,7 +96,7 @@ builder = do
     node "Each_Make_Peak_Matrix_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
         input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
         |] $ return ()
-    nodePar "Each_Make_Peak_Matrix" [| mkPeakMat "/temp/Peaks/Each/" |] $ return ()
+    nodePar "Each_Make_Peak_Matrix" [| mkPeakMat "/temp/Peak/Each/" |] $ return ()
     ["Get_Bins", "Each_Merge_Peaks"] ~> "Each_Make_Peak_Matrix_Prep"
     path ["Each_Make_Peak_Matrix_Prep", "Each_Make_Peak_Matrix"]
 

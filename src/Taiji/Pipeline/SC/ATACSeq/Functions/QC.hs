@@ -273,7 +273,7 @@ detectDoublet input = do
   where
     mkHist xs ref = plt <> rule
       where
-        plt = hist xs
+        plt = hist xs 200
         rule = option [jmacroE| {
             layer: {
                 mark: "rule",
