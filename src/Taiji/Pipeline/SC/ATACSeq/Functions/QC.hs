@@ -265,15 +265,18 @@ detectDoublet input = do
         shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack output]
         [thres, sc, sim_sc] <- B.lines <$> B.readFile output
         let th = read $ B.unpack thres :: Double
-            dat1 = mkHist (map readDouble $ B.words sc) th
-            dat2 = mkHist (map readDouble $ B.words sim_sc) th
-        savePlots outputPlot [dat1, dat2] []
+            ds = map readDouble $ B.words sc
+            ds_sim = map readDouble $ B.words sim_sc
+            rate = show $ fromIntegral (length $ filter (>=th) ds) /
+                fromIntegral (length ds)
+        savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> rate)
+            , mkHist ds_sim th] []
         return $ location .~ output $ emptyFile
         )
   where
     mkHist xs ref = plt <> rule
       where
-        plt = hist xs 200
+        plt = hist xs 100
         rule = option [jmacroE| {
             layer: {
                 mark: "rule",
