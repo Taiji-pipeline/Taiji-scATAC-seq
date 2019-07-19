@@ -26,6 +26,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
 
 import qualified Data.ByteString.Char8 as B
 import Data.Binary (encodeFile, decodeFile)
+import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
@@ -46,7 +47,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
-import Taiji.Prelude
+import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
@@ -208,7 +209,7 @@ getBedCluster input = do
     clusters = M.fromListWith (error "same barcode") $
         concatMap (\(x, ys) -> zip ys $ repeat x) $ input^.replicates._2.files._2
 
-extractBedByBarcode :: Elem 'Gzip tags ~ 'True
+extractBedByBarcode :: (Elem 'Gzip tags ~ 'True, Elem 'NameSorted tags ~ 'True)
                     => [FilePath]   -- ^ Outputs
                     -> [[B.ByteString]]  -- ^ Barcodes
                     -> File tags 'Bed
@@ -217,9 +218,10 @@ extractBedByBarcode outputs bcs input = do
     fileHandles <- V.fromList <$> mapM (\x -> openFile x WriteMode) outputs
     let bcIdx = M.fromList $ concat $ zipWith (\i x -> zip x $ repeat i) [0..] bcs
         f x = let idx = M.lookupDefault (error $ show nm) nm bcIdx
-                  nm = fromJust ((x::BED)^.name) 
-              in liftIO $ B.hPutStrLn (fileHandles V.! idx) $ toLine x 
-    runResourceT $ runConduit $ streamBedGzip (input^.location) .| mapM_C f
+                  nm = fromJust ((head x :: BED) ^. name) 
+              in liftIO $ B.hPutStrLn (fileHandles V.! idx) $ B.unlines $ map toLine x 
+    runResourceT $ runConduit $ streamBedGzip (input^.location) .|
+        groupBy ((==) `on` (^.name)) .| mapM_C f
     return $ map (\x -> location .~ x $ emptyFile) outputs
 
 -- | Extract BEDs for each cluster.
