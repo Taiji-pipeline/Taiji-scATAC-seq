@@ -5,13 +5,11 @@
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-    , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
     , plotClusters
     , clust
     , lsaClust
-    , ldaClust
     , dmClust
     , extractTags
     , extractSubMatrix
@@ -43,7 +41,6 @@ import Control.Workflow
 import Data.Conduit.Zlib (gzip)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LDA
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
@@ -62,18 +59,6 @@ lsaClust prefix = do
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
-
--- | Perform LDA analysis.
-ldaClust :: FilePath   -- ^ Directory to save the results
-         -> Builder ()
-ldaClust prefix = do
-    nodePar "LDA_Reduce" [| performLDA prefix |] $ return ()
-    nodePar "LDA_Cluster" [| doClustering prefix $ ClustOpt None UMAP |] $ return ()
-    nodePar "LDA_Viz" [| \x -> do
-        dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["LDA_Reduce", "LDA_Cluster", "LDA_Viz"]
 
 -- | Perform LSA analysis.
 dmClust :: FilePath   -- ^ Directory to save the results

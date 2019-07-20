@@ -175,7 +175,7 @@ builder = do
     path ["Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
     -- Motif finding
-    node "Find_TFBS_Prep" [| findMotifsPre 5e-5 |] $ return ()
+    node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
     nodePar "Find_TFBS" 'findMotifs $ return ()
     path ["SubCluster_Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
 
