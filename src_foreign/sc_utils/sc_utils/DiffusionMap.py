@@ -7,7 +7,7 @@ from .Utils import InputData, regress
 def diffusionMap(args):
     data = InputData(args.input)
     n_dim = 15
-    t = 10
+    t = 1
     print("Read Data")
     indptr = [0]
     indices = []
@@ -28,16 +28,14 @@ def diffusionMap(args):
     jm = jm / (s + s.T - jm)
 
     # Gaussian kernel
-    jm = np.exp(- (1 - jm) / 0.3)
+    #jm = np.exp(- (1 - jm) / 0.3)
 
-    #jm = regression(jm, coverage/m)
-    #jm = (jm + jm.T) / 2
-    #jm = jm.clip(min=0)
+    jm = regression(jm, coverage/m)
 
     #np.fill_diagonal(jm, 0)
 
     print("Normalization")
-    s = jm.sum(axis=1).dot(np.ones((1,n)))
+    s = jm.sum(axis=1)[:, np.newaxis].dot(np.ones((1,n)))
     jm = jm / s
 
     print("Reduction")
@@ -46,7 +44,6 @@ def diffusionMap(args):
     evals = np.real(evals[ix])
     evecs = np.real(evecs[:, ix])
     dmap = np.matmul(evecs, np.diag(evals**t))
-    print(dmap[:,0])
     np.savetxt(args.output, dmap[:, 1:], delimiter='\t')
 
 def regression(mat, coverage):
@@ -54,12 +51,14 @@ def regression(mat, coverage):
 
     X = 1 / coverage.dot(np.ones((1,n)))
     X = 1 / (X + X.T - 1)
-    X = X.reshape(m*n, 1)
+    X = X[np.triu_indices(n, k = 1)].T
 
-    y = mat.flatten().reshape(m*n, 1)
+    y = mat[np.triu_indices(n, k = 1)].T
 
-    print(sp.stats.spearmanr(X, y))
-    y_ = y / regress(X,y)
-    print(sp.stats.spearmanr(X, y_.reshape(m*n, 1)))
-    return y_.reshape(n,m)
+    print(sp.stats.spearmanr(X[...,0], y[...,0]))
+    res = np.zeros((n,m))
+    y = y / regress(X,y)
+    res[np.triu_indices(n, k = 1)] = y.flatten()
+    res = res + res.T
+    return res
 

@@ -102,8 +102,6 @@ snap rownames mat input = R.runRegion $ do
     return ()
 
 
-
-
 mkSnapMat :: SCATACSeqConfig config 
           => SCATACSeq S (File t 'Other)
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
@@ -176,11 +174,12 @@ snap' rownames matOutput matFl = withTempDir (Just "./") $ \tmpdir -> do
                                  .rankUpdate(A);
                      }
                      '
-                sparseProd <- cxxfunction(signature(AA = "dgCMatrix", BB = "dgCMatrix"), sparseProdCpp, "RcppEigen", incl)
+                #sparseProd <- cxxfunction(signature(AA = "dgCMatrix", BB = "dgCMatrix"), sparseProdCpp, "RcppEigen", incl)
 
                 runJaccard2 <- function(obj1, obj2 ) {
                     calJaccard <- function(X_i, X_j){
-                        A = sparseProd(X_i, X_j);
+                        #A = sparseProd(X_i, X_j);
+                        A = Matrix::tcrossprod(X_i, X_j);
                         bi = Matrix::rowSums(X_i);
                         bj = Matrix::rowSums(X_j);
                         jmat = as.matrix(A / (replicate(ncol(A), bi) + t(replicate(nrow(A), bj)) - A));
@@ -227,7 +226,7 @@ snap' rownames matOutput matFl = withTempDir (Just "./") $ \tmpdir -> do
                     return(ee)	
                 }
 
-                num_landmark = 4000
+                num_landmark = 20000
                 seed_use = 3944
 
                 # create snap object
