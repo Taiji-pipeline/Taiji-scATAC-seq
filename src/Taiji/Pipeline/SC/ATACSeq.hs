@@ -230,9 +230,9 @@ builder = do
     path ["Make_Window_Matrix", "Snap_Mat", "Snap_new_Cluster", "Snap_new_Viz"]
 
     nodePar "Snap_Merged_Reduce" 'mkSnapMat $ return ()
-    nodePar "Snap_Merged_Cluster" [| doClustering "/Cluster_by_window/Snap/" $ ClustOpt None UMAP |] $ return ()
+    nodePar "Snap_Merged_Cluster" [| doClustering "/Cluster_by_peak/Snap/" $ ClustOpt None UMAP |] $ return ()
     nodePar "Snap_Merged_Viz" [| \x -> do
-        dir <- asks ((<> "/Cluster_by_window/Snap/" ) . _scatacseq_output_dir) >>= getPath
+        dir <- asks ((<> "/Cluster_by_peak/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["Merge_Window_Matrix", "Snap_Merged_Reduce", "Snap_Merged_Cluster", "Snap_Merged_Viz"]
+    path ["LSA_1st_Merge_Peak_Matrix", "Snap_Merged_Reduce", "Snap_Merged_Cluster", "Snap_Merged_Viz"]

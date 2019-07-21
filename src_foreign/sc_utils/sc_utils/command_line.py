@@ -26,6 +26,7 @@ parser_clust.add_argument('--embed', help='embedding file')
 parser_clust.add_argument('--embed-method', help='embedding method')
 parser_clust.add_argument('--discard', action='store_true', help='remove first dimension')
 parser_clust.add_argument('--scale', action='store_true', help='scale to unit ball')
+parser_clust.add_argument('--dim', help='dimension')
 parser_clust.set_defaults(func=sc.clustering)
 
 # create the parser for the "doublet" command

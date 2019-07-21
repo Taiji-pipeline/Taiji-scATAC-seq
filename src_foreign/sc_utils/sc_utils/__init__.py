@@ -78,6 +78,8 @@ def clustering(args):
         return np.array([x / s for x in xs])
 
     data_transformed = np.loadtxt(args.input)
+    if (args.dim):
+        data_transformed = data_transformed[..., :args.dim]
     print(data_transformed.shape)
 
     if (args.coverage):
