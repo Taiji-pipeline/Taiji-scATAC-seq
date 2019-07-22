@@ -5,12 +5,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveLift #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
-    ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-    , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
-    , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
-    , plotClusters
+    ( plotClusters
     , clust
-    , lsaClust
+    , lsaBuilder
     , dmClust
     , extractTags
     , extractSubMatrix
@@ -21,6 +18,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , Embedding(..)
     , Normalization(..)
     , ClustOpt(..)
+    , defClustOpt
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -42,13 +40,118 @@ import Shelly (shelly, run_, escaping)
 import Control.Workflow
 import Data.Conduit.Zlib (gzip)
    
-import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
-import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
-import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap
+import Taiji.Pipeline.SC.ATACSeq.Functions.Feature
+import Taiji.Pipeline.SC.ATACSeq.Functions.DR.LSA
+import Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+
+-- | Embedding method
+data Embedding = UMAP
+               | TSNE
+               deriving (Lift)
+
+-- | Normalization method
+data Normalization = Drop1st
+                   | UnitBall
+                   | None
+                   deriving (Lift)
+
+-- | Clustering options
+data ClustOpt = ClustOpt
+    { _normalization :: Normalization
+    , _embedding_method :: Embedding
+    , _dim :: Maybe Int  -- ^ How many dimensions to be used
+    , _neighbors :: Int
+    } deriving (Lift)
+
+defClustOpt :: ClustOpt
+defClustOpt = ClustOpt UnitBall UMAP Nothing 20
+
+toParams :: ClustOpt -> [T.Text]
+toParams ClustOpt{..} = embed ++ normalize ++ dim ++ ["-k", T.pack $ show _neighbors]
+  where
+    embed = case _embedding_method of
+        UMAP -> ["--embed-method", "umap"]
+        TSNE -> ["--embed-method", "tsne"]
+    normalize = case _normalization of
+        Drop1st -> ["--discard"]
+        UnitBall -> ["--scale"]
+        None -> []
+    dim = case _dim of
+        Nothing -> []
+        Just d -> ["--dim", T.pack $ show d]
+
+ 
+doClustering :: SCATACSeqConfig config
+             => FilePath
+             -> ClustOpt
+             -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
+             -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
+doClustering prefix opt input = do
+    tmp <- asks _scatacseq_temp_dir
+    dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+        clust opt tmp fl >>= encodeFile output
+        return $ location .~ output $ emptyFile )
+
+clust :: ClustOpt
+      -> Maybe FilePath      -- ^ temp dir
+      -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
+      -> IO [CellCluster]
+clust opt dir (coverage, mat) = withTempDir dir $ \tmpD -> do
+      let sourceCells = getZipSource $ (,,) <$>
+              ZipSource (iterateC succ 0) <*>
+              ZipSource seqDepthC <*>
+              ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
+                mapC (map readDouble . B.split '\t') )
+      shelly $ run_ "sc_utils" $ [ "clust",
+          T.pack $ mat^.location, T.pack tmpD <> "/clust",
+          "--embed", T.pack tmpD <> "/embed" ] ++ toParams opt
+      cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
+      clusters <- readClusters $ tmpD <> "/clust"
+      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
+          map (map (cells V.!)) clusters
+  where
+    readClusters fl = map (map readInt . B.split ',') . B.lines <$>
+        B.readFile fl
+    seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
+        mapC ((\[a,b] -> (a,b)) . B.split '\t')
+    f (i, (bc, dep), [d1,d2,d3,d4,d5]) = Cell i (d1,d2) (d3,d4,d5) bc $ readInt dep
+    f _ = error "formatting error"
+{-# INLINE clust #-}
+
+--------------------------------------------------------------------------------
+-- LSA
+--------------------------------------------------------------------------------
+lsaBuilder :: Builder ()
+lsaBuilder = do
+    -- Clustering 1st round (By Window)
+    namespace "Window" $ lsaClust "/Cluster_by_window/LSA/" defClustOpt
+    path ["Merge_Window_Matrix", "Window_LSA_Reduce"]
+
+    -- Extract tags for each cluster
+    namespace "Window_LSA" $ extractTags "/temp/Bed/Cluster/"
+    ["Get_Bed", "Window_LSA_Cluster"] ~> "Window_LSA_Extract_Tags_Prep"
+
+    -- Call peaks 1st round
+    genPeakMat "/temp/Peak/" (Just "LSA_1st") 
+        "Window_LSA_Merge_Tags" "Get_Bins"
+
+    -- Clustering 2nd round
+    namespace "Peak" $ lsaClust "/Cluster_by_peak/LSA/" defClustOpt
+    path ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Reduce"]
+
+    -- Subclustering
+    node "Extract_Sub_Matrix" 'extractSubMatrix $ return ()
+    ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
+    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_dim = Just 5, _neighbors = 50}
+    path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
+
 
 -- | Perform LSA analysis.
 lsaClust :: FilePath   -- ^ Directory to save the results
@@ -63,12 +166,15 @@ lsaClust prefix opt = do
         |] $ return ()
     path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
 
+
+
+
 -- | Perform LSA analysis.
 dmClust :: FilePath   -- ^ Directory to save the results
         -> Builder ()
 dmClust prefix = do
     nodePar "DM_Reduce" [| performDM prefix |] $ return ()
-    nodePar "DM_Cluster" [| doClustering prefix $ ClustOpt None UMAP Nothing
+    nodePar "DM_Cluster" [| doClustering prefix $ defClustOpt{_normalization=None}
         |] $ return ()
     nodePar "DM_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
@@ -88,75 +194,6 @@ extractTags prefix = do
         |] $ return ()
     nodePar "Merge_Tags" [| mergeBedCluster prefix |] $ return ()
     path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Prep", "Merge_Tags"]
-
-doClustering :: SCATACSeqConfig config
-             => FilePath
-             -> ClustOpt
-             -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
-             -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
-doClustering prefix opt input = do
-    tmp <- asks _scatacseq_temp_dir
-    dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        clust opt tmp fl >>= encodeFile output
-        return $ location .~ output $ emptyFile )
-
-data Embedding = UMAP
-               | TSNE
-               deriving (Lift)
-
-data Normalization = Drop1st
-                   | UnitBall
-                   | Regression
-                   | None
-                   deriving (Lift)
-
-data ClustOpt = ClustOpt
-    { _normalization :: Normalization
-    , _embedding_method :: Embedding
-    , _dim :: Maybe Int
-    } deriving (Lift)
-
-clust :: ClustOpt
-      -> Maybe FilePath      -- ^ temp dir
-      -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
-      -> IO [CellCluster]
-clust ClustOpt{..} dir (coverage, mat) = withTempDir dir $ \tmpD -> do
-      runResourceT $ runConduit $ seqDepthC .| mapC snd .|
-          unlinesAsciiC .| sinkFile (tmpD <> "/coverage")
-      let embed = case _embedding_method of
-              UMAP -> ["--embed-method", "umap"]
-              TSNE -> ["--embed-method", "tsne"]
-          normalize = case _normalization of
-              Drop1st -> ["--discard"]
-              Regression -> ["--coverage", T.pack tmpD <> "/coverage"]
-              UnitBall -> ["--scale"]
-              None -> []
-          dim = case _dim of
-              Nothing -> []
-              Just d -> ["--dim", T.pack $ show d]
-          sourceCells = getZipSource $ (,,) <$>
-              ZipSource (iterateC succ 0) <*>
-              ZipSource seqDepthC <*>
-              ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
-                mapC (map readDouble . B.split '\t') )
-      shelly $ run_ "sc_utils" $ [ "clust",
-          T.pack $ mat^.location, T.pack tmpD <> "/clust",
-          "--embed", T.pack tmpD <> "/embed" ] ++ dim ++ embed ++ normalize
-      cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
-      clusters <- readClusters $ tmpD <> "/clust"
-      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
-          map (map (cells V.!)) clusters
-  where
-    readClusters fl = map (map readInt . B.split ',') . B.lines <$>
-        B.readFile fl
-    seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
-        mapC ((\[a,b] -> (a,b)) . B.split '\t')
-    f (i, (bc, dep), [d1,d2,d3,d4,d5]) = Cell i (d1,d2) (d3,d4,d5) bc $ readInt dep
-    f _ = error "formatting error"
-{-# INLINE clust #-}
 
 -- | Get barcodes
 getClusterBarcodes :: ([SCATACSeq S file], [SCATACSeq S (File '[] 'Other)])

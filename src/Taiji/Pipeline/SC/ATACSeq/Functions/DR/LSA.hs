@@ -7,7 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 
-module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
+module Taiji.Pipeline.SC.ATACSeq.Functions.DR.LSA
     ( performLSA ) where
 
 import Control.Arrow

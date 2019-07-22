@@ -4,7 +4,7 @@
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ViewPatterns #-}
-module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
+module Taiji.Pipeline.SC.ATACSeq.Functions.DR.SnapTools
    ( snapPre
    , performSnap
    , mkSnapMat

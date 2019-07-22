@@ -10,6 +10,7 @@ import qualified Data.ByteString.Char8 as B
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
+import Taiji.Pipeline.SC.ATACSeq.Functions.DR.SnapTools
 
 builder :: Builder ()
 builder = do
@@ -60,6 +61,7 @@ builder = do
     ["Get_Bins", "Make_Window_Matrix"] ~> "Merge_Window_Matrix_Prep"
     path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
 
+{-
 --------------------------------------------------------------------------------
 -- Process each sample
 --------------------------------------------------------------------------------
@@ -103,43 +105,17 @@ builder = do
 
     nodePar "Detect_Doublet" 'detectDoublet $ return ()
     path ["Each_Make_Peak_Matrix", "Detect_Doublet"]
+    -}
 
 
 --------------------------------------------------------------------------------
--- DM
+-- Clustering
 --------------------------------------------------------------------------------
     -- Clustering in each sample
     namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
     path ["Make_Window_Matrix", "Each_DM_Reduce"]
 
---------------------------------------------------------------------------------
--- LSA
---------------------------------------------------------------------------------
-    -- Clustering 1st round (By Window)
-    namespace "Window" $ lsaClust "/Cluster_by_window/LSA/" $
-        ClustOpt UnitBall UMAP Nothing
-    path ["Merge_Window_Matrix", "Window_LSA_Reduce"]
-
-    -- Extract tags for each cluster
-    namespace "Window_LSA" $ extractTags "/temp/Bed/Cluster/"
-    ["Get_Bed", "Window_LSA_Cluster"] ~> "Window_LSA_Extract_Tags_Prep"
-
-    -- Call peaks 1st round
-    genPeakMat "/temp/Peak/" (Just "LSA_1st") 
-        "Window_LSA_Merge_Tags" "Get_Bins"
-
-    -- Clustering 2nd round
-    namespace "Peak" $ lsaClust "/Cluster_by_peak/LSA/" $
-        ClustOpt UnitBall UMAP Nothing
-    path ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Reduce"]
-
-    -- Subclustering
-    node "Extract_Sub_Matrix" 'extractSubMatrix $ return ()
-    ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
-    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $
-        ClustOpt UnitBall UMAP $ Just 5
-    path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
-
+    lsaBuilder
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Peak matrix
@@ -183,42 +159,10 @@ builder = do
     nodePar "Find_TFBS" 'findMotifs $ return ()
     path ["SubCluster_Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
 
-    {-
-    -- LDA
-    nodePar "LDA" 'performLDA $ return ()
-    nodePar "Cluster_LDA" [| \input -> do
-        tmp <- asks _scatacseq_temp_dir
-        input & replicates.traversed.files %%~ liftIO . clust False tmp
-        |] $ return ()
-    nodePar "Visualize_LDA_Cluster" [| \x -> do
-        dir <- asks ((<> "/Cluster/LDA") . _scatacseq_output_dir) >>= getPath
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Make_Count_Matrix", "LDA", "Cluster_LDA", "Visualize_LDA_Cluster"]
-    -}
-
-    {-
-    node "Make_Bed_Cluster_Prep" [| \(x,y) -> return $ zipExp x y |] $ return ()
-    nodePar "Make_Bed_Cluster" 'mkCellClusterBed $ return ()
-    nodePar "Subsample_Bed_Cluster" 'subSampleClusterBed $ return ()
-    node "Call_Peak_Cluster_Prep" [| return . concatMap split |] $ return ()
-    nodePar "Call_Peak_Cluster" 'callPeakCluster $ return ()
-    ["Get_Bed", "Cluster_LSA"] ~> "Make_Bed_Cluster_Prep"
-    path ["Make_Bed_Cluster_Prep", "Make_Bed_Cluster",
-        "Subsample_Bed_Cluster", "Call_Peak_Cluster_Prep", "Call_Peak_Cluster"]
-        -}
-
-    {-
-    nodePar "Make_CutSite_Index" 'mkCutSiteIndex $ return ()
-    path ["Get_Bed", "Make_CutSite_Index"]
-
-    node "Get_Open_Region" 'getOpenRegion $ return ()
-    -}
-
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
     nodePar "Snap_Reduce" 'performSnap $ return ()
-    nodePar "Snap_Cluster" [| doClustering "/Snap/" $ ClustOpt None UMAP Nothing |] $ return ()
+    nodePar "Snap_Cluster" [| doClustering "/Snap/" $ defClustOpt{_normalization=None} |] $ return ()
     nodePar "Snap_Viz" [| \x -> do
         dir <- asks ((<> "/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -226,7 +170,7 @@ builder = do
     path ["Get_Bed", "Snap_Pre", "Snap_Reduce", "Snap_Cluster", "Snap_Viz"]
 
     nodePar "Snap_Mat" 'mkSnapMat $ return ()
-    nodePar "Snap_new_Cluster" [| doClustering "/Snap_new/" $ ClustOpt None UMAP Nothing |] $ return ()
+    nodePar "Snap_new_Cluster" [| doClustering "/Snap_new/" $ defClustOpt{_normalization=None} |] $ return ()
     nodePar "Snap_new_Viz" [| \x -> do
         dir <- asks ((<> "/Snap_new/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -234,7 +178,7 @@ builder = do
     path ["Make_Window_Matrix", "Snap_Mat", "Snap_new_Cluster", "Snap_new_Viz"]
 
     nodePar "Snap_Merged_Reduce" 'mkSnapMat $ return ()
-    nodePar "Snap_Merged_Cluster" [| doClustering "/Cluster_by_peak/Snap/" $ ClustOpt None UMAP Nothing |] $ return ()
+    nodePar "Snap_Merged_Cluster" [| doClustering "/Cluster_by_peak/Snap/" $ defClustOpt{_normalization=None} |] $ return ()
     nodePar "Snap_Merged_Viz" [| \x -> do
         dir <- asks ((<> "/Cluster_by_peak/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x

@@ -2,7 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
-module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.DiffusionMap (performDM) where 
+module Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap (performDM) where 
 
 import Data.ByteString.Lex.Integral (packDecimal)
 import Data.Singletons.Prelude (Elem)

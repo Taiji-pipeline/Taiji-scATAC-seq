@@ -98,7 +98,7 @@ def clustering(args):
     print(data_transformed.shape)
 
     print("Start KNN")
-    adj = kneighbors_graph(data_transformed, 20, mode='distance')
+    adj = kneighbors_graph(data_transformed, args.k, mode='distance')
 
     print("Start clustering")
     vcount = max(adj.shape)
