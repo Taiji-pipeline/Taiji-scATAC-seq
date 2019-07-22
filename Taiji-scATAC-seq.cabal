@@ -64,6 +64,7 @@ library
                      , mtl
                      , matrices
                      , SciFlow >= 0.7.0
+                     , template-haskell
                      , text
                      , temporary
                      , transformers-base
@@ -92,7 +93,6 @@ executable taiji-scatac-seq
                      , binary
                      , bio-pipelines
                      , data-default
-                     , lens
                      , SciFlow >=0.7.0
                      , SciFlow-app
                      , Taiji-scATAC-seq

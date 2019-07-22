@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveLift #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.LSA
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.SnapTools
@@ -24,6 +25,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
 
 import qualified Data.ByteString.Char8 as B
 import Data.Binary (encodeFile, decodeFile)
+import Language.Haskell.TH.Syntax (Lift)
 import qualified Data.Conduit.List as CL
 import qualified Data.Text as T
 import qualified Data.HashSet as S
@@ -50,10 +52,11 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 -- | Perform LSA analysis.
 lsaClust :: FilePath   -- ^ Directory to save the results
+         -> ClustOpt
          -> Builder ()
-lsaClust prefix = do
+lsaClust prefix opt = do
     nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
-    nodePar "LSA_Cluster" [| doClustering prefix $ ClustOpt UnitBall UMAP |] $ return ()
+    nodePar "LSA_Cluster" [| doClustering prefix opt |] $ return ()
     nodePar "LSA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -65,14 +68,13 @@ dmClust :: FilePath   -- ^ Directory to save the results
         -> Builder ()
 dmClust prefix = do
     nodePar "DM_Reduce" [| performDM prefix |] $ return ()
-    nodePar "DM_Cluster" [| doClustering prefix $ ClustOpt None UMAP
+    nodePar "DM_Cluster" [| doClustering prefix $ ClustOpt None UMAP Nothing
         |] $ return ()
     nodePar "DM_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["DM_Reduce", "DM_Cluster", "DM_Viz"]
-  where
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
@@ -103,16 +105,19 @@ doClustering prefix opt input = do
 
 data Embedding = UMAP
                | TSNE
+               deriving (Lift)
 
 data Normalization = Drop1st
                    | UnitBall
                    | Regression
                    | None
+                   deriving (Lift)
 
 data ClustOpt = ClustOpt
     { _normalization :: Normalization
     , _embedding_method :: Embedding
-    }
+    , _dim :: Maybe Int
+    } deriving (Lift)
 
 clust :: ClustOpt
       -> Maybe FilePath      -- ^ temp dir
@@ -129,14 +134,17 @@ clust ClustOpt{..} dir (coverage, mat) = withTempDir dir $ \tmpD -> do
               Regression -> ["--coverage", T.pack tmpD <> "/coverage"]
               UnitBall -> ["--scale"]
               None -> []
+          dim = case _dim of
+              Nothing -> []
+              Just d -> ["--dim", T.pack $ show d]
           sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
               ZipSource seqDepthC <*>
               ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
                 mapC (map readDouble . B.split '\t') )
-      shelly $ run_ "sc_utils" $ [ "clust", T.pack $ mat^.location
-          , T.pack tmpD <> "/clust", "--embed", T.pack tmpD <> "/embed" ] ++
-          embed ++ normalize
+      shelly $ run_ "sc_utils" $ [ "clust",
+          T.pack $ mat^.location, T.pack tmpD <> "/clust",
+          "--embed", T.pack tmpD <> "/embed" ] ++ dim ++ embed ++ normalize
       cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
       clusters <- readClusters $ tmpD <> "/clust"
       return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
