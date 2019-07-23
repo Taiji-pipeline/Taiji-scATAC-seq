@@ -65,10 +65,11 @@ data ClustOpt = ClustOpt
     , _embedding_method :: Embedding
     , _dim :: Maybe Int  -- ^ How many dimensions to be used
     , _neighbors :: Int
+    , _resolution :: Double
     } deriving (Lift)
 
 defClustOpt :: ClustOpt
-defClustOpt = ClustOpt UnitBall UMAP Nothing 20
+defClustOpt = ClustOpt UnitBall UMAP Nothing 20 0.8
 
 toParams :: ClustOpt -> [T.Text]
 toParams ClustOpt{..} = embed ++ normalize ++ dim ++ ["-k", T.pack $ show _neighbors]
@@ -149,7 +150,7 @@ lsaBuilder = do
     -- Subclustering
     node "Extract_Sub_Matrix" 'extractSubMatrix $ return ()
     ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
-    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_dim = Just 5, _neighbors = 50}
+    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_dim = Just 5, _resolution = 0.5}
     path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
 
 
