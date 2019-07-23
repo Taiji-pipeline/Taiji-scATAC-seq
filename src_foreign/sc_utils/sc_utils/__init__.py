@@ -106,8 +106,12 @@ def clustering(args):
     edgelist = list(zip(sources.tolist(), targets.tolist()))
     gr = ig.Graph(vcount, edgelist)
 
-    partition = la.find_partition(gr, la.CPMVertexPartition,
-        n_iterations=-1, seed=12343, resolution_parameter = args.res)
+    if(args.res):
+        partition = la.find_partition(gr, la.CPMVertexPartition,
+            n_iterations=10, seed=12343, resolution_parameter = args.res)
+    else:
+        partition = la.find_partition(gr, la.ModularityVertexPartition
+            n_iterations=10, seed=12343)
 
     print("Clusters: ")
     print(len(partition)) 

@@ -28,7 +28,7 @@ parser_clust.add_argument('--discard', action='store_true', help='remove first d
 parser_clust.add_argument('--scale', action='store_true', help='scale to unit ball')
 parser_clust.add_argument('--dim', type=int, help='dimension')
 parser_clust.add_argument('-k', type=int, help='neighbors')
-parser_clust.add_argument('--res', default=0.8, type=float, help='resolution')
+parser_clust.add_argument('--res', type=float, help='resolution')
 parser_clust.set_defaults(func=sc.clustering)
 
 # create the parser for the "doublet" command

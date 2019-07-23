@@ -4,9 +4,6 @@
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
 import           Control.Workflow
-import Data.Binary (decodeFile)
-import qualified Data.Text as T
-import qualified Data.ByteString.Char8 as B
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions

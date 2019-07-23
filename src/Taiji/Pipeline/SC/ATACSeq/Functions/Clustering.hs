@@ -65,14 +65,15 @@ data ClustOpt = ClustOpt
     , _embedding_method :: Embedding
     , _dim :: Maybe Int  -- ^ How many dimensions to be used
     , _neighbors :: Int
-    , _resolution :: Double
+    , _resolution :: Maybe Double
     } deriving (Lift)
 
 defClustOpt :: ClustOpt
-defClustOpt = ClustOpt UnitBall UMAP Nothing 20 0.8
+defClustOpt = ClustOpt UnitBall UMAP Nothing 20 Nothing
 
 toParams :: ClustOpt -> [T.Text]
-toParams ClustOpt{..} = embed ++ normalize ++ dim ++ ["-k", T.pack $ show _neighbors]
+toParams ClustOpt{..} = embed ++ normalize ++ dim ++ res ++
+    ["-k", T.pack $ show _neighbors]
   where
     embed = case _embedding_method of
         UMAP -> ["--embed-method", "umap"]
@@ -84,6 +85,9 @@ toParams ClustOpt{..} = embed ++ normalize ++ dim ++ ["-k", T.pack $ show _neigh
     dim = case _dim of
         Nothing -> []
         Just d -> ["--dim", T.pack $ show d]
+    res = case _resolution of
+        Nothing -> []
+        Just r -> ["--res", T.pack $ show r]
 
  
 doClustering :: SCATACSeqConfig config
