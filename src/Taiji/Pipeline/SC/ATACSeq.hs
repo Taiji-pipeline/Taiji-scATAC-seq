@@ -125,8 +125,10 @@ builder = do
     namespace "SubCluster" $ extractTags "/Bed/SubCluster/"
     ["Get_Bed", "SubCluster_LSA_Cluster"] ~> "SubCluster_Extract_Tags_Prep"
 
-    -- Call peaks final round
+    -- Call peaks in each cluster and generate peak matrix
     genPeakMat "/Feature/Peak/Cluster/" Nothing "Merge_Tags" "Get_Bins"
+    node "Extract_Cluster_Matrix" [| extractSubMatrix "/Feature/Peak/Cluster/" |] $ return ()
+    ["Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Matrix"
 
     node "Cluster_Correlation" 'clusterCorrelation $ return ()
     ["Call_Peaks", "Merge_Peaks"] ~> "Cluster_Correlation"
@@ -141,10 +143,16 @@ builder = do
 --------------------------------------------------------------------------------
 -- Diff
 --------------------------------------------------------------------------------
-    nodePar "Get_Ref_Cells" [| liftIO . sampleCells 150 |] $ return ()
+    nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
     node "Make_Ref_Peak_Mat" 'mkRefMat $ return ()
     ["Make_Window_Matrix"] ~> "Get_Ref_Cells"
     ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
+
+    node "Diff_Peak_Prep" [| \(x, ref) ->  return $ zip x $ repeat ref |] $ return ()
+    ["Extract_Cluster_Matrix", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
+
+    nodePar "Diff_Peak" 'diffPeaks $ return ()
+    path ["Diff_Peak_Prep", "Diff_Peak"]
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
@@ -152,7 +160,6 @@ builder = do
 
     node "Cicero" 'cicero $ return ()
     ["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
-
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()

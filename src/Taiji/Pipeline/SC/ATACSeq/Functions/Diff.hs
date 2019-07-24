@@ -10,6 +10,7 @@ import System.Random.MWC (create)
 import System.Random.MWC.Distributions (uniformShuffle)
 import qualified Data.HashSet as S
 import Data.Conduit.Zlib (gzip)
+import Shelly hiding (FilePath)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -44,3 +45,16 @@ mkRefMat (bcs, [fl]) = do
   where
     bc = S.fromList $ concat bcs
 mkRefMat _ = undefined
+
+diffPeaks :: SCATACSeqConfig config
+          => (SCATACSeq S (File tags 'Other), FilePath)
+          -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
+diffPeaks (input, ref) = do
+    dir <- asks ((<> "/Diff/") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_pvalues.txt" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+        shelly $ run_ "sc_utils" [ "diff", T.pack output
+            , "--fg", T.pack $ fl^.location 
+            , "--bg", T.pack ref ]
+        return $ location .~ output $ emptyFile )

@@ -152,7 +152,7 @@ lsaBuilder = do
     path ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Reduce"]
 
     -- Subclustering
-    node "Extract_Sub_Matrix" 'extractSubMatrix $ return ()
+    node "Extract_Sub_Matrix" [| extractSubMatrix "/temp/" |] $ return ()
     ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
     namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_dim = Just 5, _resolution = Just 0.5}
     path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
@@ -308,12 +308,14 @@ sampling gen frac v = V.take n <$> uniformShuffle v gen
   where
     n = truncate $ frac * fromIntegral (V.length v)
 
+-- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
-                 => ( [SCATACSeq S (File tags 'Other)]
+                 => FilePath   -- ^ dir
+                 -> ( [SCATACSeq S (File tags 'Other)]
                     , [SCATACSeq S (File '[] 'Other)] )
                  -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
-extractSubMatrix ([input], [clFl]) = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/Cluster/")
+extractSubMatrix prefix ([input], [clFl]) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
     liftIO $ do
         clusters <- decodeFile $ clFl^.replicates._2.files.location
         mat <- mkSpMatrix id $ input^.replicates._2.files.location
@@ -330,4 +332,4 @@ extractSubMatrix ([input], [clFl]) = do
                 nCell = S.size ids
         runResourceT $ runConduit $ streamRows mat .|
             sequenceSinks (map mkSink clusters)
-extractSubMatrix _ = return []
+extractSubMatrix _ _ = return []
