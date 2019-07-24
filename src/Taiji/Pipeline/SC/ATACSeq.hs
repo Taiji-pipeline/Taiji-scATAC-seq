@@ -139,6 +139,14 @@ builder = do
     ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
 
 --------------------------------------------------------------------------------
+-- Diff
+--------------------------------------------------------------------------------
+    nodePar "Get_Ref_Cells" [| liftIO . sampleCells 150 |] $ return ()
+    node "Make_Ref_Peak_Mat" 'mkRefMat $ return ()
+    ["Make_Window_Matrix"] ~> "Get_Ref_Cells"
+    ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
+
+--------------------------------------------------------------------------------
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 

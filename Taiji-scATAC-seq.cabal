@@ -35,6 +35,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR.SnapTools
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Diff
                        Taiji.Pipeline.SC.ATACSeq.Functions.Cicero
                        Taiji.Pipeline.SC.ATACSeq.Functions.Utils
                        Taiji.Pipeline.SC.ATACSeq.Types
