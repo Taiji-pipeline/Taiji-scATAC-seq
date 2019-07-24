@@ -2,6 +2,7 @@ import argparse
 import sc_utils as sc
 
 from .Doublet import detectDoublet
+from .Diff import diff
 
 ################################################################################
 ## ARGUMENT PARSER
@@ -27,7 +28,7 @@ parser_clust.add_argument('--embed-method', help='embedding method')
 parser_clust.add_argument('--discard', action='store_true', help='remove first dimension')
 parser_clust.add_argument('--scale', action='store_true', help='scale to unit ball')
 parser_clust.add_argument('--dim', type=int, help='dimension')
-parser_clust.add_argument('-k', type=int, help='neighbors')
+parser_clust.add_argument('-k', default=20, type=int, help='neighbors')
 parser_clust.add_argument('--res', type=float, help='resolution')
 parser_clust.set_defaults(func=sc.clustering)
 
@@ -36,6 +37,12 @@ parser_doublet = subparsers.add_parser('doublet', help='doublet detection')
 parser_doublet.add_argument('input', type=str, help='input matrix')
 parser_doublet.add_argument('output', type=str, help='output')
 parser_doublet.set_defaults(func=detectDoublet)
+
+# create the parser for the "diff" command
+parser_diff = subparsers.add_parser('diff', help='diff')
+parser_diff.add_argument('--fg', type=str, help='foreground matrix')
+parser_diff.add_argument('--bg', type=str, help='background matrix')
+parser_diff.set_defaults(func=diff)
 
 def main():
     args = parser.parse_args()

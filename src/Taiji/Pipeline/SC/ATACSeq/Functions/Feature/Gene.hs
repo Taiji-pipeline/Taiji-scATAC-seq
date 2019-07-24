@@ -39,6 +39,22 @@ estimateExpr (nm, fl) = do
             map (\(n, c) -> n <> "\t" <> toShortest c) counts
         return (nm, location .~ output $ emptyFile)
 
+{-
+getTSS :: FilePath -> IO (BEDTree (Int, Bool))
+getTSS fl = do
+    genes <- readGenes fl
+    map (original . geneName)
+    
+    fmap (bedToTree const . concatMap fn) . readGenes
+  where
+    fn Gene{..} = map g $ nubSort tss
+      where
+        g x = (BED3 geneChrom (x - 1000) (x + 1000), (x, geneStrand))
+        tss | geneStrand = geneLeft : map fst geneTranscripts
+            | otherwise = geneRight : map snd geneTranscripts
+-}
+ 
+
 -- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6385419/
 -- | Count the tags in promoter regions (RPKM).
 mkGeneCount :: PrimMonad m

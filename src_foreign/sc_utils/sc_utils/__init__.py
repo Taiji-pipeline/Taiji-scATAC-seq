@@ -110,7 +110,7 @@ def clustering(args):
         partition = la.find_partition(gr, la.CPMVertexPartition,
             n_iterations=10, seed=12343, resolution_parameter = args.res)
     else:
-        partition = la.find_partition(gr, la.ModularityVertexPartition
+        partition = la.find_partition(gr, la.ModularityVertexPartition,
             n_iterations=10, seed=12343)
 
     print("Clusters: ")
