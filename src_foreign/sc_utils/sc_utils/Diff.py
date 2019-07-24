@@ -12,7 +12,7 @@ def diff(args):
     fg = readMatrix(args.fg)
     bg = readMatrix(args.bg)
     idx, probs = diffTest(fg, bg)
-    _,ps,_,_ = multipletests(np.exp(np.array(probs)), 0.1, method="fdr_bh")
+    _,ps,_,_ = multipletests(np.array(probs), 0.01, method="fdr_bh")
     print(list(filter(lambda x: x < 0.01, ps)))
 
 def diffTest(fg, bg):
@@ -30,8 +30,9 @@ def diffTest(fg, bg):
     X = np.array([1] * n1 + [0] * n2)[:, np.newaxis]
     probs = []
     print(len(idx))
-    for i in idx:
-        if (i % 1000 == 0): print(i)
+    for i in range(len(idx)):
+        if (i % 100 == 0): print(i)
+        i = idx[i]
         a1 = fg[:, i].todense()
         a2 = bg[:, i].todense()
         Y = np.ravel(np.concatenate((a1,a2)))
@@ -46,19 +47,19 @@ z: depth
 def test(X, Y, z):
     prop_accessible = np.full(X.shape, np.sum(Y) / len(Y))
 
-    X_full = np.concatenate((X, prop_accessible, z), axis=1)
-    full = LogisticRegression(penalty="none", random_state=0,
-        solver="lbfgs", multi_class='ovr'
-        ).fit(X_full, Y)
-    y_prob = full.predict_proba(X_full)
-    full_prob = log_loss(Y, y_prob, normalize=False)
+    model = LogisticRegression(penalty="none", random_state=0,
+        solver="sag", multi_class='ovr', tol=1e-3, warm_start=False
+        )
 
     X_reduced = np.concatenate((prop_accessible, z), axis=1)
-    reduced = LogisticRegression(penalty="none", random_state=0,
-        solver="lbfgs", multi_class='ovr'
-        ).fit(X_reduced, Y)
-    y_prob = reduced.predict_proba(X_reduced)
+    model.fit(X_reduced, Y)
+    y_prob = model.predict_proba(X_reduced)
     reduced_prob = log_loss(Y, y_prob, normalize=False)
 
+    X_full = np.concatenate((X, prop_accessible, z), axis=1)
+    model.fit(X_full, Y)
+    y_prob = model.predict_proba(X_full)
+    full_prob = log_loss(Y, y_prob, normalize=False)
+
     chi = 2 * (reduced_prob - full_prob)
-    return chi2.logsf(chi, 1)
+    return chi2.sf(chi, 1)
