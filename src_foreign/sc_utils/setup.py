@@ -19,6 +19,7 @@ setup(name='sc_utils',
           'umap-learn',
           'leidenalg',
           'MulticoreTSNE',
-          'scrublet'
+          'scrublet',
+          'statsmodels'
       ],
       zip_safe=False)

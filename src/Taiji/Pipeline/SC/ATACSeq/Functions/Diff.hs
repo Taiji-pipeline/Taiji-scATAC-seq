@@ -2,7 +2,11 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
-module Taiji.Pipeline.SC.ATACSeq.Functions.Diff where
+module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
+    ( sampleCells
+    , mkRefMat
+    , diffPeaks
+    ) where
 
 import qualified Data.Vector as V
 import qualified Data.ByteString.Char8 as B
@@ -12,6 +16,7 @@ import Data.Conduit.Internal (zipSources)
 import System.Random.MWC (create)
 import System.Random.MWC.Distributions (uniformShuffle)
 import qualified Data.HashSet as S
+import qualified Data.HashMap.Strict as M
 import Bio.Utils.Misc (readDouble, readInt)
 import Data.Conduit.Zlib (gzip)
 import Shelly hiding (FilePath)
@@ -55,41 +60,34 @@ mkRefMat (bcs, [fl]) = do
 mkRefMat _ = undefined
 
 diffPeaks :: SCATACSeqConfig config
-          => (SCATACSeq S (File tags 'Other), FilePath)
+          => ( SCATACSeq S (File tags 'Other)
+             , File '[Gzip] 'NarrowPeak
+             , FilePath )
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
-diffPeaks (input, ref) = do
-    dir <- asks ((<> "/Diff/") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_pvalues.txt" dir
-            (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        shelly $ run_ "sc_utils" [ "diff", T.pack output
-            , "--fg", T.pack $ fl^.location 
-            , "--bg", T.pack ref ]
-        return $ location .~ output $ emptyFile )
-
-getDiffPeaks :: SCATACSeqConfig config
-             => ( File '[Gzip] 'NarrowPeak
-                , SCATACSeq S (File '[] 'Tsv) )
-             -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'NarrowPeak))
-getDiffPeaks (pk, input) = do
+diffPeaks (input, peakFl, ref) = do
     dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_diff.narrowpeak.gz" dir
+    let output = printf "%s/%s_rep%d.np.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        idx <- fmap S.fromList $ filterFDR $ fl^.location
+        stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
+            diffAnalysis (fl^.location) ref
+        let f (i, peak) = case M.lookup i stats of
+                Nothing -> Nothing
+                Just (fold, pval, fdr) -> Just $ npSignal .~ fold $
+                    npPvalue .~ Just (negate $ logBase 10 pval) $
+                    npQvalue .~ Just (negate $ logBase 10 fdr) $ peak
         runResourceT $ runConduit $
-            zipSources (iterateC succ 0) (streamBedGzip $ pk^.location :: ConduitT i NarrowPeak (ResourceT IO) ()) .|
-            filterC ((`S.member` idx) . fst) .| mapC snd .| sinkFileBedGzip output
+            zipSources (iterateC succ 0) (streamBedGzip $ peakFl^.location) .|
+            concatMapC f .| sinkFileBedGzip output
         return $ location .~ output $ emptyFile )
 
-filterFDR :: FilePath -> IO [Int]
-filterFDR fl = do
-    (idx, prob) <- unzip . map (f . B.words) . B.lines <$> B.readFile fl
-    prob' <- p_adjust prob
-    return $ fst $ unzip $ filter ((<0.01) . snd) $ zip idx prob'
+diffAnalysis :: FilePath  -- ^ foreground
+             -> FilePath  -- ^ background
+             -> IO [(Int, Double, Double, Double)]
+diffAnalysis fg bk = withTemp Nothing $ \tmp -> do
+    shelly $ run_ "sc_utils" [ "diff", T.pack tmp, "--fg", T.pack fg
+        , "--bg", T.pack bk ]
+    map (f . B.split '\t') . B.lines <$> B.readFile tmp
   where
-    f [a,b] = (readInt a, readDouble b)
-
-p_adjust :: [Double] -> IO [Double]
-p_adjust xs = R.runRegion $ R.fromSomeSEXP <$>
-    [r| p.adjust(xs_hs, method = "fdr") |]
+    f [a,b,c,d] = (readInt a, readDouble b, readDouble c, readDouble d)
+    f _ = error "wrong format!"

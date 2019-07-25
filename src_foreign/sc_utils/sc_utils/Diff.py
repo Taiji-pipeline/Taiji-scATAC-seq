@@ -2,17 +2,22 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 import numpy as np
 from scipy.stats import chi2
+from statsmodels.stats.multitest import fdrcorrection
 
 from .Utils import InputData, readMatrix
 
 def diff(args):
     fg = readMatrix(args.fg, binary=True)
     bg = readMatrix(args.bg, binary=True)
-    idx, probs = diffTest(fg, bg)
-    np.savetxt(args.output, np.column_stack((idx, probs)), delimiter='\t', fmt='%i %1.4e')
+    idx, pval, enrichment = diffTest(fg, bg)
+    fdr = fdrcorrection(pval)[1]
+    np.savetxt( args.output, np.column_stack((idx, enrichment, pval, fdr)),
+        delimiter='\t',
+        fmt='%i %10.5f %1.4e %1.4e' )
 
 def process(fg, bg, X, z, idx):
     probs = []
+    enrichment = []
     for i in range(len(idx)):
         if (i % 500 == 0): print(i)
         i = idx[i]
@@ -20,8 +25,8 @@ def process(fg, bg, X, z, idx):
         a2 = bg[:, i].todense()
         Y = np.ravel(np.concatenate((a1,a2)))
         probs.append(test(X,Y,z))
-    return probs
-
+        enrichment.append(np.average(a1) / np.average(a2))
+    return (probs, enrichment)
 
 def diffTest(fg, bg):
     (n1,_) = fg.shape
@@ -37,8 +42,8 @@ def diffTest(fg, bg):
     z = np.concatenate((fg_depth, bg_depth))
     X = np.array([1] * n1 + [0] * n2)[:, np.newaxis]
     print(len(idx))
-    probs = process(fg, bg, X, z, idx)
-    return (idx, probs)
+    (probs, enrichment) = process(fg, bg, X, z, idx)
+    return (idx, probs, enrichment)
 
 """
 X: sample, 1d vector

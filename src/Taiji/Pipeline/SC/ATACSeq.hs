@@ -157,18 +157,12 @@ builder = do
     ["Make_Window_Matrix"] ~> "Get_Ref_Cells"
     ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
 
-    node "Diff_Peak_Prep" [| \(x, ref) ->  return $ zip x $ repeat ref |] $ return ()
-    ["Extract_Cluster_Matrix", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
-
+    node "Diff_Peak_Prep" [| \(x, pk, ref) -> return $ case pk of 
+        Nothing -> []
+        Just p -> zip3 x (repeat p) $ repeat ref |] $ return ()
+    ["Extract_Cluster_Matrix", "Merge_Peaks", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
-    node "Get_Diff_Peak_Prep" [| \(x, y) -> return $ case x of
-        Nothing -> []
-        Just x' -> zip (repeat x') y
-        |] $ return ()
-    nodePar "Get_Diff_Peak" 'getDiffPeaks $ return ()
-    ["Merge_Peaks", "Diff_Peak"] ~> "Get_Diff_Peak_Prep"
-    ["Get_Diff_Peak_Prep"] ~> "Get_Diff_Peak"
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
