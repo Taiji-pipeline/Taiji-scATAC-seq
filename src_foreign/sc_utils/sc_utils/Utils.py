@@ -25,7 +25,7 @@ def regress(X, y):
     model = LinearRegression().fit(X, y)
     return model.predict(X)
 
-def readMatrix(fl):
+def readMatrix(fl, binary=False):
     data = InputData(fl)
     indptr = [0]
     indices = []
@@ -33,7 +33,10 @@ def readMatrix(fl):
     for row in iter(data):
         for (i,x) in row:
             indices.append(i)
-            mat.append(x)
+            if (binary):
+                mat.append(1)
+            else:
+                mat.append(x)
         indptr.append(len(indices))
     mat = sp.sparse.csr_matrix((mat, indices, indptr), dtype=int)
     return mat

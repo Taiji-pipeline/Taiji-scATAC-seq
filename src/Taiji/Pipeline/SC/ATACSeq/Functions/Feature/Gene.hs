@@ -23,6 +23,52 @@ import           Data.List.Ordered                    (nubSort)
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 
+{-
+mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+             => SCATACSeq S (File tags 'Bed, _, Int)
+             -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+mkCellByGene input = do
+    dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
+    tss <- asks _scatacseq_annotation >>= liftIO . getTSS . fromJust
+    let output = printf "%s/%s_rep%d_cell_by_gene.mat.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . ( \(fl,_,nCell) -> do
+        runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
+            groupCells .| mkFeatMat nCell regions .| sinkFile output
+        return $ emptyFile & location .~ output )
+        -}
+
+{-
+getCounts :: ([B.ByteString], BEDTree Int)
+          -> [BED]
+          -> U.Vector Int
+getCounts (names, tss) beds = U.create $ do
+    vec <- UM.replicate (length names) 0
+    forM_ beds $ \bed -> mapM_ (UM.unsafeModify vec (+1)) $
+        IM.elems $ intersecting tss bed
+    return vec
+            -}
+
+            {-
+getGeneNames :: SCATACSeqConfig config
+             =>
+
+writeTSS :: FilePath -> [(B.ByteString, [BED3])] -> IO ()
+writeTSS output xs = B.writeFile output $ flip map xs $ \(x, xs) ->
+    -}
+
+
+getTSS :: FilePath -> IO [(B.ByteString, [BED3])]
+getTSS fl = do
+    genes <- nubSort . concatMap fn <$> readGenes fl
+    return $ flip map (M.toList $ M.fromListWith (++) genes) $ \(gene, regions) ->
+        (original gene, runIdentity $ runConduit $ mergeBed regions .| sinkList)
+  where
+    fn Gene{..} = map g $ nubSort tss
+      where
+        g x = (geneName, [BED3 geneChrom (x - 1000) (x + 1000)])
+        tss | geneStrand = geneLeft : map fst geneTranscripts
+            | otherwise = geneRight : map snd geneTranscripts
 
 -- | Estimate the gene expression level using atac-seq counts.
 estimateExpr :: SCATACSeqConfig config
@@ -38,22 +84,6 @@ estimateExpr (nm, fl) = do
         B.writeFile output $ B.unlines $
             map (\(n, c) -> n <> "\t" <> toShortest c) counts
         return (nm, location .~ output $ emptyFile)
-
-{-
-getTSS :: FilePath -> IO (BEDTree (Int, Bool))
-getTSS fl = do
-    genes <- readGenes fl
-    map (original . geneName)
-    
-    fmap (bedToTree const . concatMap fn) . readGenes
-  where
-    fn Gene{..} = map g $ nubSort tss
-      where
-        g x = (BED3 geneChrom (x - 1000) (x + 1000), (x, geneStrand))
-        tss | geneStrand = geneLeft : map fst geneTranscripts
-            | otherwise = geneRight : map snd geneTranscripts
--}
- 
 
 -- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6385419/
 -- | Count the tags in promoter regions (RPKM).

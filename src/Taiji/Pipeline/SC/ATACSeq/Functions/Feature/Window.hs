@@ -61,7 +61,7 @@ mkWindowMat input = do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
         runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
-            groupCells .| mkFeatMat nCell regions .| sinkFile output
+            groupCells .| mkFeatMat nCell (map return regions) .| sinkFile output
         return $ emptyFile & location .~ output )
 
 -- | Divide the genome into bins and count the tags.

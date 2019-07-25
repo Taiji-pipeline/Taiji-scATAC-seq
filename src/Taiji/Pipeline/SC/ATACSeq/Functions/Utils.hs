@@ -274,13 +274,14 @@ filterCols output idx input = do
 -- The input stream is raw tags grouped by cells.
 mkFeatMat :: (PrimMonad m, MonadThrow m)
           => Int   -- ^ the number of cells
-          -> [BED3]    -- ^ a list of regions
+          -> [[BED3]]    -- ^ a list of regions
           -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
 mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
   where
     source = yield header >> mapC
         (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
-    bedTree = bedToTree undefined $ zip regions [0::Int ..]
+    bedTree = bedToTree undefined $ concat $
+        zipWith (\xs i -> zip xs $ repeat i) regions [0::Int ..]
     nBin = length regions
     header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
     countEachCell :: BEDTree Int -> [BED] -> [(Int, Int)]

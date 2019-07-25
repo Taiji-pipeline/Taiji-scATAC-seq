@@ -6,8 +6,8 @@ from scipy.stats import chi2
 from .Utils import InputData, readMatrix
 
 def diff(args):
-    fg = readMatrix(args.fg)
-    bg = readMatrix(args.bg)
+    fg = readMatrix(args.fg, binary=True)
+    bg = readMatrix(args.bg, binary=True)
     idx, probs = diffTest(fg, bg)
     np.savetxt(args.output, np.column_stack((idx, probs)), delimiter='\t', fmt='%i %1.4e')
 
