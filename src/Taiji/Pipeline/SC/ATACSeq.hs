@@ -141,6 +141,15 @@ builder = do
     ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
 
 --------------------------------------------------------------------------------
+-- Creating Cell by Gene matrix
+--------------------------------------------------------------------------------
+    node "Get_Genes" [| \_ -> getGeneNames |] $ return ()
+    node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
+    nodePar "Make_Gene_Mat" 'mkCellByGene $ return ()
+    ["Get_Bins", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
+    path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
+
+--------------------------------------------------------------------------------
 -- Diff
 --------------------------------------------------------------------------------
     nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
@@ -153,6 +162,13 @@ builder = do
 
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
+    node "Get_Diff_Peak_Prep" [| \(x, y) -> return $ case x of
+        Nothing -> []
+        Just x' -> zip (repeat x') y
+        |] $ return ()
+    nodePar "Get_Diff_Peak" 'getDiffPeaks $ return ()
+    ["Merge_Peaks", "Diff_Peak"] ~> "Get_Diff_Peak_Prep"
+    ["Get_Diff_Peak_Prep"] ~> "Get_Diff_Peak"
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions

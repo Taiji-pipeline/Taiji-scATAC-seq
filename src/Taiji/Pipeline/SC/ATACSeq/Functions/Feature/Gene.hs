@@ -1,19 +1,25 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     ( estimateExpr
     , mkExprTable
+    , getGeneNames
+    , mkCellByGene 
     ) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.HashMap.Strict                  as M
+import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
+import Data.Singletons.Prelude (Elem)
+import qualified Data.Text as T
 import Bio.Data.Bed.Utils (rpkmBed)
 import Bio.RealWorld.GENCODE (readGenes, Gene(..))
 import Data.Double.Conversion.ByteString (toShortest)
-import Bio.Utils.Misc (readDouble)
+import Bio.Utils.Misc (readDouble, readInt)
 import           Data.CaseInsensitive  (mk, original, CI)
 import qualified Data.Vector.Unboxed as U
 import           Bio.Pipeline.Utils
@@ -21,22 +27,21 @@ import Control.Arrow (second)
 import           Data.List.Ordered                    (nubSort)
 
 import Taiji.Prelude hiding (groupBy)
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 
-{-
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-             => SCATACSeq S (File tags 'Bed, _, Int)
+             => (SCATACSeq S (File tags 'Bed, a, Int), FilePath)
              -> ReaderT config IO (SCATACSeq S (File tags 'Other))
-mkCellByGene input = do
+mkCellByGene (input, genes) = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
-    tss <- asks _scatacseq_annotation >>= liftIO . getTSS . fromJust
     let output = printf "%s/%s_rep%d_cell_by_gene.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . ( \(fl,_,nCell) -> do
+        regions <- map snd <$> readTSS genes
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
             groupCells .| mkFeatMat nCell regions .| sinkFile output
         return $ emptyFile & location .~ output )
-        -}
 
 {-
 getCounts :: ([B.ByteString], BEDTree Int)
@@ -49,14 +54,30 @@ getCounts (names, tss) beds = U.create $ do
     return vec
             -}
 
-            {-
 getGeneNames :: SCATACSeqConfig config
-             =>
+             => ReaderT config IO FilePath
+getGeneNames = do
+    dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
+    let output = dir <> "gene_name_idx.tsv"
+    tss <- asks _scatacseq_annotation >>= liftIO . getTSS . fromJust
+    liftIO $ writeTSS output tss
+    return output
 
 writeTSS :: FilePath -> [(B.ByteString, [BED3])] -> IO ()
-writeTSS output xs = B.writeFile output $ flip map xs $ \(x, xs) ->
-    -}
+writeTSS output xs = B.writeFile output $ B.unlines $ flip map xs $
+    \(nm, regions) -> nm <> "\t" <> B.intercalate "," (map f regions)
+  where
+    f b = b^.chrom <> ":" <> (fromJust $ packDecimal $ b^.chromStart) <> "-" <>
+        (fromJust $ packDecimal $ b^.chromEnd) 
 
+readTSS :: FilePath -> IO [(B.ByteString, [BED3])]
+readTSS input = map f . B.lines <$> B.readFile input
+  where
+    f x = let [nm, regions] = B.split '\t' x
+          in (nm, map g $ B.split ',' regions)
+    g x = let [chr, y] = B.split ':' x
+              [s,e] = B.split '-' y
+          in asBed chr (readInt s) $ readInt e
 
 getTSS :: FilePath -> IO [(B.ByteString, [BED3])]
 getTSS fl = do
