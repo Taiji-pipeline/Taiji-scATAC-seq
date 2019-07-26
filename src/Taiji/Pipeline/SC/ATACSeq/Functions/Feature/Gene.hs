@@ -76,7 +76,7 @@ getTSS fl = do
   where
     fn Gene{..} = map g $ nubSort tss
       where
-        g x = (geneName, [BED3 geneChrom (x - 1000) (x + 1000)])
+        g x = (geneName, [BED3 geneChrom (max 0 $ x - 1000) (x + 1000)])
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
 

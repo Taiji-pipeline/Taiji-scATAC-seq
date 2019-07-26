@@ -280,15 +280,15 @@ mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
   where
     source = yield header >> mapC
         (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
-    bedTree = bedToTree undefined $ concat $
-        zipWith (\xs i -> zip xs $ repeat i) regions [0::Int ..]
+    bedTree = bedToTree (++) $ concat $
+        zipWith (\xs i -> zip xs $ repeat [i]) regions [0::Int ..]
     nBin = length regions
     header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-    countEachCell :: BEDTree Int -> [BED] -> [(Int, Int)]
+    countEachCell :: BEDTree [Int] -> [BED] -> [(Int, Int)]
     countEachCell beds = HM.toList . foldl' f HM.empty
       where
         f m bed = foldl' (\x k -> HM.insertWith (+) k (1::Int) x) m $
-            intersecting beds query
+            concat $ intersecting beds query
           where
             query = case bed^.strand of
                 Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
