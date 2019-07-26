@@ -18,6 +18,8 @@ def diff(args):
 def process(fg, bg, X, z, idx):
     probs = []
     enrichment = []
+    pseudoCount_fg = 1 / fg.shape[0]
+    pseudoCount_bg = 1 / bg.shape[0]
     for i in range(len(idx)):
         if (i % 500 == 0): print(i)
         i = idx[i]
@@ -25,7 +27,8 @@ def process(fg, bg, X, z, idx):
         a2 = bg[:, i].todense()
         Y = np.ravel(np.concatenate((a1,a2)))
         probs.append(test(X,Y,z))
-        enrichment.append(np.average(a1) / np.average(a2))
+        e = (np.average(a1) + pseudoCount_fg) / (np.average(a2) + pseudoCount_bg)
+        enrichment.append(e)
     return (probs, enrichment)
 
 def diffTest(fg, bg):

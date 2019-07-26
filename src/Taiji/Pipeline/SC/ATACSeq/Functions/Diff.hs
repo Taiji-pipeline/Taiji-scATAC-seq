@@ -41,23 +41,28 @@ sampleCells n input = do
     f x = B.pack (T.unpack $ input^.eid) <> "+" <> x
 
 mkRefMat :: SCATACSeqConfig config
-         => ( [[B.ByteString]]
+         => FilePath
+         -> Bool
+         -> ( [[B.ByteString]]
             , [SCATACSeq S (File '[Gzip] 'Other)] )
          -> ReaderT config IO FilePath
-mkRefMat (bcs, [fl]) = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/")
-    let output = dir <> "ref_cell_by_peak.mat.gz"
+mkRefMat filename addName (bcs, fls) = do
+    dir <- asks _scatacseq_output_dir >>= getPath
+    let output = dir <> filename
     liftIO $ do
-        mat <- mkSpMatrix id $ fl^.replicates._2.files.location
+        mat <- mkSpMatrix id $ head fls^.replicates._2.files.location
         let header = B.pack $ printf "Sparse matrix: %d x %d" (S.size bc) (_num_col mat)
-        runResourceT $ runConduit $ streamRows mat .|
-            filterC ((`S.member` bc) . fst) .|
+        runResourceT $ runConduit $ mapM_ sourceMat fls .|
             (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
             gzip .| sinkFile output
         return output
   where
     bc = S.fromList $ concat bcs
-mkRefMat _ = undefined
+    sourceMat input = do
+        let filterFn x | addName = (B.pack (T.unpack $ input^.eid) <> "+" <> x) `S.member` bc
+                       | otherwise = x `S.member` bc
+        mat <- liftIO $ mkSpMatrix id $ input^.replicates._2.files.location
+        streamRows mat .| filterC (filterFn . fst)
 
 diffPeaks :: SCATACSeqConfig config
           => ( SCATACSeq S (File tags 'Other)
@@ -87,7 +92,7 @@ diffAnalysis :: FilePath  -- ^ foreground
 diffAnalysis fg bk = withTemp Nothing $ \tmp -> do
     shelly $ run_ "sc_utils" [ "diff", T.pack tmp, "--fg", T.pack fg
         , "--bg", T.pack bk ]
-    map (f . B.split '\t') . B.lines <$> B.readFile tmp
+    map (f . B.words) . B.lines <$> B.readFile tmp
   where
     f [a,b,c,d] = (readInt a, readDouble b, readDouble c, readDouble d)
     f _ = error "wrong format!"

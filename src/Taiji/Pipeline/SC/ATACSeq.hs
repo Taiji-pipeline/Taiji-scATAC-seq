@@ -26,7 +26,6 @@ builder = do
     ["Get_Fastq", "Make_Index"] ~> "Align_Prep"
     nodePar "Align" 'tagAlign $ do
         nCore .= 4
-        memory .= 10
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterBamSort $ do
@@ -153,7 +152,8 @@ builder = do
 -- Diff
 --------------------------------------------------------------------------------
     nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
-    node "Make_Ref_Peak_Mat" 'mkRefMat $ return ()
+    node "Make_Ref_Peak_Mat"
+        [| mkRefMat "/Feature/Peak/ref_cell_by_peak.mat.gz" False |] $ return ()
     ["Make_Window_Matrix"] ~> "Get_Ref_Cells"
     ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
 
@@ -163,6 +163,10 @@ builder = do
     ["Extract_Cluster_Matrix", "Merge_Peaks", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
+
+    node "Make_Ref_Gene_Mat" 
+        [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
+    ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
