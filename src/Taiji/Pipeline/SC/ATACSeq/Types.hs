@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
     , SCATACSeqConfig(..)
     , qcDir
+    , figDir
     ) where
 
 import           Data.Binary (Binary(..))
@@ -39,3 +40,6 @@ class SCATACSeqConfig config where
 
 qcDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")
+
+figDir :: SCATACSeqConfig config => ReaderT config IO FilePath
+figDir = asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")

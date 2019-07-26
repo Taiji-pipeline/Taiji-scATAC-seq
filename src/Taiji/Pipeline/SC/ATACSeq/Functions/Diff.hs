@@ -6,6 +6,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     ( sampleCells
     , mkRefMat
     , diffPeaks
+    , diffGenes
     ) where
 
 import qualified Data.Vector as V
@@ -17,7 +18,6 @@ import System.Random.MWC (create)
 import System.Random.MWC.Distributions (uniformShuffle)
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
-import Bio.Utils.Misc (readDouble, readInt)
 import Data.Conduit.Zlib (gzip)
 import Shelly hiding (FilePath)
 
@@ -68,7 +68,7 @@ diffPeaks :: SCATACSeqConfig config
           => ( SCATACSeq S (File tags 'Other)
              , File '[Gzip] 'NarrowPeak
              , FilePath )
-          -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
+          -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'NarrowPeak))
 diffPeaks (input, peakFl, ref) = do
     dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.np.gz" dir
@@ -86,6 +86,41 @@ diffPeaks (input, peakFl, ref) = do
             concatMapC f .| sinkFileBedGzip output
         return $ location .~ output $ emptyFile )
 
+{-
+mkDiffPeakFig :: SCATACSeqConfig config 
+              => [SCATACSeq S (File '[Gzip] 'NarrowPeak)]
+              -> ReaderT config IO ()
+mkDiffPeakFig inputs = do
+    dir <- figDir
+    forM_ inputs $ \input -> do
+        input^.eid
+        streamBedGzip (input^.replicates._2.files.location)
+-}
+    
+
+diffGenes :: SCATACSeqConfig config
+          => ( SCATACSeq S (File tags 'Other)
+             , FilePath   -- ^ Gene names
+             , FilePath ) -- ^ Ref matrix
+          -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
+diffGenes (input, nameFl, ref) = do
+    dir <- asks ((<> "/Diff/Gene/") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d.tsv" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+        stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
+            diffAnalysis (fl^.location) ref
+        let f (i, nm) = case M.lookup i stats of
+                Nothing -> Nothing
+                Just (fold, pval, fdr) -> Just $ B.intercalate "\t"
+                    [ nm, toShortest fold, toShortest $ negate $ logBase 10 pval
+                    , toShortest $ negate $ logBase 10 fdr ]
+        runResourceT $ runConduit $ zipSources (iterateC succ 0)
+            (sourceFile nameFl .| linesUnboundedAsciiC .| mapC (head . B.words)) .|
+            concatMapC f .| unlinesAsciiC .| sinkFile output
+        return $ location .~ output $ emptyFile )
+
+
 diffAnalysis :: FilePath  -- ^ foreground
              -> FilePath  -- ^ background
              -> IO [(Int, Double, Double, Double)]
@@ -96,3 +131,4 @@ diffAnalysis fg bk = withTemp Nothing $ \tmp -> do
   where
     f [a,b,c,d] = (readInt a, readDouble b, readDouble c, readDouble d)
     f _ = error "wrong format!"
+
