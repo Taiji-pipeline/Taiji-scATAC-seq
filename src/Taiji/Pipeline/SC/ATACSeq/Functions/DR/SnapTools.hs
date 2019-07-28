@@ -143,6 +143,7 @@ snap' rownames matOutput matFl = withTempDir (Just "./") $ \tmpdir -> do
                  rm(vals)
                  rn <- scan(rname_hs, character())
                  rownames(M) <- rn
+                 saveRDS(M, file="mat.rds")
                  M <- t(M)
 
                  sparseProdCpp <- '

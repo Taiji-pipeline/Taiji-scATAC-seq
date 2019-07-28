@@ -172,8 +172,6 @@ lsaClust prefix opt = do
     path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
 
 
-
-
 -- | Perform LSA analysis.
 dmClust :: FilePath   -- ^ Directory to save the results
         -> Builder ()

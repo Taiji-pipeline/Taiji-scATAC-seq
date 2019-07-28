@@ -149,7 +149,7 @@ builder = do
     path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
 --------------------------------------------------------------------------------
--- Diff
+-- Differential Peak analysis
 --------------------------------------------------------------------------------
     nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
     node "Make_Ref_Peak_Mat"
@@ -164,15 +164,25 @@ builder = do
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
 
+    node "RPKM_Peak_Prep" [| \(x, y) -> return $ zip x $ repeat y |] $ return ()
+    nodePar "RPKM_Peak" 'rpkmPeak $ return ()
+    ["Merge_Tags", "Merge_Peaks"] ~> "RPKM_Peak_Prep"
+    path ["RPKM_Peak_Prep", "RPKM_Peak"]
+
+--------------------------------------------------------------------------------
+-- Differential Gene analysis
+--------------------------------------------------------------------------------
     node "Make_Ref_Gene_Mat" 
         [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
     ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
 
+    {-
     node "Diff_Gene_Prep" [| \(x, gene, ref) -> return $
         zip3 x (repeat gene) $ repeat ref |] $ return ()
     ["Make_Gene_Mat", "Get_Genes", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
     nodePar "Diff_Gene" 'diffGenes $ return ()
     path ["Diff_Gene_Prep", "Diff_Gene"]
+    -}
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions

@@ -7,17 +7,22 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     , mkRefMat
     , diffPeaks
     , diffGenes
+    , rpkmPeak
     ) where
 
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
+import AI.Clustering.Hierarchical
 import Bio.Data.Bed
+import Bio.Data.Bed.Utils (rpkmBed)
 import Data.Conduit.Internal (zipSources)
 import System.Random.MWC (create)
 import System.Random.MWC.Distributions (uniformShuffle)
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
+import qualified Data.Matrix.Unboxed as MU
 import Data.Conduit.Zlib (gzip)
 import Shelly hiding (FilePath)
 
@@ -85,6 +90,44 @@ diffPeaks (input, peakFl, ref) = do
             zipSources (iterateC succ 0) (streamBedGzip $ peakFl^.location) .|
             concatMapC f .| sinkFileBedGzip output
         return $ location .~ output $ emptyFile )
+
+
+-- | Compute RPKM for each peak
+rpkmPeak :: SCATACSeqConfig config
+         => ( (B.ByteString, File '[Gzip] 'Bed)
+            , Maybe (File '[Gzip] 'NarrowPeak) )
+         -> ReaderT config IO (B.ByteString, FilePath)
+rpkmPeak ((nm, tags), Just peakFl) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/")
+    let output = dir <> "peak_rpkm_" <> B.unpack nm <> ".txt"
+    liftIO $ do
+        peaks <- runResourceT $ runConduit $
+            streamBedGzip (peakFl^.location) .| sinkList :: IO [BED3]
+        vec <- runResourceT $ runConduit $ streamBedGzip (tags^.location) .| rpkmBed peaks 
+        B.writeFile output $ B.unlines $ map toShortest $ U.toList vec
+        return (nm, output)
+rpkmPeak _ = undefined
+
+xxx :: [Int]
+    -> MU.Matrix Double
+    -> MU.Matrix Double
+xxx idx mat = MU.fromRows $ flatten $ hclust Ward dat euclidean
+  where
+    dat = V.fromList $ map (mat `MU.takeRow`) idx
+
+-- | Get the indices of query peaks in the reference peak list.
+getPeakIndex :: (BEDLike b1, BEDLike b2)
+             => [b1]   -- ^ Differential peaks
+             -> [b2]   -- ^ Reference peaks
+             -> [Int]  -- ^ Indices
+getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
+    (q^.chrom, q^.chromStart, q^.chromEnd) peakIdxMap
+  where
+    peakIdxMap = M.fromList $ zipWith
+        (\x i -> ((x^.chrom, x^.chromStart, x^.chromEnd), i)) ref [0..]
+
+readRPKMs :: [FilePath] -> IO (MU.Matrix Double)
+readRPKMs = undefined
 
 {-
 mkDiffPeakFig :: SCATACSeqConfig config 
