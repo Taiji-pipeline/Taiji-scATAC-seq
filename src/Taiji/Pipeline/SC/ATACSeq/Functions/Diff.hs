@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
@@ -26,10 +25,6 @@ import qualified Data.HashMap.Strict as M
 import qualified Data.Matrix.Unboxed as MU
 import Data.Conduit.Zlib (gzip)
 import Shelly hiding (FilePath)
-
-import qualified Language.R                        as R
-import           Language.R.QQ
-import Language.R.HExp
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -151,7 +146,11 @@ getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
         (\x i -> ((x^.chrom, x^.chromStart, x^.chromEnd), i)) ref [0..]
 
 readRPKMs :: [FilePath] -> IO (MU.Matrix Double)
-readRPKMs = undefined
+readRPKMs fls = do
+    vecs <- mapM readData fls
+    return $ MU.map (logBase 2 . (+1)) $ MU.fromColumns vecs
+  where
+    readData fl = U.fromList . map readDouble . B.lines <$> B.readFile fl
 
 {-
 mkDiffPeakFig :: SCATACSeqConfig config 

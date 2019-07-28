@@ -144,9 +144,14 @@ builder = do
 --------------------------------------------------------------------------------
     node "Get_Genes" [| \_ -> getGeneNames |] $ return ()
     node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
-    nodePar "Make_Gene_Mat" 'mkCellByGene $ return ()
+    nodePar "Make_Gene_Mat" 'mkCellByGene $
+        doc .= "Create cell by gene matrix for each sample."
     ["Get_Bins", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
-    path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
+    node "Merge_Gene_Mat" 'mergeCellByGeneMatrix $ return ()
+    path ["Make_Gene_Mat_Prep", "Make_Gene_Mat", "Merge_Gene_Mat"]
+
+    node "Extract_Cluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/Cluster/" |] $ return ()
+    ["Merge_Gene_Mat", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
 
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
@@ -179,13 +184,11 @@ builder = do
         [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
     ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
 
-    {-
     node "Diff_Gene_Prep" [| \(x, gene, ref) -> return $
         zip3 x (repeat gene) $ repeat ref |] $ return ()
-    ["Make_Gene_Mat", "Get_Genes", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
+    ["Extract_Cluster_Gene_Matrix", "Get_Genes", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
     nodePar "Diff_Gene" 'diffGenes $ return ()
     path ["Diff_Gene_Prep", "Diff_Gene"]
-    -}
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
