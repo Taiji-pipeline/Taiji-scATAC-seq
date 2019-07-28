@@ -168,6 +168,9 @@ builder = do
     nodePar "RPKM_Peak" 'rpkmPeak $ return ()
     ["Merge_Tags", "Merge_Peaks"] ~> "RPKM_Peak_Prep"
     path ["RPKM_Peak_Prep", "RPKM_Peak"]
+    node "RPKM_Diff_Peak" 'rpkmDiffPeak $ return () 
+    ["Diff_Peak", "Merge_Peaks", "RPKM_Peak"] ~> "RPKM_Diff_Peak"
+
 
 --------------------------------------------------------------------------------
 -- Differential Gene analysis
@@ -225,4 +228,4 @@ builder = do
         dir <- asks ((<> "/Cluster_by_peak/Snap/" ) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["LSA_1st_Merge_Peak_Matrix", "Snap_Merged_Reduce", "Snap_Merged_Cluster", "Snap_Merged_Viz"]
+    path ["Merge_Window_Matrix", "Snap_Merged_Reduce", "Snap_Merged_Cluster", "Snap_Merged_Viz"]

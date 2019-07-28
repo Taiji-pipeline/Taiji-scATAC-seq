@@ -8,6 +8,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     , diffPeaks
     , diffGenes
     , rpkmPeak
+    , rpkmDiffPeak
     ) where
 
 import qualified Data.Vector as V
@@ -108,10 +109,33 @@ rpkmPeak ((nm, tags), Just peakFl) = do
         return (nm, output)
 rpkmPeak _ = undefined
 
-xxx :: [Int]
-    -> MU.Matrix Double
-    -> MU.Matrix Double
-xxx idx mat = MU.fromRows $ flatten $ hclust Ward dat euclidean
+rpkmDiffPeak :: SCATACSeqConfig config
+             => ( [SCATACSeq S (File '[Gzip] 'NarrowPeak)]   -- ^ Diff peaks
+                , Maybe (File '[Gzip] 'NarrowPeak)  -- ^ All peaks
+                , [(B.ByteString, FilePath)] )  -- ^ RPKM
+             -> ReaderT config IO FilePath
+rpkmDiffPeak (diffs, Just peak, rpkms) = do
+    dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
+    let output = dir <> "diff_peak_RPKM.tsv"
+    liftIO $ do
+        mat <- readRPKMs $ map snd rpkms
+        peakList <- runResourceT $ runConduit $
+            streamBedGzip (peak^.location) .| sinkList :: IO [BED3]
+        res <- forM diffs $ \input -> do
+            peaks <- runResourceT $ runConduit $
+                streamBedGzip (input^.replicates._2.files.location) .|
+                sinkList :: IO [BED3]
+            let idx = getPeakIndex peaks peakList
+                submat = map (B.intercalate "\t" . map toShortest . U.toList) $
+                    MU.toRows $ getSubMatrix idx mat
+            return $ B.unlines $ "#" <> B.pack (T.unpack $ input^.eid) : submat
+        B.writeFile output $ B.unlines $ header : res
+        return output
+  where
+    header = B.intercalate "\t" $ fst $ unzip rpkms
+
+getSubMatrix :: [Int] -> MU.Matrix Double -> MU.Matrix Double
+getSubMatrix idx mat = MU.fromRows $ flatten $ hclust Ward dat euclidean
   where
     dat = V.fromList $ map (mat `MU.takeRow`) idx
 
