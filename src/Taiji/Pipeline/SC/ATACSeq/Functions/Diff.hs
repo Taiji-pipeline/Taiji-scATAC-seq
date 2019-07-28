@@ -123,8 +123,8 @@ rpkmDiffPeak (diffs, Just peak, rpkms) = do
             let idx = getPeakIndex peaks peakList
                 submat = map (B.intercalate "\t" . map toShortest . U.toList) $
                     MU.toRows $ getSubMatrix idx mat
-            return $ B.unlines $ "#" <> B.pack (T.unpack $ input^.eid) : submat
-        B.writeFile output $ B.unlines $ header : res
+            return $ "#" <> B.pack (T.unpack $ input^.eid) : submat
+        B.writeFile output $ B.unlines $ header : concat res
         return output
   where
     header = B.intercalate "\t" $ fst $ unzip rpkms
@@ -154,15 +154,16 @@ readRPKMs fls = do
 
 {-
 mkDiffPeakFig :: SCATACSeqConfig config 
-              => [SCATACSeq S (File '[Gzip] 'NarrowPeak)]
+              => FilePath
               -> ReaderT config IO ()
-mkDiffPeakFig inputs = do
+mkDiffPeakFig fl = do
     dir <- figDir
+    (header:rest) <- B.lines <$> B.readFile fl
+
     forM_ inputs $ \input -> do
         input^.eid
         streamBedGzip (input^.replicates._2.files.location)
 -}
-    
 
 diffGenes :: SCATACSeqConfig config
           => ( SCATACSeq S (File tags 'Other)
