@@ -323,7 +323,7 @@ extractSubMatrix prefix ([input], [clFl]) = do
               where
                 res = input & eid .~ T.pack (B.unpack _cluster_name)
                             & replicates._2.files.location .~ output
-                output = dir <> B.unpack _cluster_name <> "_subMat.txt.gz"
+                output = dir <> B.unpack _cluster_name <> ".mat.gz"
                 header = B.pack $ printf "Sparse matrix: %d x %d" nCell
                     (_num_col mat)
                 ids = S.fromList $ map _cell_barcode _cluster_member

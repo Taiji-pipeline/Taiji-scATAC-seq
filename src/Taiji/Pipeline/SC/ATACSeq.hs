@@ -30,9 +30,14 @@ builder = do
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterBamSort $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
+    path ["Align_Prep", "Align", "Filter_Bam"]
+
+    node "Get_Bam" [| \(input, x) -> return $ getBam input ++ x |] $ return ()
+    ["Download_Data", "Filter_Bam"] ~> "Get_Bam"
+
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
     nodePar "Filter_Cell" 'filterCell $ return ()
-    path ["Align_Prep", "Align", "Filter_Bam", "Remove_Duplicates", "Filter_Cell"]
+    path ["Get_Bam", "Remove_Duplicates", "Filter_Cell"]
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |] $ return ()
     [ "Download_Data", "Filter_Cell"] ~> "Get_Bed"
 
