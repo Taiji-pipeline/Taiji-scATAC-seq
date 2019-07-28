@@ -117,9 +117,8 @@ rpkmDiffPeak (diffs, Just peak, rpkms) = do
         peakList <- runResourceT $ runConduit $
             streamBedGzip (peak^.location) .| sinkList :: IO [BED3]
         res <- forM diffs $ \input -> do
-            peaks <- runResourceT $ runConduit $
-                streamBedGzip (input^.replicates._2.files.location) .|
-                sinkList :: IO [BED3]
+            peaks <- fmap (filter f) $ runResourceT $ runConduit $
+                streamBedGzip (input^.replicates._2.files.location) .| sinkList
             let idx = getPeakIndex peaks peakList
                 submat = map (B.intercalate "\t" . map toShortest . U.toList) $
                     MU.toRows $ getSubMatrix idx mat
@@ -127,6 +126,7 @@ rpkmDiffPeak (diffs, Just peak, rpkms) = do
         B.writeFile output $ B.unlines $ header : concat res
         return output
   where
+    f x = x^.npSignal > 1.5 || x^.npSignal < 1/1.5
     header = B.intercalate "\t" $ fst $ unzip rpkms
 
 getSubMatrix :: [Int] -> MU.Matrix Double -> MU.Matrix Double
