@@ -103,9 +103,9 @@ snap rownames mat input = R.runRegion $ do
 
 
 mkSnapMat :: SCATACSeqConfig config 
-          => SCATACSeq S (File t 'Other)
+          => SCATACSeq S (a, File t 'Other)
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
-mkSnapMat input = input & replicates.traverse.files %%~ ( \x -> do
+mkSnapMat input = input & replicates.traverse.files %%~ ( \(_, x) -> do
     dir <- asks ((<> "/Snap/") . _scatacseq_output_dir) >>= getPath
     let output1 = printf "%s/%s_rep%d_snap_rownames_new.tsv" dir (T.unpack $ input^.eid)
             (input^.replicates._1)

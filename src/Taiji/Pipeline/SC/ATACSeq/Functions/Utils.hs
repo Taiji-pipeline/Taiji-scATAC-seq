@@ -43,10 +43,11 @@ import Control.Arrow (first, second)
 import Data.Either (either)
 import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
-import qualified Data.HashSet as S
+import qualified Data.Set as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector as V
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
 import Data.Conduit.Zlib (multiple, ungzip, gzip)
@@ -303,17 +304,20 @@ groupCells = groupBy ((==) `on` (^.name)) .|
 -- | Merge sparse matrix.
 mergeMatrix :: Elem 'Gzip tags1 ~ 'True
             => [(B.ByteString, (File tags1 file, File tags2 'Other))]  -- ^ (regions, matrix)
+            -> FilePath   -- ^ Index file output
             -> ConduitT () B.ByteString (ResourceT IO) ()
-mergeMatrix inputs = do
+mergeMatrix inputs idxOut = do
     indices <- liftIO $ getIndices $ map (fst . snd) inputs
+    liftIO $ runResourceT $ runConduit $ yieldMany indices .| sinkFileBedGzip idxOut 
+    let idxMap = M.fromList $ zip indices [0..]
     mats <- liftIO $ forM inputs $ \(nm, (idxFl, matFl)) -> do
-        idxMap <- fmap (mkIdxMap indices) $ runResourceT $ runConduit $
-            streamBedGzip (idxFl^.location) .|
-            mapC (\x -> ((x::BED3)^.chrom, x^.chromStart)) .| sinkList
+        idxVec <- fmap (V.map (flip (M.findWithDefault undefined) idxMap)) $
+            runResourceT $ runConduit $ streamBedGzip (idxFl^.location) .| sinkVector
         mat <- mkSpMatrix readInt $ matFl^.location
         return ( nm, mat
-            { _decoder = \x -> _decoder mat x .| mapC (changeIdx idxMap)
-            , _num_col = HM.size indices } )
+            { _decoder = \x -> _decoder mat x .|
+                mapC (second (map (first (idxVec V.!))))
+            , _num_col = M.size idxMap } )
     merge mats
   where
     merge ms
@@ -327,17 +331,10 @@ mergeMatrix inputs = do
         nCell = foldl' (+) 0 $ map (_num_row . snd) ms
         nBin = _num_col $ snd $ head ms
         header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-    getIndices idxFls = do
-        idx <- runResourceT $ runConduit $
-            mapM_ (streamBedGzip . (^.location)) idxFls .| foldlC f S.empty
-        return $ HM.fromList $ zip (S.toList idx) [0..]
-      where
-        f :: S.HashSet (B.ByteString, Int) -> BED3 -> S.HashSet (B.ByteString, Int) 
-        f m b = S.insert (b^.chrom, b^.chromStart) m
-    changeIdx idxMap = second $ sortBy (comparing fst) . map (first (idxMap U.!))
-    mkIdxMap newIdx oldIdx = U.fromList $ map f oldIdx
-      where
-        f k = HM.lookupDefault undefined k newIdx
+    getIndices :: [File tags file] -> IO [BED3]
+    getIndices idxFls = fmap S.toList $ runResourceT $ runConduit $
+        mapM_ (streamBedGzip . (^.location)) idxFls .|
+        foldlC (flip S.insert) S.empty
 
 visualizeCluster :: FilePath
                  -> [CellCluster]

@@ -309,20 +309,20 @@ sampling gen frac v = V.take n <$> uniformShuffle v gen
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
                  => FilePath   -- ^ dir
-                 -> ( [SCATACSeq S (File tags 'Other)]
+                 -> ( [SCATACSeq S (a, File tags 'Other)]
                     , [SCATACSeq S (File '[] 'Other)] )
-                 -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
+                 -> ReaderT config IO [SCATACSeq S (a, File tags 'Other)]
 extractSubMatrix prefix ([input], [clFl]) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
     liftIO $ do
         clusters <- decodeFile $ clFl^.replicates._2.files.location
-        mat <- mkSpMatrix id $ input^.replicates._2.files.location
+        mat <- mkSpMatrix id $ input^.replicates._2.files._2.location
         let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
                 (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
                 gzip .| (sinkFile output >> return res)
               where
                 res = input & eid .~ T.pack (B.unpack _cluster_name)
-                            & replicates._2.files.location .~ output
+                            & replicates._2.files._2.location .~ output
                 output = dir <> B.unpack _cluster_name <> ".mat.gz"
                 header = B.pack $ printf "Sparse matrix: %d x %d" nCell
                     (_num_col mat)

@@ -35,7 +35,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => (SCATACSeq S (File tags 'Bed, a, Int), FilePath)
-             -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
+             -> ReaderT config IO (SCATACSeq S (FilePath, File '[Gzip] 'Other))
 mkCellByGene (input, genes) = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_cell_by_gene.mat.gz" dir (T.unpack $ input^.eid)
@@ -44,21 +44,21 @@ mkCellByGene (input, genes) = do
         regions <- map snd <$> readTSS genes
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
             groupCells .| mkFeatMat nCell regions .| sinkFile output
-        return $ emptyFile & location .~ output )
+        return $ (genes, emptyFile & location .~ output) )
 
 mergeCellByGeneMatrix :: SCATACSeqConfig config
-                      => [SCATACSeq S (File '[Gzip] 'Other)]
-                      -> ReaderT config IO [SCATACSeq S (File '[Gzip] 'Other)]
+                      => [SCATACSeq S (a, File '[Gzip] 'Other)]
+                      -> ReaderT config IO [SCATACSeq S (a, File '[Gzip] 'Other)]
 mergeCellByGeneMatrix inputs = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "/Merged_cell_by_gene.mat.gz"
     mats <- liftIO $ forM inputs $ \input -> do
         let nm = B.pack $ T.unpack $ input^.eid
-        mat <- mkSpMatrix id $ input^.replicates._2.files.location
+        mat <- mkSpMatrix id $ input^.replicates._2.files._2.location
         return (nm, mat)
     liftIO $ runResourceT $ runConduit $ merge mats .| sinkFile output
-    return $ return $ (head inputs & eid .~ "Merged") & replicates._2.files .~
-        (location .~ output $ emptyFile)
+    return $ return $ head inputs & eid .~ "Merged" &
+        replicates._2.files._2.location .~ output
   where
     merge ms
         | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"

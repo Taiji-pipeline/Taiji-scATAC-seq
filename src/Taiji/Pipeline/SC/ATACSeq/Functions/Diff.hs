@@ -58,13 +58,13 @@ mkRefMat :: SCATACSeqConfig config
          => FilePath
          -> Bool
          -> ( [[B.ByteString]]
-            , [SCATACSeq S (File '[Gzip] 'Other)] )
+            , [SCATACSeq S (a, File '[Gzip] 'Other)] )
          -> ReaderT config IO FilePath
 mkRefMat filename addName (bcs, fls) = do
     dir <- asks _scatacseq_output_dir >>= getPath
     let output = dir <> filename
     liftIO $ do
-        mat <- mkSpMatrix id $ head fls^.replicates._2.files.location
+        mat <- mkSpMatrix id $ head fls^.replicates._2.files._2.location
         let header = B.pack $ printf "Sparse matrix: %d x %d" (S.size bc) (_num_col mat)
         runResourceT $ runConduit $ mapM_ sourceMat fls .|
             (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
@@ -75,22 +75,22 @@ mkRefMat filename addName (bcs, fls) = do
     sourceMat input = do
         let filterFn x | addName = (B.pack (T.unpack $ input^.eid) <> "+" <> x) `S.member` bc
                        | otherwise = x `S.member` bc
-        mat <- liftIO $ mkSpMatrix id $ input^.replicates._2.files.location
+        mat <- liftIO $ mkSpMatrix id $ input^.replicates._2.files._2.location
         streamRows mat .| filterC (filterFn . fst)
 
 diffPeaks :: SCATACSeqConfig config
-          => ( SCATACSeq S (File tags 'Other)
-             , File '[Gzip] 'NarrowPeak
+          => ( SCATACSeq S (File '[Gzip] 'Bed, File tags 'Other)
              , FilePath )
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'NarrowPeak))
-diffPeaks (input, peakFl, ref) = do
+diffPeaks (input, ref) = do
     dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.np.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+    input & replicates.traversed.files %%~ liftIO . ( \(peakFl, fl) -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
             diffAnalysis (fl^.location) ref
-        let f (i, peak) = case M.lookup i stats of
+        let f :: (Int, BED3) -> Maybe NarrowPeak
+            f (i, peak) = case M.lookup i stats of
                 Nothing -> Nothing
                 Just (fold, pval, fdr) -> 
                     let logP | pval == 0 = 200
@@ -99,7 +99,7 @@ diffPeaks (input, peakFl, ref) = do
                                | otherwise = negate $ logBase 10 fdr
                     in Just $ npSignal .~ fold $
                         npPvalue .~ Just logP $
-                        npQvalue .~ Just logFDR $ peak
+                        npQvalue .~ Just logFDR $ convert peak
         runResourceT $ runConduit $
             zipSources (iterateC succ 0) (streamBedGzip $ peakFl^.location) .|
             concatMapC f .| sinkFileBedGzip output
@@ -181,15 +181,14 @@ mkDiffPeakFig fl = do
 
 
 diffGenes :: SCATACSeqConfig config
-          => ( SCATACSeq S (File tags 'Other)
-             , FilePath   -- ^ Gene names
+          => ( SCATACSeq S (FilePath, File tags 'Other)
              , FilePath ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
-diffGenes (input, nameFl, ref) = do
+diffGenes (input, ref) = do
     dir <- asks ((<> "/Diff/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.tsv" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+    input & replicates.traversed.files %%~ liftIO . ( \(nameFl, fl) -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
             diffAnalysis (fl^.location) ref
         let f (i, nm) = case M.lookup i stats of

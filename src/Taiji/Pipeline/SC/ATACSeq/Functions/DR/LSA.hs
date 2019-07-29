@@ -29,7 +29,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 performLSA :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
            => FilePath
-           -> SCATACSeq S (File tags 'Other)
+           -> SCATACSeq S (a, File tags 'Other)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
 performLSA prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
@@ -38,7 +38,7 @@ performLSA prefix input = do
             (T.unpack $ input^.eid) (input^.replicates._1)
         rownames = printf "%s/%s_rep%d_lsa.rownames.txt" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
+    input & replicates.traversed.files %%~ liftIO . ( \(_, fl) -> do
         lsa tmp output fl
         sp <- mkSpMatrix readInt $ fl^.location
         runResourceT $ runConduit $

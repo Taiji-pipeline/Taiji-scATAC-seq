@@ -58,7 +58,7 @@ builder = do
     node "Merge_Window_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
-    node "Merge_Window_Matrix" [| mergeFeatMatrix "/Feature/Window/merged_cell_by_window.txt.gz" |] $ return ()
+    node "Merge_Window_Matrix" [| mergeFeatMatrix "/Feature/Window/merged_cell_by_window" |] $ return ()
     ["Get_Bins", "Make_Window_Matrix"] ~> "Merge_Window_Matrix_Prep"
     path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
 
@@ -163,14 +163,13 @@ builder = do
 --------------------------------------------------------------------------------
     node "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
     ["Peak_LSA_Cluster"] ~> "Get_Ref_Cells"
+
     node "Make_Ref_Peak_Mat"
         [| mkRefMat "/Feature/Peak/ref_cell_by_peak.mat.gz" False |] $ return ()
     ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
 
-    node "Diff_Peak_Prep" [| \(x, pk, ref) -> return $ case pk of 
-        Nothing -> []
-        Just p -> zip3 x (repeat p) $ repeat ref |] $ return ()
-    ["Extract_Cluster_Matrix", "Merge_Peaks", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
+    node "Diff_Peak_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()
+    ["Extract_Cluster_Matrix", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
 
@@ -181,7 +180,6 @@ builder = do
     node "RPKM_Diff_Peak" 'rpkmDiffPeak $ return () 
     ["Diff_Peak", "Merge_Peaks", "RPKM_Peak"] ~> "RPKM_Diff_Peak"
 
-
 --------------------------------------------------------------------------------
 -- Differential Gene analysis
 --------------------------------------------------------------------------------
@@ -189,9 +187,8 @@ builder = do
         [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
     ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
 
-    node "Diff_Gene_Prep" [| \(x, gene, ref) -> return $
-        zip3 x (repeat gene) $ repeat ref |] $ return ()
-    ["Extract_Cluster_Gene_Matrix", "Get_Genes", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
+    node "Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()
+    ["Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
     nodePar "Diff_Gene" 'diffGenes $ return ()
     path ["Diff_Gene_Prep", "Diff_Gene"]
 
@@ -199,8 +196,10 @@ builder = do
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
+    {-
     node "Cicero" 'cicero $ return ()
     ["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
+    -}
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
@@ -212,6 +211,7 @@ builder = do
     nodePar "Find_TFBS" 'findMotifs $ return ()
     path ["SubCluster_Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
 
+    {-
     -- Snap pipeline
     nodePar "Snap_Pre" 'snapPre $ return ()
     nodePar "Snap_Reduce" 'performSnap $ return ()
@@ -237,3 +237,4 @@ builder = do
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["Merge_Window_Matrix", "Snap_Merged_Reduce", "Snap_Merged_Cluster", "Snap_Merged_Viz"]
+    -}

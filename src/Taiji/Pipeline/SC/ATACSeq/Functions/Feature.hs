@@ -61,7 +61,7 @@ genPeakMat prefix nm input1 input2 = case nm of
         node "Merge_Peak_Matrix_Prep" [| \(pk, exps) -> return $ flip map exps $
             \e -> e & replicates._2.files %~ (\x -> (fromJust pk,x))
             |]$ return ()
-        node "Merge_Peak_Matrix" [| mergeFeatMatrix $ prefix ++ "/merged_cell_by_peak.txt.gz" |] $ return ()
+        node "Merge_Peak_Matrix" [| mergeFeatMatrix $ prefix ++ "/merged_cell_by_peak" |] $ return ()
         ["Merge_Peaks", "Make_Peak_Matrix"] ~> "Merge_Peak_Matrix_Prep"
         path ["Merge_Peak_Matrix_Prep", "Merge_Peak_Matrix"]
 
@@ -71,14 +71,16 @@ mergeFeatMatrix :: ( Elem 'Gzip tags1 ~ 'True
                    , SCATACSeqConfig config )
                 => FilePath
                 -> [SCATACSeq S (File tags1 file, File tags2 'Other)]
-                -> ReaderT config IO [SCATACSeq S (File '[Gzip] 'Other)]
+                -> ReaderT config IO [SCATACSeq S (File '[Gzip] 'Bed, File '[Gzip] 'Other)]
 mergeFeatMatrix _ [] = return []
 mergeFeatMatrix filename inputs = do
     dir <- asks _scatacseq_output_dir >>= getPath
-    let output = dir <> "/" <> filename
-    liftIO $ runResourceT $ runConduit $ mergeMatrix inputs' .| sinkFile output
+    let output = dir <> "/" <> filename <> ".mat.gz"
+        outputIdx = dir <> "/" <> filename <> ".idx.bed.gz"
+    liftIO $ runResourceT $ runConduit $ mergeMatrix inputs' outputIdx .| sinkFile output
     return $ return $ (head inputs & eid .~ "Merged") & replicates._2.files .~
-        (location .~ output $ emptyFile)
+        ( location .~ outputIdx $ emptyFile
+        , location .~ output $ emptyFile )
   where
     inputs' = map (\x -> (B.pack $ T.unpack $ x^.eid, x^.replicates._2.files)) inputs
 
