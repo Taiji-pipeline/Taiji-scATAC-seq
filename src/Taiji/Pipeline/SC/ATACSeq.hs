@@ -161,10 +161,10 @@ builder = do
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
 --------------------------------------------------------------------------------
-    nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
+    node "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
+    ["Peak_LSA_Cluster"] ~> "Get_Ref_Cells"
     node "Make_Ref_Peak_Mat"
         [| mkRefMat "/Feature/Peak/ref_cell_by_peak.mat.gz" False |] $ return ()
-    ["Make_Window_Matrix"] ~> "Get_Ref_Cells"
     ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
 
     node "Diff_Peak_Prep" [| \(x, pk, ref) -> return $ case pk of 

@@ -16,6 +16,7 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
 import AI.Clustering.Hierarchical
 import Bio.Data.Bed
+import Data.Binary (decodeFile)
 import Bio.Data.Bed.Utils (rpkmBed)
 import Data.Conduit.Internal (zipSources)
 import System.Random.MWC (create)
@@ -30,6 +31,7 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
+{-
 sampleCells :: Int   -- ^ number of cells
             -> SCATACSeq S (File tags 'Other)
             -> IO [B.ByteString]
@@ -40,6 +42,17 @@ sampleCells n input = do
     map f . V.toList . V.take n <$> uniformShuffle v g
   where
     f x = B.pack (T.unpack $ input^.eid) <> "+" <> x
+-}
+
+sampleCells :: Int   -- ^ number of cells
+            -> [SCATACSeq S (File tags 'Other)]
+            -> IO [[B.ByteString]]
+sampleCells n input = do
+    cls <- decodeFile $ head input^.replicates._2.files.location
+    g <- create
+    forM cls $ \cl -> do
+        let v = V.fromList $ map _cell_barcode $ _cluster_member cl
+        V.toList . V.take n <$> uniformShuffle v g
 
 mkRefMat :: SCATACSeqConfig config
          => FilePath
@@ -79,9 +92,14 @@ diffPeaks (input, peakFl, ref) = do
             diffAnalysis (fl^.location) ref
         let f (i, peak) = case M.lookup i stats of
                 Nothing -> Nothing
-                Just (fold, pval, fdr) -> Just $ npSignal .~ fold $
-                    npPvalue .~ Just (negate $ logBase 10 pval) $
-                    npQvalue .~ Just (negate $ logBase 10 fdr) $ peak
+                Just (fold, pval, fdr) -> 
+                    let logP | pval == 0 = 200
+                             | otherwise = negate $ logBase 10 pval 
+                        logFDR | fdr == 0 = 200
+                               | otherwise = negate $ logBase 10 fdr
+                    in Just $ npSignal .~ fold $
+                        npPvalue .~ Just logP $
+                        npQvalue .~ Just logFDR $ peak
         runResourceT $ runConduit $
             zipSources (iterateC succ 0) (streamBedGzip $ peakFl^.location) .|
             concatMapC f .| sinkFileBedGzip output
@@ -159,11 +177,8 @@ mkDiffPeakFig :: SCATACSeqConfig config
 mkDiffPeakFig fl = do
     dir <- figDir
     (header:rest) <- B.lines <$> B.readFile fl
-
-    forM_ inputs $ \input -> do
-        input^.eid
-        streamBedGzip (input^.replicates._2.files.location)
 -}
+
 
 diffGenes :: SCATACSeqConfig config
           => ( SCATACSeq S (File tags 'Other)
@@ -179,9 +194,13 @@ diffGenes (input, nameFl, ref) = do
             diffAnalysis (fl^.location) ref
         let f (i, nm) = case M.lookup i stats of
                 Nothing -> Nothing
-                Just (fold, pval, fdr) -> Just $ B.intercalate "\t"
-                    [ nm, toShortest fold, toShortest $ negate $ logBase 10 pval
-                    , toShortest $ negate $ logBase 10 fdr ]
+                Just (fold, pval, fdr) ->
+                    let logP | pval == 0 = 200
+                             | otherwise = negate $ logBase 10 pval 
+                        logFDR | fdr == 0 = 200
+                               | otherwise = negate $ logBase 10 fdr
+                    in Just $ B.intercalate "\t" [nm, toShortest fold,
+                            toShortest logP, toShortest logFDR]
         runResourceT $ runConduit $ zipSources (iterateC succ 0)
             (sourceFile nameFl .| linesUnboundedAsciiC .| mapC (head . B.words)) .|
             concatMapC f .| unlinesAsciiC .| sinkFile output
