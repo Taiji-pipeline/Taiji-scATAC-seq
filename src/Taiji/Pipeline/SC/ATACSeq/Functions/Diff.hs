@@ -14,7 +14,6 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
-import AI.Clustering.Hierarchical
 import Bio.Data.Bed
 import Data.Binary (decodeFile)
 import Bio.Data.Bed.Utils (rpkmBed)
@@ -144,13 +143,13 @@ rpkmDiffPeak (diffs, Just peak, rpkms) = do
         B.writeFile output $ B.unlines $ header : concat res
         return output
   where
-    f x = x^.npSignal > 1.5 || x^.npSignal < 1/1.5
+    f x = x^.npSignal > 2
     header = B.intercalate "\t" $ fst $ unzip rpkms
-
-getSubMatrix :: [Int] -> MU.Matrix Double -> MU.Matrix Double
-getSubMatrix idx mat = MU.fromRows $ flatten $ hclust Ward dat euclidean
-  where
-    dat = V.fromList $ map (mat `MU.takeRow`) idx
+    getSubMatrix idx mat = MU.fromRows $ map (mat `MU.takeRow`) idx
+    readRPKMs fls = MU.fromColumns <$> mapM readData fls
+      where
+        readData fl = U.fromList . map readDouble . B.lines <$> B.readFile fl
+rpkmDiffPeak _ = undefined
 
 -- | Get the indices of query peaks in the reference peak list.
 getPeakIndex :: (BEDLike b1, BEDLike b2)
@@ -163,12 +162,6 @@ getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
     peakIdxMap = M.fromList $ zipWith
         (\x i -> ((x^.chrom, x^.chromStart, x^.chromEnd), i)) ref [0..]
 
-readRPKMs :: [FilePath] -> IO (MU.Matrix Double)
-readRPKMs fls = do
-    vecs <- mapM readData fls
-    return $ MU.map (logBase 2 . (+1)) $ MU.fromColumns vecs
-  where
-    readData fl = U.fromList . map readDouble . B.lines <$> B.readFile fl
 
 {-
 mkDiffPeakFig :: SCATACSeqConfig config 

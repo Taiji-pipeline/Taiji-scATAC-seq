@@ -196,10 +196,8 @@ builder = do
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
-    {-
     node "Cicero" 'cicero $ return ()
     ["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
-    -}
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()

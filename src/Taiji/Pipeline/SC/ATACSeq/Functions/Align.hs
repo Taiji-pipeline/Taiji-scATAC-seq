@@ -135,6 +135,14 @@ filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0
     bc = extractBarcode $ queryName $ head bam
 {-# INLINE filterReads #-}
 
+-- | Filter QC-failed cells and convert bam to bed with TN5 correction.
+-- The BED interval of the fragment is obtained by adjusting the BAM alignment
+-- interval of the sequenced read-pair. The start of the interval is moved
+-- forward by 4bp from a left-most alignment position and backward 5bp from the
+-- right-most alignment position. The transposase cuts the two DNA strands with
+-- a 9bp overhang, and adjusted positions represent the center point between
+-- these cuts; this position is recorded as a cut site that represents a
+-- chromatin accessibility event.
 filterCell :: SCATACSeqConfig config
            => (SCATACSeq S ( File '[NameSorted, Filtered] 'Bam 
                            , File '[NameSorted] 'Bam        
