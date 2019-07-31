@@ -158,11 +158,20 @@ builder = do
     node "Extract_Cluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/Cluster/" |] $ return ()
     ["Merge_Gene_Mat", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
 
+
+    -- SubClusters
+    node "Extract_SubCluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/SubCluster/" |] $ return ()
+    ["Merge_Gene_Mat", "SubCluster_LSA_Cluster"] ~> "Extract_SubCluster_Gene_Matrix"
+
+
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
 --------------------------------------------------------------------------------
     node "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
     ["Peak_LSA_Cluster"] ~> "Get_Ref_Cells"
+
+    node "Get_SubCluster_Ref_Cells" [| liftIO . sampleCells 100 |] $ return ()
+    ["SubCluster_LSA_Cluster"] ~> "Get_SubCluster_Ref_Cells"
 
     node "Make_Ref_Peak_Mat"
         [| mkRefMat "/Feature/Peak/ref_cell_by_peak.mat.gz" False |] $ return ()
@@ -191,6 +200,18 @@ builder = do
     ["Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
     nodePar "Diff_Gene" 'diffGenes $ return ()
     path ["Diff_Gene_Prep", "Diff_Gene"]
+
+
+    -- SubCluster
+    node "Make_SubCluster_Ref_Gene_Mat" 
+        [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
+    ["Get_SubCluster_Ref_Cells", "Make_Gene_Mat"] ~> "Make_SubCluster_Ref_Gene_Mat"
+
+    node "SubCluster_Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()
+    ["Extract_SubCluster_Gene_Matrix", "Make_SubCluster_Ref_Gene_Mat"] ~> "SubCluster_Diff_Gene_Prep"
+    nodePar "SubCluster_Diff_Gene" 'diffGenes $ return ()
+    path ["SubCluster_Diff_Gene_Prep", "SubCluster_Diff_Gene"]
+
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
