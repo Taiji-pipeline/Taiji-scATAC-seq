@@ -154,7 +154,7 @@ lsaBuilder = do
     -- Subclustering
     node "Extract_Sub_Matrix" [| extractSubMatrix "/temp/" |] $ return ()
     ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
-    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_resolution = Just 0.0005}
+    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_resolution = Just 0.0007}
     path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
 
 
