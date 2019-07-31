@@ -154,7 +154,7 @@ lsaBuilder = do
     -- Subclustering
     node "Extract_Sub_Matrix" [| extractSubMatrix "/temp/" |] $ return ()
     ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
-    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_dim = Just 5, _resolution = Just 0.5}
+    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_resolution = Just 0.0005}
     path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
 
 
@@ -164,7 +164,12 @@ lsaClust :: FilePath   -- ^ Directory to save the results
          -> Builder ()
 lsaClust prefix opt = do
     nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
-    nodePar "LSA_Cluster" [| doClustering prefix opt |] $ return ()
+    nodePar "LSA_Cluster" [| \x -> do
+        res <- asks _scatacseq_cluster_resolution 
+        case _resolution opt of
+            Nothing -> doClustering prefix opt{_resolution=res} x
+            _ -> doClustering prefix opt x
+        |] $ return ()
     nodePar "LSA_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
@@ -286,8 +291,7 @@ plotClusters dir input = do
     clusters <- sampleCells inputData
     visualizeCluster output clusters
 
-sampleCells :: [CellCluster]
-            -> IO [CellCluster]
+sampleCells :: [CellCluster] -> IO [CellCluster]
 sampleCells clusters
     | ratio >= 1 = return clusters
     | otherwise = do
@@ -297,14 +301,10 @@ sampleCells clusters
             return $ c {_cluster_member = V.toList s}
   where
     n = foldl1' (+) $ map (length . _cluster_member) clusters
-    ratio = 1 / (fromIntegral n / 30000)
-
-sampling :: GenIO
-         -> Double  -- ^ fraction
-         -> V.Vector a -> IO (V.Vector a)
-sampling gen frac v = V.take n <$> uniformShuffle v gen
-  where
-    n = truncate $ frac * fromIntegral (V.length v)
+    ratio = 1 / (fromIntegral n / 30000) :: Double
+    sampling gen frac v = V.take n' <$> uniformShuffle v gen
+      where
+        n' = max 100 $ truncate $ frac * fromIntegral (V.length v)
 
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
