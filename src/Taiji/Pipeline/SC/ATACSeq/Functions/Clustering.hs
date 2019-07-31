@@ -19,6 +19,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , Normalization(..)
     , ClustOpt(..)
     , defClustOpt
+    , combineClusters
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -331,3 +332,19 @@ extractSubMatrix prefix ([input], [clFl]) = do
         runResourceT $ runConduit $ streamRows mat .|
             sequenceSinks (map mkSink clusters)
 extractSubMatrix _ _ = return []
+
+combineClusters :: SCATACSeqConfig config
+                => FilePath
+                -> [SCATACSeq S (File tags 'Other)]
+                -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+combineClusters _ [a] = return a
+combineClusters prefix inputs = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
+    let output = dir ++ "combined_clusters.bin"
+    cls <- liftIO $ fmap concat $ forM inputs $ \x -> do
+        let nm = B.pack $ T.unpack $ x^.eid 
+        cs <- decodeFile $ x^.replicates._2.files.location :: IO [CellCluster]
+        return $ flip map cs $ \c -> c{ _cluster_name= nm <> _cluster_name c }
+    liftIO $ encodeFile output cls
+    return $ head inputs & eid .~ "All"
+                         & replicates._2.files.location .~ output

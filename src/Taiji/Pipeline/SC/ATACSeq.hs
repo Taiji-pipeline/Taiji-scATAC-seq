@@ -118,6 +118,9 @@ builder = do
 
     lsaBuilder
 
+    node "Combine_SubCluster" [| fmap return . combineClusters "/Cluster_by_peak/" |] $ return ()
+    path ["SubCluster_LSA_Cluster", "Combine_SubCluster"]
+
 --------------------------------------------------------------------------------
 -- Creating Cell by Peak matrix
 --------------------------------------------------------------------------------
@@ -161,7 +164,7 @@ builder = do
 
     -- SubClusters
     node "Extract_SubCluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/SubCluster/" |] $ return ()
-    ["Merge_Gene_Mat", "SubCluster_LSA_Cluster"] ~> "Extract_SubCluster_Gene_Matrix"
+    ["Merge_Gene_Mat", "Combine_SubCluster"] ~> "Extract_SubCluster_Gene_Matrix"
 
 
 --------------------------------------------------------------------------------
@@ -171,7 +174,7 @@ builder = do
     ["Peak_LSA_Cluster"] ~> "Get_Ref_Cells"
 
     node "Get_SubCluster_Ref_Cells" [| liftIO . sampleCells 100 |] $ return ()
-    ["SubCluster_LSA_Cluster"] ~> "Get_SubCluster_Ref_Cells"
+    ["Combine_SubCluster"] ~> "Get_SubCluster_Ref_Cells"
 
     node "Make_Ref_Peak_Mat"
         [| mkRefMat "/Feature/Peak/ref_cell_by_peak.mat.gz" False |] $ return ()
@@ -204,7 +207,7 @@ builder = do
 
     -- SubCluster
     node "Make_SubCluster_Ref_Gene_Mat" 
-        [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
+        [| mkRefMat "/Feature/Gene/subcluster_ref_cell_by_gene.mat.gz" True |] $ return ()
     ["Get_SubCluster_Ref_Cells", "Make_Gene_Mat"] ~> "Make_SubCluster_Ref_Gene_Mat"
 
     node "SubCluster_Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()

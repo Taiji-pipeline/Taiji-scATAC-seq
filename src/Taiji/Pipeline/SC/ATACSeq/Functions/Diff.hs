@@ -46,8 +46,8 @@ sampleCells n input = do
 sampleCells :: Int   -- ^ number of cells
             -> [SCATACSeq S (File tags 'Other)]
             -> IO [[B.ByteString]]
-sampleCells n input = do
-    cls <- decodeFile $ head input^.replicates._2.files.location
+sampleCells n inputs = do
+    cls <- fmap concat $ forM inputs $ \input -> decodeFile $ input^.replicates._2.files.location
     g <- create
     forM cls $ \cl -> do
         let v = V.fromList $ map _cell_barcode $ _cluster_member cl
