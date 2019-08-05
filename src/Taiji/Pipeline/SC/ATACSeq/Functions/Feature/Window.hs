@@ -5,7 +5,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
-    ( getBins
+    ( getWindows
     , mkWindowMat
     ) where
 
@@ -28,11 +28,11 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 -- | Get candidate bins.
-getBins :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-        => SCATACSeq S (File tags 'Bed)
-        -> ReaderT config IO
-            (SCATACSeq S (File tags 'Bed, File tags 'Bed, Int))
-getBins input = do
+getWindows :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+           => SCATACSeq S (File tags 'Bed)
+           -> ReaderT config IO
+              (SCATACSeq S (File tags 'Bed, File tags 'Bed, Int))
+getWindows input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
     dir <- asks ((<> "/Feature/Window") . _scatacseq_output_dir) >>= getPath
@@ -40,11 +40,10 @@ getBins input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\fl -> do
         (n, rc) <- binCount fl chrSize res
-        let lo = fromIntegral n * 0.001
-            hi = fromIntegral n * 1
-        runResourceT $ runConduit $
-            filterBin lo hi res (zip (map fst chrSize) rc) .|
-            sinkFileBedGzip output
+        let windows = forM_ (zip (map fst chrSize) rc) $ \(chr, vec) ->
+                flip U.imapM_ vec $ \i x -> when (x > 0) $ yield $
+                    BED chr (i * res) ((i+1) * res) Nothing (Just x) Nothing
+        runResourceT $ runConduit $ windows .| sinkFileBedGzip output
         return $ (fl, emptyFile & location .~ output, n) )
   where
     res = 5000
@@ -55,7 +54,7 @@ mkWindowMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
                -> ReaderT config IO (SCATACSeq S (File tags 'Other))
 mkWindowMat input = do
     dir <- asks ((<> "/Feature/Window/") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_window.txt.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_window.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
         regions <- runResourceT $ runConduit $
@@ -83,13 +82,3 @@ binCount input chrSize res = runResourceT $ runConduit $
         Just v -> foldlC f v
     f x y = force $ zipWith (U.zipWith (+)) x y
 {-# INLINE binCount #-}
-
-filterBin :: Monad m
-          => Double
-          -> Double
-          -> Int
-          -> [(B.ByteString, U.Vector Int)] -> ConduitT i BED m ()
-filterBin lo hi res rc = forM_ rc $ \(chr, vec) -> flip U.imapM_ vec $ \i x -> 
-    when (fromIntegral x > lo && fromIntegral x < hi) $
-        yield $ BED chr (i * res) ((i+1) * res) Nothing (Just x) Nothing
-{-# INLINE filterBin #-}

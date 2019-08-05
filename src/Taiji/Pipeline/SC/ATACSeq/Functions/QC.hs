@@ -51,81 +51,19 @@ data Stat = Stat
     , _uniq_reads :: Int }
 
 plotStat :: SCATACSeqConfig config
-         => SCATACSeq S (a, b, File '[] 'Tsv )
+         => [SCATACSeq S (a, b, File '[] 'Tsv )]
          -> ReaderT config IO ()
-plotStat input = do
+plotStat inputs = do
     dir <- qcDir
-    let output = dir <> "qc_" <> T.unpack (input^.eid) <> "_rep" <>
-            show (input^.replicates._1) <> ".html"
+    let output = dir <> "/qc.html"
     liftIO $ do
-        stats <- fmap (filter ((>=100) . _uniq_reads)) $ readStats $
-            input^.replicates._2.files._3.location
-        let plt = contour $ zip (map (fromIntegral . _uniq_reads) stats) $
-                map _te stats
-            axes = option [jmacroE| {
-                axes: [
-                    {
-                        domain: false, grid: true, orient: "bottom",
-                        scale: "x", title: "number of fragments",
-                        labelSeparation: 15, labelOverlap: true
-                    }, {
-                        domain: false, grid: true, orient: "left",
-                        scale: "y", title: "TSS enrichment",
-                        labelSeparation: 5, labelOverlap: true
-                    }
-                ]
-            } |]
-            scales = option [jmacroE| {
-                scales: [ {
-                    name: "x",
-                    type: "log",
-                    round: true,
-                    nice: true,
-                    zero: false,
-                    domain: {data: "source", field: "x"},
-                    range: "width"
-                }, {
-                    name: "y",
-                    type: "linear",
-                    round: true,
-                    nice: true,
-                    zero: false,
-                    domain: {data: "source", field: "y"},
-                    range: "height"
-                }, {
-                    name: "color",
-                    type: "linear",
-                    zero: true,
-                    domain: {data: "contours", field: "value"},
-                    range: "heatmap"
-                } ]
-            } |]
-            hline = option [jmacroE| {
-                marks: {
-                    type: "rule",
-                    encode: {
-                        enter: {
-                            x2: {signal: "width"},
-                            y: {value: 7, scale: "y"},
-                            strokeDash: {value: [4,4]}
-                        }
-                    }
-                }
-            } |]
-            vline = option [jmacroE| {
-                marks: {
-                    type: "rule",
-                    encode: {
-                        enter: {
-                            y2: {signal: "height"},
-                            x: {value: 1000, scale: "x"},
-                            strokeDash: {value: [4,4]}
-                        }
-                    }
-                }
-            } |]
-            n = length $ filter (\x -> _te x >= 7 && _uniq_reads x >= 1000) stats
-        savePlots output [plt <> title ("pass QC: " <> show n) <> axes <> vline <> hline <> scales] []
+        (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
+            stats <- readStats $ input^.replicates._2.files._3.location
+            let stats' = filter (\x -> _te x >= 7 && _uniq_reads x >= 1000) stats
+                cellQC = plotCells stats <> title
+                    (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
+            return (cellQC, (input^.eid, stats'))
+        savePlots output ([plotNumReads stats, plotDupRate stats, plotMitoRate stats] <> cellQCs) []
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . B.lines) . B.readFile
@@ -288,3 +226,78 @@ detectDoublet input = do
                 }
             }
        } |]
+
+
+--------------------------------------------------------------------------------
+-- Plotting
+--------------------------------------------------------------------------------
+
+--plotNumCells :: [(T.Text, [Stat])] -> Vega
+--plotNumCells stats = $ flip map stats $ \(nm, stat) -> (nm, length stat)
+
+plotDupRate :: [(T.Text, [Stat])] -> Vega
+plotDupRate stats = violin $ flip map stats $ \(nm, stat) -> 
+    (nm, map _dup_rate stat)
+
+plotMitoRate :: [(T.Text, [Stat])] -> Vega
+plotMitoRate stats = violin $ flip map stats $ \(nm, stat) -> 
+    (nm, map _mito_rate stat)
+
+plotNumReads :: [(T.Text, [Stat])] -> Vega
+plotNumReads stats = violin $ flip map stats $ \(nm, stat) -> 
+    (nm, map (fromIntegral . _uniq_reads) stat)
+
+plotCells :: [Stat] -> Vega
+plotCells input = plt <> axes <> vline <> hline <> scales
+  where
+    plt = contour $ zip (map (fromIntegral . _uniq_reads) stats) $ map _te stats
+    stats = filter ((>=100) . _uniq_reads) input
+    axes = option [jmacroE| {
+        axes: [
+            {
+                domain: false, grid: true, orient: "bottom",
+                scale: "x", title: "number of fragments",
+                labelSeparation: 15, labelOverlap: true
+            }, {
+                domain: false, grid: true, orient: "left",
+                scale: "y", title: "TSS enrichment",
+                labelSeparation: 5, labelOverlap: true
+            }
+        ]
+    } |]
+    scales = option [jmacroE| {
+        scales: [ {
+            name: "x", type: "log", round: true, nice: true,
+            zero: false, domain: {data: "source", field: "x"}, range: "width"
+        }, {
+            name: "y", type: "linear", round: true, nice: true, zero: false,
+            domain: {data: "source", field: "y"}, range: "height"
+        }, {
+            name: "color", type: "linear", zero: true,
+            domain: {data: "contours", field: "value"}, range: "heatmap"
+        } ]
+    } |]
+    hline = option [jmacroE| {
+        marks: {
+            type: "rule",
+            encode: {
+                enter: {
+                    x2: {signal: "width"},
+                    y: {value: 7, scale: "y"},
+                    strokeDash: {value: [4,4]}
+                }
+            }
+        }
+    } |]
+    vline = option [jmacroE| {
+        marks: {
+            type: "rule",
+            encode: {
+                enter: {
+                    y2: {signal: "height"},
+                    x: {value: 1000, scale: "x"},
+                    strokeDash: {value: [4,4]}
+                }
+            }
+        }
+    } |]

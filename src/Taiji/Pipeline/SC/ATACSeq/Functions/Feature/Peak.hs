@@ -40,7 +40,7 @@ mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           -> ReaderT config IO (SCATACSeq S (File tags 'Other))
 mkPeakMat prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_peak.txt.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
         regions <- runResourceT $ runConduit $

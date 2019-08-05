@@ -7,7 +7,6 @@ from .Utils import InputData, regress
 def diffusionMap(args):
     data = InputData(args.input)
     n_dim = 15
-    t = 50
     print("Read Data")
     indptr = [0]
     indices = []
@@ -28,23 +27,22 @@ def diffusionMap(args):
     jm = jm / (s + s.T - jm)
 
     # regression
-    jm = regression(jm, coverage/m)
+    K = regression(jm, coverage/m)
 
     # Gaussian kernel
-    jm = np.exp(- (1/jm) / 0.2)
-    np.fill_diagonal(jm, 0)
-
+    #jm = np.exp(- (1/jm) / 0.2)
+    #np.fill_diagonal(jm, 0)
 
     print("Normalization")
-    s = jm.sum(axis=1)[:, np.newaxis].dot(np.ones((1,n)))
-    jm = jm / s
+    Q_i = np.diag(K.sum(axis=1)**-0.5)
+    T_ = np.matmul(np.matmul(Q_i, K), Q_i)
 
     print("Reduction")
-    (evals, evecs) = sp.sparse.linalg.eigs(jm, k=n_dim+1, which='LR')
+    (evals, evecs) = sp.sparse.linalg.eigs(T_, k=n_dim+1, which='LR')
     ix = evals.argsort()[::-1]
     evals = np.real(evals[ix])
-    evecs = np.real(evecs[:, ix])
-    dmap = np.matmul(evecs, np.diag(evals**t))
+    evecs = np.matmul(Q_i, np.real(evecs[:, ix]))
+    dmap = np.matmul(evecs, np.diag(evals))
     np.savetxt(args.output, dmap[:, 1:], delimiter='\t')
 
 def regression(mat, coverage):
@@ -62,4 +60,3 @@ def regression(mat, coverage):
     res[np.triu_indices(n, k = 1)] = y.flatten()
     res = res + res.T
     return res
-

@@ -40,7 +40,7 @@ instance SCATACSeqConfig SCATACSeqOpts where
     _scatacseq_bwa_index = fmap (++ "/genome.fa") . bwa_index
     _scatacseq_genome_fasta = genome
     _scatacseq_input = input
-    _scatacseq_callpeak_opts _ = def & mode .~ NoModel (-100) 200
+    _scatacseq_callpeak_opts _ = def & mode .~ NoModel (-75) 150
                                    & cutoff .~ QValue 0.05
                                    & callSummits .~ True
     _scatacseq_genome_index = genome_index

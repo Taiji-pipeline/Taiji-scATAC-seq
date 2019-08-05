@@ -62,7 +62,9 @@ clusterStat output clusters = savePlots output []
         M.fromListWith (+) $ map (\x -> (tissueName x, 1::Int)) _cluster_member )
     tissueName Cell{..} = T.pack $ B.unpack $ B.init $ fst $
         B.breakEnd (=='+') _cell_barcode
-    normalize xs = V.map (\x -> round' $ x / s) xs
+    normalize xs 
+        | V.all (==0) xs = xs
+        | otherwise = V.map (\x -> round' $ x / s) xs
       where 
         round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
         s = V.foldl1' (+) xs

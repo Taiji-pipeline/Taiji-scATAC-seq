@@ -44,32 +44,32 @@ builder = do
 --------------------------------------------------------------------------------
 -- QC
 --------------------------------------------------------------------------------
-    node "QC" [| mapM_ plotStat |] $ return ()
+    node "QC" 'plotStat $ return ()
     ["Remove_Duplicates"] ~> "QC"
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix
 --------------------------------------------------------------------------------
-    nodePar "Get_Bins" 'getBins $ return ()
+    nodePar "Get_Windows" 'getWindows $ return ()
     nodePar "Make_Window_Matrix" 'mkWindowMat $ return ()
-    path ["Get_Bed", "Get_Bins", "Make_Window_Matrix"]
+    path ["Get_Bed", "Get_Windows", "Make_Window_Matrix"]
 
     -- merged matrix
     node "Merge_Window_Matrix_Prep" [| \(x, y) -> return $
         zipExp (x & mapped.replicates._2.files %~ (^._2)) y
         |]$ return ()
     node "Merge_Window_Matrix" [| mergeFeatMatrix "/Feature/Window/merged_cell_by_window" |] $ return ()
-    ["Get_Bins", "Make_Window_Matrix"] ~> "Merge_Window_Matrix_Prep"
+    ["Get_Windows", "Make_Window_Matrix"] ~> "Merge_Window_Matrix_Prep"
     path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
 
-{-
 --------------------------------------------------------------------------------
 -- Process each sample
 --------------------------------------------------------------------------------
+{-
     -- Clustering in each sample
-    namespace "Each" $ lsaClust "/Cluster_by_window/LSA/Each/" $
-        ClustOpt UnitBall UMAP Nothing
-    path ["Make_Window_Matrix", "Each_LSA_Reduce"]
+    namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
+    path ["Make_Window_Matrix", "Each_DM_Reduce"]
+
 
     -- Extract tags for each cluster
     node "Each_Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
@@ -133,7 +133,7 @@ builder = do
     ["Get_Bed", "SubCluster_LSA_Cluster"] ~> "SubCluster_Extract_Tags_Prep"
 
     -- Call peaks in each cluster and generate peak matrix
-    genPeakMat "/Feature/Peak/Cluster/" Nothing "Merge_Tags" "Get_Bins"
+    genPeakMat "/Feature/Peak/Cluster/" Nothing "Merge_Tags" "Get_Windows"
     node "Extract_Cluster_Matrix" [| extractSubMatrix "/Feature/Peak/Cluster/" |] $ return ()
     ["Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Matrix"
 
@@ -142,7 +142,7 @@ builder = do
 
     -- Call peaks SubCluster
     genPeakMat "/Feature/Peak/SubCluster/" (Just "SubCluster")
-        "SubCluster_Merge_Tags" "Get_Bins"
+        "SubCluster_Merge_Tags" "Get_Windows"
 
     node "SubCluster_Correlation" 'clusterCorrelation $ return ()
     ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
@@ -154,7 +154,7 @@ builder = do
     node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
     nodePar "Make_Gene_Mat" 'mkCellByGene $
         doc .= "Create cell by gene matrix for each sample."
-    ["Get_Bins", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
+    ["Get_Windows", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
     node "Merge_Gene_Mat" 'mergeCellByGeneMatrix $ return ()
     path ["Make_Gene_Mat_Prep", "Make_Gene_Mat", "Merge_Gene_Mat"]
 
