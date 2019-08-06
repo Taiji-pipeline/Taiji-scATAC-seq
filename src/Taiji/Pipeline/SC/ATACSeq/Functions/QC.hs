@@ -17,6 +17,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , tssEnrichment
     , readTSS
     , detectDoublet
+    , clusterViz3D
     ) where
 
 import           Bio.Data.Bam
@@ -42,13 +43,16 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
+import Taiji.Utils.Plot.ECharts (scatter3D', toolbox)
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (mkSpMatrix, streamRows)
 
 data Stat = Stat
     { _barcode :: B.ByteString
     , _dup_rate :: Double
     , _mito_rate :: Double
     , _te :: Double
-    , _uniq_reads :: Int }
+    , _uniq_reads :: Int
+    , _doublet_score :: Double }
 
 plotStat :: SCATACSeqConfig config
          => [SCATACSeq S (a, b, File '[] 'Tsv )]
@@ -74,14 +78,15 @@ showStat Stat{..} = B.intercalate "\t" $
     , B.pack $ show _dup_rate
     , B.pack $ show _mito_rate
     , B.pack $ show _te
-    , B.pack $ show _uniq_reads ]
+    , B.pack $ show _uniq_reads
+    , B.pack $ show _doublet_score ]
 {-# INLINE showStat #-}
 
 decodeStat :: B.ByteString -> Stat
 decodeStat x = Stat bc (readDouble dupRate) (readDouble mitoRate)
-    (readDouble te) (readInt uniq)
+    (readDouble te) (readInt uniq) (readDouble ds)
   where
-    [bc, dupRate, mitoRate, te, uniq] = B.split '\t' x
+    [bc, dupRate, mitoRate, te, uniq, ds] = B.split '\t' x
 {-# INLINE decodeStat #-}
 
 baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
@@ -191,7 +196,7 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
             | otherwise = geneRight : map snd geneTranscripts
 
 detectDoublet :: SCATACSeqConfig config
-              => SCATACSeq S (File tags 'Other)
+              => SCATACSeq S (File tags 'Other, (a, b, File '[] 'Tsv ))
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
 detectDoublet input = do
     dir <- qcDir
@@ -199,7 +204,7 @@ detectDoublet input = do
             show (input^.replicates._1) <> ".txt"
         outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
-    input & replicates.traverse.files %%~ liftIO . (\fl -> do
+    input & replicates.traverse.files %%~ liftIO . (\(fl, (_,_,stat)) -> do
         shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack output]
         [thres, sc, sim_sc] <- B.lines <$> B.readFile output
         let th = read $ B.unpack thres :: Double
@@ -209,7 +214,14 @@ detectDoublet input = do
                 fromIntegral (length ds)
         savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> rate)
             , mkHist ds_sim th] []
-        return $ location .~ output $ emptyFile
+
+        statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location
+        mat <- mkSpMatrix id $ fl^.location
+        bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
+        B.writeFile (fl^.location) $ B.unlines $ flip map (zip bcs ds) $ \(bc, val) -> 
+            let s = M.findWithDefault undefined bc statMap
+            in showStat s{_doublet_score = val}
+        return stat
         )
   where
     mkHist xs ref = plt <> rule
@@ -301,3 +313,18 @@ plotCells input = plt <> axes <> vline <> hline <> scales
             }
         }
     } |]
+
+clusterViz3D :: FilePath -> [CellCluster] -> [Stat] -> IO ()
+clusterViz3D output cs stats = savePlots output [] [scatter3D' dat3D viz <> toolbox]
+  where
+    viz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
+          , ("TSS enrichment", map _te statOrdered)
+          , ("duplication rate", map _dup_rate statOrdered)
+          , ("mito rate", map _mito_rate statOrdered)
+          , ("doublet score", map _doublet_score statOrdered) ]
+    dat3D = flip map cs $ \(CellCluster nm cells) ->
+        (B.unpack nm, map _cell_3d cells)
+    statOrdered = concatMap (map
+        (\x -> M.findWithDefault undefined (_cell_barcode x) stats') .
+        _cluster_member) cs
+    stats' = M.fromList $ map (\x -> (_barcode x, x)) stats

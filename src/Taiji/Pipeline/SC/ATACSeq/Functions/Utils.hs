@@ -31,7 +31,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , mergeMatrix
 
     , visualizeCluster
-    , clusterViz3D
     ) where
 
 import Bio.Data.Bed
@@ -67,7 +66,6 @@ import qualified Data.Text as T
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.ECharts
 
@@ -356,15 +354,3 @@ visualizeCluster output cs = savePlots output []
         (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
     getName x = let prefix = fst $ B.breakEnd (=='+') x
                 in if B.null prefix then "" else B.unpack $ B.init prefix
-
-clusterViz3D :: FilePath -> [CellCluster] -> [Stat] -> IO ()
-clusterViz3D output cs stats = savePlots output [] [scatter3D' dat3D viz <> toolbox]
-  where
-    viz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
-          , ("duplication rate", map _dup_rate statOrdered) ]
-    dat3D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map _cell_3d cells)
-    statOrdered = concatMap (map
-        (\x -> HM.lookupDefault undefined (_cell_barcode x) stats') .
-        _cluster_member) cs
-    stats' = HM.fromList $ map (\x -> (_barcode x, x)) stats

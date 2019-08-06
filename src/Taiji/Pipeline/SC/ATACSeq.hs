@@ -10,7 +10,6 @@ import Data.Binary
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 builder :: Builder ()
 builder = do
@@ -72,15 +71,6 @@ builder = do
     namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
     path ["Make_Window_Matrix", "Each_DM_Reduce"]
 
-    node "Each_Cluster_Viz_Prep" [| return . uncurry zipExp |] $ return ()
-    nodePar "Each_Cluster_Viz" [| \input -> input & replicates.traverse.files %%~ ( \((_,_,stat), cl) -> liftIO $ do
-        stats <- readStats $ stat^.location
-        cls <- decodeFile $ cl^.location
-        clusterViz3D (T.unpack (input^.eid) <> "_3d.html") cls stats
-        ) |] $ return ()
-    ["Remove_Duplicates", "Each_DM_Cluster"] ~> "Each_Cluster_Viz_Prep"
-    ["Each_Cluster_Viz_Prep"] ~> "Each_Cluster_Viz"
-
     -- Extract tags for each cluster
     node "Each_Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
     nodePar "Each_Extract_Tags" [| \input -> input & replicates.traverse.files %%~ ( \(bed, cl) -> do
@@ -114,8 +104,19 @@ builder = do
     ["Get_Windows", "Each_Merge_Peaks"] ~> "Each_Make_Peak_Matrix_Prep"
     path ["Each_Make_Peak_Matrix_Prep", "Each_Make_Peak_Matrix"]
 
+    node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
+    ["Each_Make_Peak_Matrix", "Remove_Duplicates"] ~> "Detect_Doublet_Prep"
     nodePar "Detect_Doublet" 'detectDoublet $ return ()
-    path ["Each_Make_Peak_Matrix", "Detect_Doublet"]
+    path ["Detect_Doublet_Prep", "Detect_Doublet"]
+
+    node "Each_Cluster_Viz_Prep" [| return . uncurry zipExp |] $ return ()
+    nodePar "Each_Cluster_Viz" [| \input -> input & replicates.traverse.files %%~ ( \(stat, cl) -> liftIO $ do
+        stats <- readStats $ stat^.location
+        cls <- decodeFile $ cl^.location
+        clusterViz3D (T.unpack (input^.eid) <> "_3d.html") cls stats
+        ) |] $ return ()
+    ["Detect_Doublet", "Each_DM_Cluster"] ~> "Each_Cluster_Viz_Prep"
+    ["Each_Cluster_Viz_Prep"] ~> "Each_Cluster_Viz"
 
 
 --------------------------------------------------------------------------------
