@@ -4,10 +4,11 @@
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
 import           Control.Workflow
+import qualified Data.Text as T
+import qualified Data.ByteString.Char8 as B
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
-import Taiji.Pipeline.SC.ATACSeq.Functions.DR.SnapTools
 
 builder :: Builder ()
 builder = do
@@ -65,7 +66,6 @@ builder = do
 --------------------------------------------------------------------------------
 -- Process each sample
 --------------------------------------------------------------------------------
-{-
     -- Clustering in each sample
     namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
     path ["Make_Window_Matrix", "Each_DM_Reduce"]
@@ -106,16 +106,11 @@ builder = do
 
     nodePar "Detect_Doublet" 'detectDoublet $ return ()
     path ["Each_Make_Peak_Matrix", "Detect_Doublet"]
-    -}
 
 
 --------------------------------------------------------------------------------
 -- Clustering
 --------------------------------------------------------------------------------
-    -- Clustering in each sample
-    namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
-    path ["Make_Window_Matrix", "Each_DM_Reduce"]
-
     lsaBuilder
 
     node "Combine_SubCluster" [| fmap return . combineClusters "/Cluster_by_peak/" |] $ return ()
