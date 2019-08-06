@@ -6,9 +6,11 @@ module Taiji.Pipeline.SC.ATACSeq (builder) where
 import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
+import Data.Binary
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 builder :: Builder ()
 builder = do
@@ -70,6 +72,14 @@ builder = do
     namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
     path ["Make_Window_Matrix", "Each_DM_Reduce"]
 
+    node "Each_Cluster_Viz_Prep" [| return . uncurry zipExp |] $ return ()
+    nodePar "Each_Cluster_Viz" [| \input -> input & replicates.traverse.files %%~ ( \((_,_,stat), cl) -> liftIO $ do
+        stats <- readStats $ stat^.location
+        cls <- decodeFile $ cl^.location
+        clusterViz3D (T.unpack (input^.eid) <> "_3d.html") cls stats
+        ) |] $ return ()
+    ["Remove_Duplicates", "Each_DM_Cluster"] ~> "Each_Cluster_Viz_Prep"
+    ["Each_Cluster_Viz_Prep"] ~> "Each_Cluster_Viz"
 
     -- Extract tags for each cluster
     node "Each_Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
@@ -85,7 +95,7 @@ builder = do
         return $ zip nm fls
         )
         |] $ return ()
-    ["Get_Bed", "Each_LSA_Cluster"] ~> "Each_Extract_Tags_Prep"
+    ["Get_Bed", "Each_DM_Cluster"] ~> "Each_Extract_Tags_Prep"
     path ["Each_Extract_Tags_Prep", "Each_Extract_Tags"]
 
     -- Make cell by peak matrix
@@ -101,7 +111,7 @@ builder = do
         input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
         |] $ return ()
     nodePar "Each_Make_Peak_Matrix" [| mkPeakMat "/temp/Peak/Each/" |] $ return ()
-    ["Get_Bins", "Each_Merge_Peaks"] ~> "Each_Make_Peak_Matrix_Prep"
+    ["Get_Windows", "Each_Merge_Peaks"] ~> "Each_Make_Peak_Matrix_Prep"
     path ["Each_Make_Peak_Matrix_Prep", "Each_Make_Peak_Matrix"]
 
     nodePar "Detect_Doublet" 'detectDoublet $ return ()
