@@ -245,7 +245,7 @@ plotMitoRate stats = violin $ flip map stats $ \(nm, stat) ->
 
 plotNumReads :: [(T.Text, [Stat])] -> Vega
 plotNumReads stats = violin $ flip map stats $ \(nm, stat) -> 
-    (nm, map (fromIntegral . _uniq_reads) stat)
+    (nm, map (logBase 10 . fromIntegral . _uniq_reads) stat)
 
 plotCells :: [Stat] -> Vega
 plotCells input = plt <> axes <> vline <> hline <> scales

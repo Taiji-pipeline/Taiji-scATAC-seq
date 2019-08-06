@@ -60,8 +60,8 @@ clusterStat output clusters = savePlots output []
     colnames = nubSort $ concatMap M.keys rows
     f CellCluster{..} = ( T.pack $ B.unpack _cluster_name,
         M.fromListWith (+) $ map (\x -> (tissueName x, 1::Int)) _cluster_member )
-    tissueName Cell{..} = T.pack $ B.unpack $ B.init $ fst $
-        B.breakEnd (=='+') _cell_barcode
+    tissueName Cell{..} = let prefix = fst $ B.breakEnd (=='+') _cell_barcode
+                          in if B.null prefix then "" else T.pack $ B.unpack $ B.init prefix
     normalize xs 
         | V.all (==0) xs = xs
         | otherwise = V.map (\x -> round' $ x / s) xs

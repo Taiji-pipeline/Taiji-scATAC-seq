@@ -6,7 +6,8 @@ from .Utils import InputData, regress
 
 def diffusionMap(args):
     data = InputData(args.input)
-    n_dim = 15
+    n_dim = 30
+    t = 0.5
     print("Read Data")
     indptr = [0]
     indices = []
@@ -31,18 +32,19 @@ def diffusionMap(args):
 
     # Gaussian kernel
     #jm = np.exp(- (1/jm) / 0.2)
-    #np.fill_diagonal(jm, 0)
+
+    np.fill_diagonal(K, 0)
 
     print("Normalization")
     Q_i = np.diag(K.sum(axis=1)**-0.5)
     T_ = np.matmul(np.matmul(Q_i, K), Q_i)
 
     print("Reduction")
-    (evals, evecs) = sp.sparse.linalg.eigs(T_, k=n_dim+1, which='LR')
+    (evals, evecs) = sp.sparse.linalg.eigsh(T_, k=n_dim+1, which='LA')
     ix = evals.argsort()[::-1]
     evals = np.real(evals[ix])
     evecs = np.matmul(Q_i, np.real(evecs[:, ix]))
-    dmap = np.matmul(evecs, np.diag(evals))
+    dmap = np.matmul(evecs, np.diag(evals**t))
     np.savetxt(args.output, dmap[:, 1:], delimiter='\t')
 
 def regression(mat, coverage):
