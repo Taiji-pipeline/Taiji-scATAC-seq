@@ -340,17 +340,11 @@ visualizeCluster :: FilePath
                  -> [CellCluster]
                  -> IO ()
 visualizeCluster output cs = savePlots output []
-    [ scatter3D dat3D viz1
-    , scatter dat2D viz1 <> toolbox
-    , scatter dat2D viz2 <> toolbox ]
+    [scatter dat2D viz <> toolbox]
   where
     dat2D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map _cell_2d cells)
-    dat3D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map _cell_3d cells)
-    viz1 = Continuous $ concatMap
-        (map (log . fromIntegral . _cell_coverage) . _cluster_member) cs
-    viz2 = Categorical $ concatMap
+    viz = Categorical $ concatMap
         (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
     getName x = let prefix = fst $ B.breakEnd (=='+') x
                 in if B.null prefix then "" else B.unpack $ B.init prefix

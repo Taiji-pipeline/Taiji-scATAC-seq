@@ -121,14 +121,12 @@ preClustering = do
         nodePar "Detect_Doublet" 'detectDoublet $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
 
-        node "Cluster_Viz_Prep" [| return . uncurry zipExp |] $ return ()
-        nodePar "Cluster_Viz" [| \input -> input & replicates.traverse.files %%~ ( \(stat, cl) -> liftIO $ do
-            stats <- readStats $ stat^.location
-            cls <- decodeFile $ cl^.location
-            clusterViz3D (T.unpack (input^.eid) <> "_3d.html") cls stats
-            ) |] $ return ()
-        ["Detect_Doublet", "DM_Cluster"] ~> "Cluster_Viz_Prep"
-        ["Cluster_Viz_Prep"] ~> "Cluster_Viz"
+        node "Cluster_QC_Prep" [| \(x,y,z) -> return $ (zipExp x $ zipExp y z) &
+            traverse.replicates.traverse.files %~ (\(a,(b,c)) -> (a,b,c))
+            |] $ return ()
+        nodePar "Cluster_QC" 'plotClusterQC $ return ()
+        ["Detect_Doublet", "DM_Cluster", "Make_Gene_Mat"] ~> "Cluster_QC_Prep"
+        ["Cluster_QC_Prep"] ~> "Cluster_QC"
 
 builder :: Builder ()
 builder = do

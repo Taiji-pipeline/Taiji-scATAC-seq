@@ -17,7 +17,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , tssEnrichment
     , readTSS
     , detectDoublet
-    , clusterViz3D
+    , plotClusterQC
     ) where
 
 import           Bio.Data.Bam
@@ -25,10 +25,12 @@ import           Bio.HTS
 import Control.Monad.State.Strict
 import Language.Javascript.JMacro
 import Bio.Utils.Functions (slideAverage)
+import Data.Binary (decodeFile)
 import           Bio.Data.Bed
 import Bio.RealWorld.GENCODE
 import           Bio.Data.Bed.Types
 import Bio.Utils.Misc (readInt, readDouble)
+import Control.Arrow (second)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
@@ -314,17 +316,57 @@ plotCells input = plt <> axes <> vline <> hline <> scales
         }
     } |]
 
-clusterViz3D :: FilePath -> [CellCluster] -> [Stat] -> IO ()
-clusterViz3D output cs stats = savePlots output [] [scatter3D' dat3D viz <> toolbox]
+
+plotClusterQC :: SCATACSeqConfig config
+              => SCATACSeq S
+                ( File '[] 'Tsv
+                , File '[] 'Other
+                , (FilePath, File '[Gzip] 'Other) )
+              -> ReaderT config IO ()
+plotClusterQC input = do
+    dir <- qcDir
+    let output = dir <> T.unpack (input^.eid) <> "_cluster_qc.html"
+    liftIO $ do
+        stats <- readStats $ statFl^.location
+        cls <- decodeFile $ clFl^.location
+        let genes = ["MYH7","MYL3","MYL2","NPPA","ACTA2","CMTM5","GJA4","HIGD1B","ADCY5","ADIPOQ","CIDEC","CIDEA","CHID1","C1QB","C1QA","MS4A7","MYH11","CARMN","MUSTN1","FXYD3","L1CAM","RELN","CD69","LCP1","CXCR4","FIBIN","VCAN","PDGFRA","SHANK3","EGFL7","NOS3","ESAM","PAX7","CALCR","SOX11","MB","FHL3","OBSCN","LAD1","VIL1","PCK1","EMB","CD28","POU2AF1","MUC2","BEST2","DIEXF","IL2","THEMIS","CD96","TG","SALL1","PAX8","STAR","LSR","NOV","CRP","LEAP2","LIVAR","NEUROD1","RIMS2","KIF1A","GIF","SLC9A3","ENOX1","PGA3","LIPF","GP2","MUC6","MUC2","LCN2","LDLRAD1","ESRP1","FUT6","DEFA5","LTF","LARGE2","TIMP3","KRT7","CLDN18","SFTPB","SFTPD","SFTPA2","IFI30","IL19","LAIR1","MYLK","TAGLN","CARMN","LTF","PROM1","RGR","AGR2","SERPINA1","PGR","REG1A","PRSS1","CPA1","CFTR","TRVP6","GCK","NEUROD1","ISL1"]
+        geneExpr <- M.fromList <$> readGeneExpr genes idxFl matFl
+        clusterQC output cls stats (map B.unpack genes, geneExpr)
   where
-    viz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
-          , ("TSS enrichment", map _te statOrdered)
-          , ("duplication rate", map _dup_rate statOrdered)
-          , ("mito rate", map _mito_rate statOrdered)
-          , ("doublet score", map _doublet_score statOrdered) ]
+    (statFl, clFl, (idxFl, matFl)) = input^.replicates._2.files
+
+clusterQC :: FilePath
+          -> [CellCluster]
+          -> [Stat]
+          -> ([String], M.Map B.ByteString [Int])
+          -> IO ()
+clusterQC output cs stats (names, expr) = savePlots output [] [scatter3D' dat3D viz <> toolbox]
+  where
+    viz = statViz <> geneViz
+    statViz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
+              , ("TSS enrichment", map _te statOrdered)
+              , ("duplication rate", map _dup_rate statOrdered)
+              , ("mito rate", map _mito_rate statOrdered)
+              , ("doublet score", map _doublet_score statOrdered) ]
+    geneViz = zipWith (\x y -> (x, map fromIntegral y)) names $ transpose $
+        concatMap (map (\x -> M.findWithDefault undefined (_cell_barcode x) expr) .
+            _cluster_member) cs
     dat3D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map _cell_3d cells)
     statOrdered = concatMap (map
         (\x -> M.findWithDefault undefined (_cell_barcode x) stats') .
         _cluster_member) cs
     stats' = M.fromList $ map (\x -> (_barcode x, x)) stats
+
+readGeneExpr :: [B.ByteString] 
+             -> FilePath   -- ^ Index
+             -> File '[Gzip] 'Other  -- ^ gene matrix
+             -> IO [(B.ByteString, [Int])]
+readGeneExpr genes idxFl fl = do
+    allGenes <- map (head . B.split '\t') . B.lines <$> B.readFile idxFl
+    let idxMap = M.fromList $ zip allGenes [0..]
+        idx = map (\x -> M.findWithDefault (error $ show x) x idxMap) genes
+        f xs = let m = M.fromList xs
+               in map (\k -> M.findWithDefault 0 k m) idx
+    mat <- mkSpMatrix readInt $ fl^.location
+    runResourceT $ runConduit $ streamRows mat .| mapC (second f) .| sinkList
