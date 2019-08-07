@@ -29,13 +29,14 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 -- | Get candidate bins.
 getWindows :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-           => SCATACSeq S (File tags 'Bed)
+           => FilePath
+           -> SCATACSeq S (File tags 'Bed)
            -> ReaderT config IO
               (SCATACSeq S (File tags 'Bed, File tags 'Bed, Int))
-getWindows input = do
+getWindows prefix input = do
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
-    dir <- asks ((<> "/Feature/Window") . _scatacseq_output_dir) >>= getPath
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_window_idx.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\fl -> do
@@ -50,10 +51,11 @@ getWindows input = do
 
 -- | Make the read count matrix.
 mkWindowMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-               => SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
+               => FilePath
+               -> SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
                -> ReaderT config IO (SCATACSeq S (File tags 'Other))
-mkWindowMat input = do
-    dir <- asks ((<> "/Feature/Window/") . _scatacseq_output_dir) >>= getPath
+mkWindowMat prefix input = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_window.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do

@@ -11,11 +11,9 @@ import Data.Binary
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 
-builder :: Builder ()
-builder = do
---------------------------------------------------------------------------------
--- The basics
---------------------------------------------------------------------------------
+-- | The basic analysis.
+basicAnalysis :: Builder ()
+basicAnalysis = do
     node "Read_Input" 'readInput $
         doc .= "Read ATAC-seq data information from input file."
     node "Download_Data" 'downloadData $
@@ -43,6 +41,76 @@ builder = do
     node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |] $ return ()
     [ "Download_Data", "Filter_Cell"] ~> "Get_Bed"
 
+    node "Get_Genes" [| \_ -> getGeneNames |] $ return ()
+
+-- PreClustering and doublet detection
+preClustering :: Builder ()
+preClustering = do
+    path ["Get_Bed", "Pre_Get_Windows"]
+    ["Get_Bed", "Pre_DM_Cluster"] ~> "Pre_Extract_Tags_Prep"
+    ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
+    namespace "Pre" $ do
+        -- Creating Cell by Window matrix
+        nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
+        nodePar "Make_Window_Mat" [| mkWindowMat "/temp/Pre/Window/" |] $ return ()
+        path ["Get_Windows", "Make_Window_Mat"]
+
+        -- Clustering in each sample
+        dmClust "/temp/Pre/Cluster/"
+        path ["Make_Window_Mat", "DM_Reduce"]
+
+        -- Extract tags for each cluster
+        node "Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
+        nodePar "Extract_Tags" [| \input -> input & replicates.traverse.files %%~ ( \(bed, cl) -> do
+            let idRep = asDir $ "/temp/Pre/Bed/" <> T.unpack (input^.eid) <>
+                    "_rep" <> show (input^.replicates._1)
+            dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
+            clusters <- liftIO $ decodeFile $ cl^.location
+            let (nm, bcs) = unzip $ flip map clusters $ \c ->
+                    (_cluster_name c, map _cell_barcode $ _cluster_member c)
+                outputs = map (\x -> dir <> "/" <> B.unpack x <> ".bed") nm
+            fls <- liftIO $ extractBedByBarcode outputs bcs bed
+            return $ zip nm fls
+            )
+            |] $ return ()
+        path ["Extract_Tags_Prep", "Extract_Tags"]
+
+        -- Make cell by peak matrix
+        nodePar "Call_Peaks" [| \input -> input & replicates.traverse.files %%~ 
+            mapM (findPeaks $ "/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/") 
+            |] $ return ()
+        nodePar "Merge_Peaks" [| \input -> input & replicates.traverse.files %%~ 
+            mergePeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
+            |] $ return ()
+        path ["Extract_Tags", "Call_Peaks", "Merge_Peaks"]
+
+        node "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
+            input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
+            |] $ return ()
+        nodePar "Make_Peak_Mat" [| mkPeakMat "/temp/Pre/Peak/" |] $ return ()
+        ["Get_Windows", "Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
+        path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
+
+        -- Make cell by gene matrix
+
+        -- Doublet detection
+        node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
+        nodePar "Detect_Doublet" 'detectDoublet $ return ()
+        path ["Detect_Doublet_Prep", "Detect_Doublet"]
+
+        node "Cluster_Viz_Prep" [| return . uncurry zipExp |] $ return ()
+        nodePar "Cluster_Viz" [| \input -> input & replicates.traverse.files %%~ ( \(stat, cl) -> liftIO $ do
+            stats <- readStats $ stat^.location
+            cls <- decodeFile $ cl^.location
+            clusterViz3D (T.unpack (input^.eid) <> "_3d.html") cls stats
+            ) |] $ return ()
+        ["Detect_Doublet", "DM_Cluster"] ~> "Cluster_Viz_Prep"
+        ["Cluster_Viz_Prep"] ~> "Cluster_Viz"
+
+builder :: Builder ()
+builder = do
+    basicAnalysis
+    preClustering
 --------------------------------------------------------------------------------
 -- QC
 --------------------------------------------------------------------------------
@@ -52,8 +120,8 @@ builder = do
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix
 --------------------------------------------------------------------------------
-    nodePar "Get_Windows" 'getWindows $ return ()
-    nodePar "Make_Window_Matrix" 'mkWindowMat $ return ()
+    nodePar "Get_Windows" [| getWindows "/Feature/Window/" |] $ return ()
+    nodePar "Make_Window_Matrix" [| mkWindowMat "/Feature/Window/" |] $ return ()
     path ["Get_Bed", "Get_Windows", "Make_Window_Matrix"]
 
     -- merged matrix
@@ -63,61 +131,6 @@ builder = do
     node "Merge_Window_Matrix" [| mergeFeatMatrix "/Feature/Window/merged_cell_by_window" |] $ return ()
     ["Get_Windows", "Make_Window_Matrix"] ~> "Merge_Window_Matrix_Prep"
     path ["Merge_Window_Matrix_Prep", "Merge_Window_Matrix"]
-
---------------------------------------------------------------------------------
--- Process each sample
---------------------------------------------------------------------------------
-    -- Clustering in each sample
-    namespace "Each" $ dmClust "/Cluster_by_window/DM/Each/"
-    path ["Make_Window_Matrix", "Each_DM_Reduce"]
-
-    -- Extract tags for each cluster
-    node "Each_Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
-    nodePar "Each_Extract_Tags" [| \input -> input & replicates.traverse.files %%~ ( \(bed, cl) -> do
-        let idRep = asDir $ "/temp/Bed/Each/" <> T.unpack (input^.eid) <>
-                "_rep" <> show (input^.replicates._1)
-        dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
-        clusters <- liftIO $ decodeFile $ cl^.location
-        let (nm, bcs) = unzip $ flip map clusters $ \c ->
-                (_cluster_name c, map _cell_barcode $ _cluster_member c)
-            outputs = map (\x -> dir <> "/" <> B.unpack x <> ".bed") nm
-        fls <- liftIO $ extractBedByBarcode outputs bcs bed
-        return $ zip nm fls
-        )
-        |] $ return ()
-    ["Get_Bed", "Each_DM_Cluster"] ~> "Each_Extract_Tags_Prep"
-    path ["Each_Extract_Tags_Prep", "Each_Extract_Tags"]
-
-    -- Make cell by peak matrix
-    nodePar "Each_Call_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-        mapM (findPeaks $ "/temp/Peak/Each/" <> T.unpack (input^.eid) <> "/") 
-        |] $ return ()
-    nodePar "Each_Merge_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-        mergePeaks ("/temp/Peak/Each/" <> T.unpack (input^.eid) <> "/")
-        |] $ return ()
-    path ["Each_Extract_Tags", "Each_Call_Peaks", "Each_Merge_Peaks"]
-
-    node "Each_Make_Peak_Matrix_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
-        input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
-        |] $ return ()
-    nodePar "Each_Make_Peak_Matrix" [| mkPeakMat "/temp/Peak/Each/" |] $ return ()
-    ["Get_Windows", "Each_Merge_Peaks"] ~> "Each_Make_Peak_Matrix_Prep"
-    path ["Each_Make_Peak_Matrix_Prep", "Each_Make_Peak_Matrix"]
-
-    node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
-    ["Each_Make_Peak_Matrix", "Remove_Duplicates"] ~> "Detect_Doublet_Prep"
-    nodePar "Detect_Doublet" 'detectDoublet $ return ()
-    path ["Detect_Doublet_Prep", "Detect_Doublet"]
-
-    node "Each_Cluster_Viz_Prep" [| return . uncurry zipExp |] $ return ()
-    nodePar "Each_Cluster_Viz" [| \input -> input & replicates.traverse.files %%~ ( \(stat, cl) -> liftIO $ do
-        stats <- readStats $ stat^.location
-        cls <- decodeFile $ cl^.location
-        clusterViz3D (T.unpack (input^.eid) <> "_3d.html") cls stats
-        ) |] $ return ()
-    ["Detect_Doublet", "Each_DM_Cluster"] ~> "Each_Cluster_Viz_Prep"
-    ["Each_Cluster_Viz_Prep"] ~> "Each_Cluster_Viz"
-
 
 --------------------------------------------------------------------------------
 -- Clustering
@@ -156,7 +169,6 @@ builder = do
 --------------------------------------------------------------------------------
 -- Creating Cell by Gene matrix
 --------------------------------------------------------------------------------
-    node "Get_Genes" [| \_ -> getGeneNames |] $ return ()
     node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
     nodePar "Make_Gene_Mat" 'mkCellByGene $
         doc .= "Create cell by gene matrix for each sample."
@@ -167,11 +179,9 @@ builder = do
     node "Extract_Cluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/Cluster/" |] $ return ()
     ["Merge_Gene_Mat", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
 
-
     -- SubClusters
     node "Extract_SubCluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/SubCluster/" |] $ return ()
     ["Merge_Gene_Mat", "Combine_SubCluster"] ~> "Extract_SubCluster_Gene_Matrix"
-
 
 --------------------------------------------------------------------------------
 -- Differential Peak analysis

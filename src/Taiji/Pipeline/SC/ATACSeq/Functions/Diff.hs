@@ -30,21 +30,8 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
-{-
-sampleCells :: Int   -- ^ number of cells
-            -> SCATACSeq S (File tags 'Other)
-            -> IO [B.ByteString]
-sampleCells n input = do
-    mat <- mkSpMatrix id $ input^.replicates._2.files.location
-    v <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkVector 
-    g <- create
-    map f . V.toList . V.take n <$> uniformShuffle v g
-  where
-    f x = B.pack (T.unpack $ input^.eid) <> "+" <> x
--}
-
-sampleCells :: Int   -- ^ number of cells
-            -> [SCATACSeq S (File tags 'Other)]
+sampleCells :: Int   -- ^ Number of cells
+            -> [SCATACSeq S (File tags 'Other)]   -- ^ A list of clusters
             -> IO [[B.ByteString]]
 sampleCells n inputs = do
     cls <- fmap concat $ forM inputs $ \input -> decodeFile $ input^.replicates._2.files.location
@@ -54,9 +41,9 @@ sampleCells n inputs = do
         V.toList . V.take n <$> uniformShuffle v g
 
 mkRefMat :: SCATACSeqConfig config
-         => FilePath
+         => FilePath   -- ^ output file name
          -> Bool
-         -> ( [[B.ByteString]]
+         -> ( [[B.ByteString]]   -- ^ Cell barcodes
             , [SCATACSeq S (a, File '[Gzip] 'Other)] )
          -> ReaderT config IO FilePath
 mkRefMat filename addName (bcs, fls) = do
@@ -161,17 +148,6 @@ getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
   where
     peakIdxMap = M.fromList $ zipWith
         (\x i -> ((x^.chrom, x^.chromStart, x^.chromEnd), i)) ref [0..]
-
-
-{-
-mkDiffPeakFig :: SCATACSeqConfig config 
-              => FilePath
-              -> ReaderT config IO ()
-mkDiffPeakFig fl = do
-    dir <- figDir
-    (header:rest) <- B.lines <$> B.readFile fl
--}
-
 
 diffGenes :: SCATACSeqConfig config
           => ( SCATACSeq S (FilePath, File tags 'Other)

@@ -218,7 +218,7 @@ detectDoublet input = do
         statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location
         mat <- mkSpMatrix id $ fl^.location
         bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
-        B.writeFile (fl^.location) $ B.unlines $ flip map (zip bcs ds) $ \(bc, val) -> 
+        B.writeFile (stat^.location) $ B.unlines $ flip map (zip bcs ds) $ \(bc, val) -> 
             let s = M.findWithDefault undefined bc statMap
             in showStat s{_doublet_score = val}
         return stat
