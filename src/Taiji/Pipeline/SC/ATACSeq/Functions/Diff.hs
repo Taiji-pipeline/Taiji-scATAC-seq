@@ -31,42 +31,38 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 sampleCells :: Int   -- ^ Number of cells
-            -> [SCATACSeq S (File tags 'Other)]   -- ^ A list of clusters
-            -> IO [[B.ByteString]]
-sampleCells n inputs = do
-    cls <- fmap concat $ forM inputs $ \input -> decodeFile $ input^.replicates._2.files.location
+            -> SCATACSeq S (File tags 'Other)   -- ^ clusters
+            -> IO (SCATACSeq S [[B.ByteString]])
+sampleCells n input = input & replicates.traversed.files %%~ ( \fl -> do
+    cls <- decodeFile $ fl^.location
     g <- create
     forM cls $ \cl -> do
         let v = V.fromList $ map _cell_barcode $ _cluster_member cl
         V.toList . V.take n <$> uniformShuffle v g
+    )
 
 mkRefMat :: SCATACSeqConfig config
-         => FilePath   -- ^ output file name
+         => FilePath   -- ^ Prefix
          -> Bool
-         -> ( [[B.ByteString]]   -- ^ Cell barcodes
-            , [SCATACSeq S (a, File '[Gzip] 'Other)] )
-         -> ReaderT config IO FilePath
-mkRefMat filename addName (bcs, fls) = do
-    dir <- asks _scatacseq_output_dir >>= getPath
-    let output = dir <> filename
-    liftIO $ do
-        mat <- mkSpMatrix id $ head fls^.replicates._2.files._2.location
+         -> SCATACSeq S ( [[B.ByteString]], (a, File '[Gzip] 'Other) )
+         -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
+mkRefMat prefix addName input = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    let output = dir <> "/" <> T.unpack (input^.eid) <> "_ref_mat.gz"
+    input & replicates.traversed.files %%~ ( \(bcs, (_, fl)) -> liftIO $ do
+        mat <- mkSpMatrix id $ fl^.location
         let header = B.pack $ printf "Sparse matrix: %d x %d" (S.size bc) (_num_col mat)
-        runResourceT $ runConduit $ mapM_ sourceMat fls .|
+            bc = S.fromList $ concat bcs
+            filterFn x | addName = (B.pack (T.unpack $ input^.eid) <> "+" <> x) `S.member` bc
+                       | otherwise = x `S.member` bc
+        runResourceT $ runConduit $ streamRows mat .| filterC (filterFn . fst) .|
             (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
             gzip .| sinkFile output
-        return output
-  where
-    bc = S.fromList $ concat bcs
-    sourceMat input = do
-        let filterFn x | addName = (B.pack (T.unpack $ input^.eid) <> "+" <> x) `S.member` bc
-                       | otherwise = x `S.member` bc
-        mat <- liftIO $ mkSpMatrix id $ input^.replicates._2.files._2.location
-        streamRows mat .| filterC (filterFn . fst)
+        return $ location .~ output $ emptyFile )
 
 diffPeaks :: SCATACSeqConfig config
           => ( SCATACSeq S (File '[Gzip] 'Bed, File tags 'Other)
-             , FilePath )
+             , File '[Gzip] 'Other ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'NarrowPeak))
 diffPeaks (input, ref) = do
     dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
@@ -74,7 +70,7 @@ diffPeaks (input, ref) = do
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(peakFl, fl) -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
-            diffAnalysis (fl^.location) ref
+            diffAnalysis (fl^.location) $ ref^.location
         let f :: (Int, BED3) -> Maybe NarrowPeak
             f (i, peak) = case M.lookup i stats of
                 Nothing -> Nothing
@@ -150,16 +146,17 @@ getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
         (\x i -> ((x^.chrom, x^.chromStart, x^.chromEnd), i)) ref [0..]
 
 diffGenes :: SCATACSeqConfig config
-          => ( SCATACSeq S (FilePath, File tags 'Other)
-             , FilePath ) -- ^ Ref matrix
+          => FilePath
+          -> ( SCATACSeq S (FilePath, File tags 'Other)
+             , File '[Gzip] 'Other ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
-diffGenes (input, ref) = do
-    dir <- asks ((<> "/Diff/Gene/") . _scatacseq_output_dir) >>= getPath
+diffGenes prefix (input, ref) = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.tsv" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(nameFl, fl) -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
-            diffAnalysis (fl^.location) ref
+            diffAnalysis (fl^.location) $ ref^.location
         let f (i, nm) = case M.lookup i stats of
                 Nothing -> Nothing
                 Just (fold, pval, fdr) ->

@@ -155,7 +155,9 @@ lsaBuilder = do
     path ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Reduce"]
 
     -- Subclustering
-    node "Extract_Sub_Matrix" [| extractSubMatrix "/temp/" |] $ return ()
+    node "Extract_Sub_Matrix" [| \(x,y) -> 
+        let [input] = zipExp x y
+        in extractSubMatrix "/temp/" input |] $ return ()
     ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
     namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_resolution = Just 0.0007}
     path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
@@ -312,28 +314,27 @@ sampleCells clusters
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
                  => FilePath   -- ^ dir
-                 -> ( [SCATACSeq S (a, File tags 'Other)]
-                    , [SCATACSeq S (File '[] 'Other)] )
+                 -> SCATACSeq S ((a, File tags 'Other), File '[] 'Other)
                  -> ReaderT config IO [SCATACSeq S (a, File tags 'Other)]
-extractSubMatrix prefix ([input], [clFl]) = do
+extractSubMatrix prefix input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
+    let ((idxFl, matFl), clFl) = input^.replicates._2.files
     liftIO $ do
-        clusters <- decodeFile $ clFl^.replicates._2.files.location
-        mat <- mkSpMatrix id $ input^.replicates._2.files._2.location
+        clusters <- decodeFile $ clFl^.location
+        mat <- mkSpMatrix id $ matFl^.location
         let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
                 (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
                 gzip .| (sinkFile output >> return res)
               where
-                res = input & eid .~ T.pack (B.unpack _cluster_name)
-                            & replicates._2.files._2.location .~ output
-                output = dir <> B.unpack _cluster_name <> ".mat.gz"
+                res = input & eid .~ input^.eid <> "+" <> T.pack (B.unpack _cluster_name)
+                            & replicates._2.files .~ (idxFl, location .~ output $ matFl)
+                output = dir <> T.unpack (input^.eid) <> "_" <> B.unpack _cluster_name <> ".mat.gz"
                 header = B.pack $ printf "Sparse matrix: %d x %d" nCell
                     (_num_col mat)
                 ids = S.fromList $ map _cell_barcode _cluster_member
                 nCell = S.size ids
         runResourceT $ runConduit $ streamRows mat .|
             sequenceSinks (map mkSink clusters)
-extractSubMatrix _ _ = return []
 
 combineClusters :: SCATACSeqConfig config
                 => FilePath

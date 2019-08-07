@@ -49,6 +49,7 @@ preClustering = do
     path ["Get_Bed", "Pre_Get_Windows"]
     ["Get_Bed", "Pre_DM_Cluster"] ~> "Pre_Extract_Tags_Prep"
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
+    ["Pre_Get_Windows", "Get_Genes"] ~> "Pre_Make_Gene_Mat_Prep"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
         nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
@@ -92,6 +93,28 @@ preClustering = do
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
         -- Make cell by gene matrix
+        node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
+        nodePar "Make_Gene_Mat" 'mkCellByGene $
+            doc .= "Create cell by gene matrix for each sample."
+        path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
+
+        -- Differetial genes
+        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 100 |] $ return ()
+        ["DM_Cluster"] ~> "Get_Ref_Cells"
+        node "Make_Ref_Gene_Mat" [| \(ref, mat) -> mapM (mkRefMat "/temp/Pre/" False) $
+            zipExp ref mat
+            |] $ return ()
+        ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
+        node "Extract_Cluster_Gene_Matrix" [| \(ref, mat, cl) -> do
+            let input = zipExp ref $ zipExp mat cl
+            res <- mapM (extractSubMatrix "/temp/Pre/Cluster/") $
+                input & traverse.replicates.traverse.files %~ snd
+            return $ flip concatMap (zip input res) $ \(x, ys) ->
+                zip ys $ repeat $ x^.replicates._2.files._1
+            |] $ return ()
+        ["Make_Ref_Gene_Mat", "Make_Gene_Mat", "DM_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
+        nodePar "Diff_Gene" [| diffGenes "/temp/Diff/" |] $ return ()
+        path ["Extract_Cluster_Gene_Matrix", "Diff_Gene"]
 
         -- Doublet detection
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
@@ -153,7 +176,9 @@ builder = do
 
     -- Call peaks in each cluster and generate peak matrix
     genPeakMat "/Feature/Peak/Cluster/" Nothing "Merge_Tags" "Get_Windows"
-    node "Extract_Cluster_Matrix" [| extractSubMatrix "/Feature/Peak/Cluster/" |] $ return ()
+    node "Extract_Cluster_Matrix" [| \(x,y) -> 
+        let [input] = zipExp x y
+        in extractSubMatrix "/Feature/Peak/Cluster/" input |] $ return ()
     ["Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Matrix"
 
     node "Cluster_Correlation" 'clusterCorrelation $ return ()
@@ -176,27 +201,33 @@ builder = do
     node "Merge_Gene_Mat" 'mergeCellByGeneMatrix $ return ()
     path ["Make_Gene_Mat_Prep", "Make_Gene_Mat", "Merge_Gene_Mat"]
 
-    node "Extract_Cluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/Cluster/" |] $ return ()
+    node "Extract_Cluster_Gene_Matrix" [| \(x,y) -> 
+        let [input] = zipExp x y
+        in extractSubMatrix "/Feature/Gene/Cluster/" input |] $ return ()
     ["Merge_Gene_Mat", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
 
     -- SubClusters
-    node "Extract_SubCluster_Gene_Matrix" [| extractSubMatrix "/Feature/Gene/SubCluster/" |] $ return ()
+    node "Extract_SubCluster_Gene_Matrix" [| \(x,y) ->
+        let [input] = zipExp x y
+        in extractSubMatrix "/Feature/Gene/SubCluster/" input |] $ return ()
     ["Merge_Gene_Mat", "Combine_SubCluster"] ~> "Extract_SubCluster_Gene_Matrix"
 
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
 --------------------------------------------------------------------------------
-    node "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
+    node "Get_Ref_Cells" [| \[x] -> liftIO $ sampleCells 200 x |] $ return ()
     ["Peak_LSA_Cluster"] ~> "Get_Ref_Cells"
 
-    node "Get_SubCluster_Ref_Cells" [| liftIO . sampleCells 100 |] $ return ()
+    node "Get_SubCluster_Ref_Cells" [| \[x] -> liftIO $ sampleCells 100 x |] $ return ()
     ["Combine_SubCluster"] ~> "Get_SubCluster_Ref_Cells"
 
-    node "Make_Ref_Peak_Mat"
-        [| mkRefMat "/Feature/Peak/ref_cell_by_peak.mat.gz" False |] $ return ()
+    node "Make_Ref_Peak_Mat" [| \(ref, mat) -> do
+        let [input] = zipExp [ref] mat
+        mkRefMat "/Feature/Peak/" False input
+        |] $ return ()
     ["Get_Ref_Cells", "Merge_Peak_Matrix"] ~> "Make_Ref_Peak_Mat"
 
-    node "Diff_Peak_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()
+    node "Diff_Peak_Prep" [| \(x, ref) -> return $ zip x $ repeat $ ref^.replicates._2.files |] $ return ()
     ["Extract_Cluster_Matrix", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
@@ -211,24 +242,25 @@ builder = do
 --------------------------------------------------------------------------------
 -- Differential Gene analysis
 --------------------------------------------------------------------------------
-    node "Make_Ref_Gene_Mat" 
-        [| mkRefMat "/Feature/Gene/ref_cell_by_gene.mat.gz" True |] $ return ()
+    node "Make_Ref_Gene_Mat" [| \(ref, mat) -> do
+        let [input] = zipExp [ref] mat
+        mkRefMat "/Feature/Gene/" True input |] $ return ()
     ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
 
-    node "Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()
+    node "Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat $ ref^.replicates._2.files |] $ return ()
     ["Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
-    nodePar "Diff_Gene" 'diffGenes $ return ()
+    nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" |] $ return ()
     path ["Diff_Gene_Prep", "Diff_Gene"]
 
-
     -- SubCluster
-    node "Make_SubCluster_Ref_Gene_Mat" 
-        [| mkRefMat "/Feature/Gene/subcluster_ref_cell_by_gene.mat.gz" True |] $ return ()
+    node "Make_SubCluster_Ref_Gene_Mat" [| \(ref, mat) -> do
+        let [input] = zipExp [ref] mat
+        mkRefMat "/Feature/Gene/Subcluster/" True input |] $ return ()
     ["Get_SubCluster_Ref_Cells", "Make_Gene_Mat"] ~> "Make_SubCluster_Ref_Gene_Mat"
 
-    node "SubCluster_Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat ref |] $ return ()
+    node "SubCluster_Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat $ ref^.replicates._2.files |] $ return ()
     ["Extract_SubCluster_Gene_Matrix", "Make_SubCluster_Ref_Gene_Mat"] ~> "SubCluster_Diff_Gene_Prep"
-    nodePar "SubCluster_Diff_Gene" 'diffGenes $ return ()
+    nodePar "SubCluster_Diff_Gene" [| diffGenes "/Diff/Gene/" |] $ return ()
     path ["SubCluster_Diff_Gene_Prep", "SubCluster_Diff_Gene"]
 
 
