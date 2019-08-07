@@ -94,7 +94,7 @@ preClustering = do
 
         -- Make cell by gene matrix
         node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
-        nodePar "Make_Gene_Mat" 'mkCellByGene $
+        nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
             doc .= "Create cell by gene matrix for each sample."
         path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
@@ -195,7 +195,7 @@ builder = do
 -- Creating Cell by Gene matrix
 --------------------------------------------------------------------------------
     node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
-    nodePar "Make_Gene_Mat" 'mkCellByGene $
+    nodePar "Make_Gene_Mat" [| mkCellByGene "/Feature/Gene/" |] $
         doc .= "Create cell by gene matrix for each sample."
     ["Get_Windows", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
     node "Merge_Gene_Mat" 'mergeCellByGeneMatrix $ return ()

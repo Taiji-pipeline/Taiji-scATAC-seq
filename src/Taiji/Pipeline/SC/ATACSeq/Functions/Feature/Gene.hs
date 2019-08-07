@@ -34,10 +34,11 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-             => (SCATACSeq S (File tags 'Bed, a, Int), FilePath)
+             => FilePath
+             -> (SCATACSeq S (File tags 'Bed, a, Int), FilePath)
              -> ReaderT config IO (SCATACSeq S (FilePath, File '[Gzip] 'Other))
-mkCellByGene (input, genes) = do
-    dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
+mkCellByGene prefix (input, genes) = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_cell_by_gene.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . ( \(fl,_,nCell) -> do
