@@ -184,11 +184,11 @@ lsaClust prefix opt = do
 
 -- | Perform LSA analysis.
 dmClust :: FilePath   -- ^ Directory to save the results
+        -> ClustOpt
         -> Builder ()
-dmClust prefix = do
+dmClust prefix opt = do
     nodePar "DM_Reduce" [| performDM prefix |] $ return ()
-    nodePar "DM_Cluster" [| doClustering prefix $ defClustOpt{_normalization=None}
-        |] $ return ()
+    nodePar "DM_Cluster" [| doClustering prefix opt |] $ return ()
     nodePar "DM_Viz" [| \x -> do
         dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x

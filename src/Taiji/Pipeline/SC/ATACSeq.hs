@@ -57,7 +57,7 @@ preClustering = do
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
-        dmClust "/temp/Pre/Cluster/"
+        dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None, _resolution = Just 0.002}
         path ["Make_Window_Mat", "DM_Reduce"]
 
         -- Extract tags for each cluster
@@ -99,7 +99,7 @@ preClustering = do
         path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
         -- Differetial genes
-        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 100 |] $ return ()
+        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
         ["DM_Cluster"] ~> "Get_Ref_Cells"
         node "Make_Ref_Gene_Mat" [| \(ref, mat) -> mapM (mkRefMat "/temp/Pre/" False) $
             zipExp ref mat
