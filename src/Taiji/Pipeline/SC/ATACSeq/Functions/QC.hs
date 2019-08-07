@@ -326,10 +326,12 @@ plotClusterQC :: SCATACSeqConfig config
 plotClusterQC input = do
     dir <- qcDir
     let output = dir <> T.unpack (input^.eid) <> "_cluster_qc.html"
+    genes <- asks _scatacseq_marker_gene_list >>= \case
+        Nothing -> return []
+        Just fl -> liftIO $ map (head . B.split '\t') . B.lines <$> B.readFile fl
     liftIO $ do
         stats <- readStats $ statFl^.location
         cls <- decodeFile $ clFl^.location
-        let genes = ["MYH7","MYL3","MYL2","NPPA","ACTA2","CMTM5","GJA4","HIGD1B","ADCY5","ADIPOQ","CIDEC","CIDEA","CHID1","C1QB","C1QA","MS4A7","MYH11","CARMN","MUSTN1","FXYD3","L1CAM","RELN","CD69","LCP1","CXCR4","FIBIN","VCAN","PDGFRA","SHANK3","EGFL7","NOS3","ESAM","PAX7","CALCR","SOX11","MB","FHL3","OBSCN","LAD1","VIL1","PCK1","EMB","CD28","POU2AF1","MUC2","BEST2","DIEXF","IL2","THEMIS","CD96","TG","SALL1","PAX8","STAR","LSR","NOV","CRP","LEAP2","LIVAR","NEUROD1","RIMS2","KIF1A","GIF","SLC9A3","ENOX1","PGA3","LIPF","GP2","MUC6","MUC2","LCN2","LDLRAD1","ESRP1","FUT6","DEFA5","LTF","LARGE2","TIMP3","KRT7","CLDN18","SFTPB","SFTPD","SFTPA2","IFI30","IL19","LAIR1","MYLK","TAGLN","CARMN","LTF","PROM1","RGR","AGR2","SERPINA1","PGR","REG1A","PRSS1","CPA1","CFTR","TRVP6","GCK","NEUROD1","ISL1"]
         geneExpr <- M.fromList <$> readGeneExpr genes idxFl matFl
         clusterQC output cls stats (map B.unpack genes, geneExpr)
   where

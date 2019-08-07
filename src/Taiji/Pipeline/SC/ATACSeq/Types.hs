@@ -38,6 +38,7 @@ class SCATACSeqConfig config where
     _scatacseq_annotation :: config -> Maybe FilePath
     _scatacseq_temp_dir :: config -> Maybe FilePath
     _scatacseq_cluster_resolution :: config -> Maybe Double
+    _scatacseq_marker_gene_list :: config -> Maybe FilePath
 
 qcDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")
