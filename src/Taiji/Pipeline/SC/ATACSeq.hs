@@ -52,7 +52,7 @@ preClustering = do
     path ["Get_Bed", "Pre_Get_Windows"]
     ["Get_Bed", "Pre_DM_Cluster"] ~> "Pre_Extract_Tags_Prep"
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
-    ["Get_Genes"] ~> "Pre_Get_Markers"
+    ["Pre_Get_Windows", "Get_Genes"] ~> "Pre_Make_Gene_Mat_Prep"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
         nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
@@ -96,6 +96,7 @@ preClustering = do
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
         -- Make cell by gene matrix
+        {-
         node "Get_Markers" [| \fl -> do
             dir <- asks _scatacseq_output_dir >>= getPath
             let f x = (head $ B.split '\t' x, x)
@@ -109,14 +110,14 @@ preClustering = do
                 \x -> M.lookupDefault undefined x genes
             return output
             |] $ return ()
+            -}
         node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
         nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
             doc .= "Create cell by gene matrix for each sample."
-        ["Get_Windows", "Get_Markers"] ~> "Make_Gene_Mat_Prep"
         path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
         -- Differetial genes
-        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 50 |] $ return ()
+        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 20 |] $ return ()
         ["DM_Cluster"] ~> "Get_Ref_Cells"
         node "Make_Ref_Gene_Mat" [| \(ref, mat) -> do
             dir <- asks _scatacseq_output_dir >>= getPath
