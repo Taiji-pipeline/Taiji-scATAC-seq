@@ -53,6 +53,7 @@ preClustering = do
     ["Get_Bed", "Pre_DM_Cluster"] ~> "Pre_Extract_Tags_Prep"
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
     ["Pre_Get_Windows", "Get_Genes"] ~> "Pre_Make_Gene_Mat_Prep"
+    ["Get_Genes"] ~> "Pre_Get_Markers"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
         nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
@@ -96,21 +97,18 @@ preClustering = do
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
         -- Make cell by gene matrix
-        {-
         node "Get_Markers" [| \fl -> do
             dir <- asks _scatacseq_output_dir >>= getPath
-            let f x = (head $ B.split '\t' x, x)
-                output = dir <> "/temp/Pre/marker_genes.tsv"
-            genes <- liftIO $ M.fromList . map f . B.lines <$> B.readFile fl
+            let output = dir <> "/temp/Pre/marker_genes_idx.txt"
+            genes <- liftIO $ map (head . B.split '\t') . B.lines <$> B.readFile fl
+            let geneIdx = M.fromList $ zip genes [0 :: Int ..]
             markers <- asks _scatacseq_marker_gene_list >>= \case
                 Nothing -> return []
                 Just m -> liftIO $
-                    map (head . B.split '\t') . B.lines <$> B.readFile m
-            liftIO $ B.writeFile output $ B.unlines $ flip map markers $
-                \x -> M.lookupDefault undefined x genes
+                    map ((\x -> B.pack $ show $ M.lookupDefault undefined x geneIdx) . head . B.split '\t') . B.lines <$> B.readFile m
+            liftIO $ B.writeFile output $ B.unlines markers
             return output
             |] $ return ()
-            -}
         node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
         nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
             doc .= "Create cell by gene matrix for each sample."
@@ -127,12 +125,13 @@ preClustering = do
             return $ location .~ output $ emptyFile
             |] $ return ()
         ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
-        node "Extract_Cluster_Gene_Matrix" [| \(ref, mat, cl) -> do
+        node "Extract_Cluster_Gene_Matrix" [| \(ref, mat, cl, marker) -> do
             res <- mapM (extractSubMatrix "/temp/Pre/Cluster/") $ zipExp mat cl
-            return $ zip (concat res) $ repeat ref
+            return $ zip3 (concat res) (repeat ref) $ repeat marker
             |] $ return ()
-        ["Make_Ref_Gene_Mat", "Make_Gene_Mat", "DM_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
-        nodePar "Diff_Gene" [| diffGenes "/temp/Pre/Diff/" |] $ return ()
+        ["Make_Ref_Gene_Mat", "Make_Gene_Mat", "DM_Cluster", "Get_Markers"] ~> "Extract_Cluster_Gene_Matrix"
+
+        nodePar "Diff_Gene" [| \(x,y,z) -> diffGenes "/temp/Pre/Diff/" (Just z) (x,y) |] $ return ()
         node "Marker_Enrichment" [| computeMarkerEnrichment "/temp/Pre/Diff/" |] $ return ()
         path ["Extract_Cluster_Gene_Matrix", "Diff_Gene", "Marker_Enrichment"]
 
@@ -269,7 +268,7 @@ builder = do
 
     node "Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat $ ref^.replicates._2.files |] $ return ()
     ["Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
-    nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" |] $ return ()
+    nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
     path ["Diff_Gene_Prep", "Diff_Gene"]
 
     -- SubCluster
@@ -280,7 +279,7 @@ builder = do
 
     node "SubCluster_Diff_Gene_Prep" [| \(x, ref) -> return $ zip x $ repeat $ ref^.replicates._2.files |] $ return ()
     ["Extract_SubCluster_Gene_Matrix", "Make_SubCluster_Ref_Gene_Mat"] ~> "SubCluster_Diff_Gene_Prep"
-    nodePar "SubCluster_Diff_Gene" [| diffGenes "/Diff/Gene/" |] $ return ()
+    nodePar "SubCluster_Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
     path ["SubCluster_Diff_Gene_Prep", "SubCluster_Diff_Gene"]
 
 

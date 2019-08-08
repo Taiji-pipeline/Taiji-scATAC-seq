@@ -77,7 +77,7 @@ diffPeaks (input, ref) = do
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(peakFl, fl) -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
-            diffAnalysis (fl^.location) $ ref^.location
+            diffAnalysis (fl^.location) (ref^.location) Nothing
         let f :: (Int, BED3) -> Maybe NarrowPeak
             f (i, peak) = case M.lookup i stats of
                 Nothing -> Nothing
@@ -154,16 +154,17 @@ getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
 
 diffGenes :: SCATACSeqConfig config
           => FilePath
+          -> Maybe FilePath
           -> ( SCATACSeq S (FilePath, File tags 'Other)
              , File '[Gzip] 'Other ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
-diffGenes prefix (input, ref) = do
+diffGenes prefix idx (input, ref) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.tsv" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(nameFl, fl) -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
-            diffAnalysis (fl^.location) $ ref^.location
+            diffAnalysis (fl^.location) (ref^.location) idx
         let f (i, nm) = case M.lookup i stats of
                 Nothing -> Nothing
                 Just (fold, pval, fdr) ->
@@ -181,10 +182,11 @@ diffGenes prefix (input, ref) = do
 
 diffAnalysis :: FilePath  -- ^ foreground
              -> FilePath  -- ^ background
+             -> Maybe FilePath  -- ^ selected idx
              -> IO [(Int, Double, Double, Double)]
-diffAnalysis fg bk = withTemp Nothing $ \tmp -> do
-    shelly $ run_ "sc_utils" [ "diff", T.pack tmp, "--fg", T.pack fg
-        , "--bg", T.pack bk ]
+diffAnalysis fg bk idx = withTemp Nothing $ \tmp -> do
+    shelly $ run_ "sc_utils" $ [ "diff", T.pack tmp, "--fg", T.pack fg
+        , "--bg", T.pack bk ] ++ fromMaybe [] (fmap (\x -> ["--index", T.pack x]) idx)
     map (f . B.words) . B.lines <$> B.readFile tmp
   where
     f [a,b,c,d] = (readInt a, readDouble b, readDouble c, readDouble d)

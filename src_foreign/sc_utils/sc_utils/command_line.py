@@ -42,6 +42,7 @@ parser_doublet.set_defaults(func=detectDoublet)
 parser_diff = subparsers.add_parser('diff', help='diff')
 parser_diff.add_argument('--fg', type=str, help='foreground matrix')
 parser_diff.add_argument('--bg', type=str, help='background matrix')
+parser_diff.add_argument('--index', type=str, help='selected index')
 parser_diff.add_argument('output', type=str, help='output')
 parser_diff.set_defaults(func=diff)
 

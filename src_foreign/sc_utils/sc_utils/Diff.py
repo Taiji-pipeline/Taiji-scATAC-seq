@@ -9,7 +9,12 @@ from .Utils import InputData, readMatrix
 def diff(args):
     fg = readMatrix(args.fg, binary=True)
     bg = readMatrix(args.bg, binary=True)
-    idx, pval, enrichment = diffTest(fg, bg)
+    if (args.index):
+        with open(args.index, 'r') as fl:
+            idx_set = set([int(l.strip) for l in fl])
+        idx, pval, enrichment = diffTest(fg, bg, idx_set)
+    else:
+        idx, pval, enrichment = diffTest(fg, bg)
     fdr = fdrcorrection(pval)[1]
     np.savetxt( args.output, np.column_stack((idx, enrichment, pval, fdr)),
         delimiter='\t',
@@ -31,13 +36,15 @@ def process(fg, bg, X, z, idx):
         enrichment.append(e)
     return (probs, enrichment)
 
-def diffTest(fg, bg):
+def diffTest(fg, bg, idx_set=None):
     (n1,_) = fg.shape
     (n2,_) = bg.shape
 
     idx1 = np.where(np.sum(fg, axis=0) > 0.05*n1)[1]
     idx2 = np.where(np.sum(bg, axis=0) > 0.05*n2)[1]
     idx = list(set(list(idx1) + list(idx2)))
+    if(idx_set):
+        idx = list(set(idx).intersection(idx_set))
     idx.sort()
 
     fg_depth = np.log10(np.sum(fg, axis=1))
