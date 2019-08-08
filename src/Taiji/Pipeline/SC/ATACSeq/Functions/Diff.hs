@@ -30,6 +30,7 @@ import qualified Data.HashMap.Strict as M
 import qualified Data.Matrix.Unboxed as MU
 import Data.Conduit.Zlib (gzip)
 import Shelly hiding (FilePath)
+import Data.List.Ordered (nubSort)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -197,7 +198,7 @@ diffAnalysis fg bk = withTemp Nothing $ \tmp -> do
 computeMarkerEnrichment :: SCATACSeqConfig config
                         => FilePath
                         -> [SCATACSeq S (File '[] 'Tsv)]
-                        -> ReaderT config IO [SCATACSeq S (File '[] 'Tsv)]
+                        -> ReaderT config IO [SCATACSeq S ([String], File '[] 'Tsv)]
 computeMarkerEnrichment prefix inputs = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     genes <- asks _scatacseq_marker_gene_list >>= \case
@@ -208,10 +209,16 @@ computeMarkerEnrichment prefix inputs = do
             (cls, fls) = unzip $ map (\x -> (snd $ T.breakOnEnd "+" $ x^.eid,
                 x^.replicates._2.files.location)) xs
             output = dir <> T.unpack nm <> "_marker_enrichment.tsv"
-        dat <- forM fls $ \fl -> U.toList . scale' . U.fromList . map snd .
-            computeEnrichment genes <$> readFDR fl
+        (gs, dat) <- fmap unzip $ forM fls $ \fl -> do
+            fdr <- readFDR fl
+            let vec = U.toList $ scale' $ U.fromList $ map snd $
+                    computeEnrichment genes fdr
+                g = filter (`elem` concatMap snd genes) $ M.keys fdr
+            return (g, vec)
         DF.writeTable output (T.pack . show) $ DF.mkDataFrame cls (map fst genes) dat
-        return $ eid .~ nm $ replicates._2.files.location .~ output $ head xs
+        return $ eid .~ nm $ replicates._2.files .~
+            ( map T.unpack $ nubSort $ concat gs
+            , location .~ output $ emptyFile ) $ head xs
   where
     inputGroup = groupBy ((==) `on` (fst . T.breakOn "+" . (^.eid))) $
         sortBy (comparing (^.eid)) inputs
@@ -230,10 +237,12 @@ readFDR :: FilePath -> IO (M.HashMap T.Text Double)
 readFDR fl = M.fromList . map snd . filter ((>2.0) . fst) .
     map (f . T.splitOn "\t") . T.lines <$> T.readFile fl
   where
-    f (a:fld:_:q:_) = (read $ T.unpack fld, (a, read $ T.unpack q))
+    f (a:fld:_:q:_) = (read $ T.unpack fld :: Double, (a, read $ T.unpack q))
+    f _ = undefined
 
 readMarkers :: FilePath -> IO [(T.Text, [T.Text])]
 readMarkers fl = M.toList . M.fromListWith (++) . map (f . T.splitOn "\t") .
     T.lines <$> T.readFile fl
   where
     f (a:b:_) = (b, [T.toUpper a])
+    f _ = undefined

@@ -323,22 +323,19 @@ plotClusterQC :: SCATACSeqConfig config
                 ( File '[] 'Tsv
                 , File '[] 'Other
                 , (FilePath, File '[Gzip] 'Other)
-                , File '[] 'Tsv )
+                , ([String], File '[] 'Tsv) )
               -> ReaderT config IO ()
 plotClusterQC input = do
     dir <- qcDir
     let output = dir <> T.unpack (input^.eid) <> "_cluster_qc.html"
-    genes <- asks _scatacseq_marker_gene_list >>= \case
-        Nothing -> return []
-        Just fl -> liftIO $ map (head . B.split '\t') . B.lines <$> B.readFile fl
     liftIO $ do
         stats <- readStats $ statFl^.location
         cls <- decodeFile $ clFl^.location
-        geneExpr <- M.fromList <$> readGeneExpr genes idxFl matFl
+        geneExpr <- M.fromList <$> readGeneExpr (map B.pack genes) idxFl matFl
         df <- DF.readTable $ markerFl^.location
-        clusterQC output cls stats (map B.unpack genes, geneExpr) df
+        clusterQC output cls stats (genes, geneExpr) df
   where
-    (statFl, clFl, (idxFl, matFl), markerFl) = input^.replicates._2.files
+    (statFl, clFl, (idxFl, matFl), (genes, markerFl)) = input^.replicates._2.files
 
 clusterQC :: FilePath
           -> [CellCluster]

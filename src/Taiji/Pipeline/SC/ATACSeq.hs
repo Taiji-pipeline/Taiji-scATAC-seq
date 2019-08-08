@@ -113,8 +113,8 @@ preClustering = do
                 zip ys $ repeat $ x^.replicates._2.files._1
             |] $ return ()
         ["Make_Ref_Gene_Mat", "Make_Gene_Mat", "DM_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
-        nodePar "Diff_Gene" [| diffGenes "/temp/Diff/" |] $ return ()
-        node "Marker_Enrichment" 'computeMarkerEnrichment $ return ()
+        nodePar "Diff_Gene" [| diffGenes "/temp/Pre/Diff/" |] $ return ()
+        node "Marker_Enrichment" [| computeMarkerEnrichment "/temp/Pre/Diff/" |] $ return ()
         path ["Extract_Cluster_Gene_Matrix", "Diff_Gene", "Marker_Enrichment"]
 
         -- Doublet detection
