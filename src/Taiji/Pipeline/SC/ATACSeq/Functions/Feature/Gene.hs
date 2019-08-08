@@ -17,9 +17,7 @@ import Bio.Data.Bed.Types
 import Bio.Data.Bed
 import Data.Singletons.Prelude (Elem)
 import qualified Data.Text as T
-import Control.Arrow (first)
 import Bio.Data.Bed.Utils (rpkmBed)
-import Data.Conduit.Zlib (gzip)
 import Bio.RealWorld.GENCODE (readGenes, Gene(..))
 import Data.Double.Conversion.ByteString (toShortest)
 import Bio.Utils.Misc (readDouble, readInt)
@@ -53,24 +51,12 @@ mergeCellByGeneMatrix :: SCATACSeqConfig config
 mergeCellByGeneMatrix inputs = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "/Merged_cell_by_gene.mat.gz"
-    mats <- liftIO $ forM inputs $ \input -> do
-        let nm = B.pack $ T.unpack $ input^.eid
-        mat <- mkSpMatrix id $ input^.replicates._2.files._2.location
-        return (nm, mat)
-    liftIO $ runResourceT $ runConduit $ merge mats .| sinkFile output
+        mats = flip map inputs $ \input -> 
+            let nm = B.pack $ T.unpack $ input^.eid
+            in (Just nm, input^.replicates._2.files._2.location)
+    liftIO $ concatMatrix output mats
     return $ return $ head inputs & eid .~ "Merged" &
         replicates._2.files._2.location .~ output
-  where
-    merge ms
-        | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"
-        | otherwise = source .| (yield header >> mapC (encodeRowWith id)) .|
-            unlinesAsciiC .| gzip
-      where
-        source = forM_ ms $ \(sample, m) -> streamRows m .| 
-            mapC (first (\x -> sample <> "+" <> x))
-        nCell = foldl' (+) 0 $ map (_num_row . snd) ms
-        nBin = _num_col $ snd $ head ms
-        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
 
 getGeneNames :: SCATACSeqConfig config
              => ReaderT config IO FilePath

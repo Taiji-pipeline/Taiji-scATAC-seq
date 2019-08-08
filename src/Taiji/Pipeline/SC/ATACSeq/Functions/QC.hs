@@ -213,9 +213,9 @@ detectDoublet input = do
         let th = read $ B.unpack thres :: Double
             ds = map readDouble $ B.words sc
             ds_sim = map readDouble $ B.words sim_sc
-            rate = show $ fromIntegral (length $ filter (>=th) ds) /
-                fromIntegral (length ds)
-        savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> rate)
+            rate = fromIntegral (length $ filter (>=th) ds) /
+                fromIntegral (length ds) :: Double
+        savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> show rate)
             , mkHist ds_sim th] []
 
         statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location

@@ -234,7 +234,7 @@ computeEnrichment markers fdr = map (second f) markers
         fromIntegral (length xs)
 
 readFDR :: FilePath -> IO (M.HashMap T.Text Double)
-readFDR fl = M.fromList . map snd . filter ((>2.0) . fst) .
+readFDR fl = M.fromList . map snd . filter ((>2) . fst) .
     map (f . T.splitOn "\t") . T.lines <$> T.readFile fl
   where
     f (a:fld:_:q:_) = (read $ T.unpack fld :: Double, (a, read $ T.unpack q))

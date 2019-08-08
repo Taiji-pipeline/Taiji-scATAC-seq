@@ -1,15 +1,18 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE LambdaCase #-}
 module Taiji.Pipeline.SC.ATACSeq (builder) where
 
 import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
+import qualified Data.HashMap.Strict as M
 import Data.Binary
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (concatMatrix)
 
 -- | The basic analysis.
 basicAnalysis :: Builder ()
@@ -49,7 +52,7 @@ preClustering = do
     path ["Get_Bed", "Pre_Get_Windows"]
     ["Get_Bed", "Pre_DM_Cluster"] ~> "Pre_Extract_Tags_Prep"
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
-    ["Pre_Get_Windows", "Get_Genes"] ~> "Pre_Make_Gene_Mat_Prep"
+    ["Get_Genes"] ~> "Pre_Get_Markers"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
         nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
@@ -93,24 +96,39 @@ preClustering = do
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
         -- Make cell by gene matrix
+        node "Get_Markers" [| \fl -> do
+            dir <- asks _scatacseq_output_dir >>= getPath
+            let f x = (head $ B.split '\t' x, x)
+                output = dir <> "/temp/Pre/marker_genes.tsv"
+            genes <- liftIO $ M.fromList . map f . B.lines <$> B.readFile fl
+            markers <- asks _scatacseq_marker_gene_list >>= \case
+                Nothing -> return []
+                Just m -> liftIO $
+                    map (head . B.split '\t') . B.lines <$> B.readFile m
+            liftIO $ B.writeFile output $ B.unlines $ flip map markers $
+                \x -> M.lookupDefault undefined x genes
+            return output
+            |] $ return ()
         node "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat genes |] $ return ()
         nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
             doc .= "Create cell by gene matrix for each sample."
+        ["Get_Windows", "Get_Markers"] ~> "Make_Gene_Mat_Prep"
         path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
         -- Differetial genes
-        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
+        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 50 |] $ return ()
         ["DM_Cluster"] ~> "Get_Ref_Cells"
-        node "Make_Ref_Gene_Mat" [| \(ref, mat) -> mapM (mkRefMat "/temp/Pre/" False) $
-            zipExp ref mat
+        node "Make_Ref_Gene_Mat" [| \(ref, mat) -> do
+            dir <- asks _scatacseq_output_dir >>= getPath
+            let output = dir <> "/temp/Pre/merged_ref.mat.gz" 
+            mats <- mapM (mkRefMat "/temp/Pre/" False) $ zipExp ref mat
+            liftIO $ concatMatrix output $ flip map mats $ \x -> (Nothing, x^.replicates._2.files.location)
+            return $ location .~ output $ emptyFile
             |] $ return ()
         ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
         node "Extract_Cluster_Gene_Matrix" [| \(ref, mat, cl) -> do
-            let input = zipExp ref $ zipExp mat cl
-            res <- mapM (extractSubMatrix "/temp/Pre/Cluster/") $
-                input & traverse.replicates.traverse.files %~ snd
-            return $ flip concatMap (zip input res) $ \(x, ys) ->
-                zip ys $ repeat $ x^.replicates._2.files._1
+            res <- mapM (extractSubMatrix "/temp/Pre/Cluster/") $ zipExp mat cl
+            return $ zip (concat res) $ repeat ref
             |] $ return ()
         ["Make_Ref_Gene_Mat", "Make_Gene_Mat", "DM_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
         nodePar "Diff_Gene" [| diffGenes "/temp/Pre/Diff/" |] $ return ()

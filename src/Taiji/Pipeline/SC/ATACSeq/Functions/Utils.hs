@@ -24,6 +24,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , encodeRowWith
 
     , filterCols
+    , concatMatrix
 
       -- * Feature matrix
     , mkFeatMat
@@ -270,6 +271,30 @@ filterCols output idx input = do
   where
     go (prev, c) (i:x) = replicate (i-prev) c ++ go (i, c+1) x
     go (_, c) [] = repeat c
+
+-- | Combine rows of matrices. 
+concatMatrix :: FilePath   -- ^ Output merged matrix
+             -> [(Maybe B.ByteString, FilePath)] -- ^ A list of matrix
+             -> IO ()
+concatMatrix output inputs = do
+    mats <- forM inputs $ \(nm, fl) -> do
+        mat <- mkSpMatrix id fl
+        return (nm, mat)
+    runResourceT $ runConduit $ merge mats .| sinkFile output
+  where
+    merge mats
+        | any (/=nBin) (map (_num_col . snd) mats) = error "Column unmatched!"
+        | otherwise = source .| (yield header >> mapC (encodeRowWith id)) .|
+            unlinesAsciiC .| gzip
+      where
+        source = forM_ mats $ \(nm, mat) ->
+            let f x = case nm of
+                    Nothing -> x
+                    Just n -> n <> "+" <> x
+            in streamRows mat .| mapC (first f)
+        nCell = foldl' (+) 0 $ map (_num_row . snd) mats
+        nBin = _num_col $ snd $ head mats
+        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
 
 -- | Generating the cell by feature count matrix as a gzipped stream.
 -- The input stream is raw tags grouped by cells.
