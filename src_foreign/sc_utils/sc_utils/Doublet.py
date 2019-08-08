@@ -1,7 +1,6 @@
 import scrublet as scr
 import scipy as sp
 import numpy as np
-from sklearn.neighbors.kde import KernelDensity
 from sklearn.mixture import BayesianGaussianMixture
 
 import matplotlib.pyplot as plt  
@@ -9,7 +8,7 @@ import matplotlib.pyplot as plt
 from .Utils import readMatrix
 
 def detectDoublet(args):
-    counts_matrix = readMatrix(args.input, binary=True)
+    counts_matrix = readMatrix(args.input, binary=False)
     scrub = scr.Scrublet(counts_matrix,
         expected_doublet_rate = 0.06, sim_doublet_ratio=3, n_neighbors=25)
     doublet_scores, _ = scrub.scrub_doublets(
@@ -18,7 +17,7 @@ def detectDoublet(args):
         min_gene_variability_pctl=85,
         n_prin_comps=30
         )
-    #threshold = findThresHold(scrub.doublet_scores_sim_)
+
     threshold = findThresHold_fit(scrub.doublet_scores_sim_, output=args.plot)
 
     with open(args.output, 'w') as fl:
@@ -27,14 +26,6 @@ def detectDoublet(args):
         fl.write('\t'.join(map(str, (doublet_scores.tolist()))))
         fl.write("\n")
         fl.write('\t'.join(map(str, scrub.doublet_scores_sim_)))
-
-def findThresHold(X):
-    X = np.array([X]).T
-    kde = KernelDensity(kernel='gaussian', bandwidth=0.005).fit(X)
-    sample_X = np.linspace(0, 1, 500)[:, np.newaxis]
-    density = np.exp(kde.score_samples(sample_X))
-    gradient = np.gradient(density)
-    return sample_X[np.where(gradient < 0.0001)[0][0],0]
 
 def findThresHold_fit(X, output=None):
     X = np.array([X]).T
@@ -45,8 +36,8 @@ def findThresHold_fit(X, output=None):
     m2 = gmm.means_[1]
     s2 = gmm.covariances_[1,0]
 
-    c1 = sp.stats.norm.ppf(0.95,m1,s1)[0]
-    c2 = sp.stats.norm.ppf(0.05,m2,s2)[0]
+    c1 = sp.stats.norm.ppf(0.9,m1,s1)[0]
+    c2 = sp.stats.norm.ppf(0.01,m2,s2)[0]
     th = max(c1,c2)
 
     if (output):
