@@ -45,8 +45,9 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
-import Taiji.Utils.Plot.ECharts (scatter3D', toolbox)
+import qualified Taiji.Utils.Plot.ECharts as E
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (mkSpMatrix, streamRows)
+import qualified Taiji.Utils.DataFrame as DF
 
 data Stat = Stat
     { _barcode :: B.ByteString
@@ -321,7 +322,8 @@ plotClusterQC :: SCATACSeqConfig config
               => SCATACSeq S
                 ( File '[] 'Tsv
                 , File '[] 'Other
-                , (FilePath, File '[Gzip] 'Other) )
+                , (FilePath, File '[Gzip] 'Other)
+                , File '[] 'Tsv )
               -> ReaderT config IO ()
 plotClusterQC input = do
     dir <- qcDir
@@ -333,16 +335,22 @@ plotClusterQC input = do
         stats <- readStats $ statFl^.location
         cls <- decodeFile $ clFl^.location
         geneExpr <- M.fromList <$> readGeneExpr genes idxFl matFl
-        clusterQC output cls stats (map B.unpack genes, geneExpr)
+        df <- DF.readTable $ markerFl^.location
+        clusterQC output cls stats (map B.unpack genes, geneExpr) df
   where
-    (statFl, clFl, (idxFl, matFl)) = input^.replicates._2.files
+    (statFl, clFl, (idxFl, matFl), markerFl) = input^.replicates._2.files
 
 clusterQC :: FilePath
           -> [CellCluster]
           -> [Stat]
           -> ([String], M.Map B.ByteString [Int])
+          -> DF.DataFrame Double
           -> IO ()
-clusterQC output cs stats (names, expr) = savePlots output [] [scatter3D' dat3D viz <> toolbox]
+clusterQC output cs stats (names, expr) df = savePlots output []
+    [ E.scatter3D' dat3D viz <> E.toolbox
+    , hp <> E.toolbox <> E.option
+        [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
+    ]
   where
     viz = statViz <> geneViz
     statViz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
@@ -359,6 +367,13 @@ clusterQC output cs stats (names, expr) = savePlots output [] [scatter3D' dat3D 
         (\x -> M.findWithDefault undefined (_cell_barcode x) stats') .
         _cluster_member) cs
     stats' = M.fromList $ map (\x -> (_barcode x, x)) stats
+
+    hp = E.heatmap $ DF.reorderRows (DF.orderByCluster id) $
+        DF.reorderColumns (DF.orderByCluster id) df
+    viridis :: [String]
+    viridis = ["#440154", "#482173", "#433E85", "#38598C", "#2D708E",
+        "#25858E", "#1E9B8A", "#2BB07F", "#51C56A", "#85D54A", "#C2DF23", "#FDE725"]
+ 
 
 readGeneExpr :: [B.ByteString] 
              -> FilePath   -- ^ Index

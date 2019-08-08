@@ -114,18 +114,21 @@ preClustering = do
             |] $ return ()
         ["Make_Ref_Gene_Mat", "Make_Gene_Mat", "DM_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
         nodePar "Diff_Gene" [| diffGenes "/temp/Diff/" |] $ return ()
-        path ["Extract_Cluster_Gene_Matrix", "Diff_Gene"]
+        node "Marker_Enrichment" 'computeMarkerEnrichment $ return ()
+        path ["Extract_Cluster_Gene_Matrix", "Diff_Gene", "Marker_Enrichment"]
 
         -- Doublet detection
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
         nodePar "Detect_Doublet" 'detectDoublet $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
 
-        node "Cluster_QC_Prep" [| \(x,y,z) -> return $ (zipExp x $ zipExp y z) &
-            traverse.replicates.traverse.files %~ (\(a,(b,c)) -> (a,b,c))
+        node "Cluster_QC_Prep" [| \(x1,x2,x3,x4) -> return $
+            (zipExp x1 $ zipExp x2 $ zipExp x3 x4) &
+                traverse.replicates.traverse.files %~ (\(a,(b,(c,d))) -> (a,b,c,d))
             |] $ return ()
         nodePar "Cluster_QC" 'plotClusterQC $ return ()
-        ["Detect_Doublet", "DM_Cluster", "Make_Gene_Mat"] ~> "Cluster_QC_Prep"
+        ["Detect_Doublet", "DM_Cluster", "Make_Gene_Mat", "Marker_Enrichment"]
+            ~> "Cluster_QC_Prep"
         ["Cluster_QC_Prep"] ~> "Cluster_QC"
 
 builder :: Builder ()

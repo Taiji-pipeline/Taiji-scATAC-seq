@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     ( sampleCells
     , mkRefMat
@@ -8,13 +9,17 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     , diffGenes
     , rpkmPeak
     , rpkmDiffPeak
+    , computeMarkerEnrichment 
     ) where
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Bio.Data.Bed
+import Bio.Utils.Functions (scale)
+import Control.Arrow (second)
 import Data.Binary (decodeFile)
 import Bio.Data.Bed.Utils (rpkmBed)
 import Data.Conduit.Internal (zipSources)
@@ -29,6 +34,7 @@ import Shelly hiding (FilePath)
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import qualified Taiji.Utils.DataFrame as DF
 
 sampleCells :: Int   -- ^ Number of cells
             -> SCATACSeq S (File tags 'Other)   -- ^ clusters
@@ -183,3 +189,51 @@ diffAnalysis fg bk = withTemp Nothing $ \tmp -> do
     f [a,b,c,d] = (readInt a, readDouble b, readDouble c, readDouble d)
     f _ = error "wrong format!"
 
+
+--------------------------------------------------------------------------------
+-- Marker gene
+--------------------------------------------------------------------------------
+
+computeMarkerEnrichment :: SCATACSeqConfig config
+                        => FilePath
+                        -> [SCATACSeq S (File '[] 'Tsv)]
+                        -> ReaderT config IO [SCATACSeq S (File '[] 'Tsv)]
+computeMarkerEnrichment prefix inputs = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    genes <- asks _scatacseq_marker_gene_list >>= \case
+        Nothing -> return []
+        Just fl -> liftIO $ readMarkers fl
+    liftIO $ forM inputGroup $ \xs -> do
+        let nm = fst $ T.breakOn "+" $ head xs^.eid
+            (cls, fls) = unzip $ map (\x -> (snd $ T.breakOnEnd "+" $ x^.eid,
+                x^.replicates._2.files.location)) xs
+            output = dir <> T.unpack nm <> "_marker_enrichment.tsv"
+        dat <- forM fls $ \fl -> U.toList . scale' . U.fromList . map snd .
+            computeEnrichment genes <$> readFDR fl
+        DF.writeTable output (T.pack . show) $ DF.mkDataFrame cls (map fst genes) dat
+        return $ eid .~ nm $ replicates._2.files.location .~ output $ head xs
+  where
+    inputGroup = groupBy ((==) `on` (fst . T.breakOn "+" . (^.eid))) $
+        sortBy (comparing (^.eid)) inputs
+    scale' xs | U.all (==0) xs = xs
+              | otherwise = scale xs
+
+computeEnrichment :: [(T.Text, [T.Text])]
+                  -> M.HashMap T.Text Double
+                  -> [(T.Text, Double)]
+computeEnrichment markers fdr = map (second f) markers
+  where
+    f xs = foldl' (+) 0 (map (\k -> M.lookupDefault 0 k fdr) xs) /
+        fromIntegral (length xs)
+
+readFDR :: FilePath -> IO (M.HashMap T.Text Double)
+readFDR fl = M.fromList . map snd . filter ((>2.0) . fst) .
+    map (f . T.splitOn "\t") . T.lines <$> T.readFile fl
+  where
+    f (a:fld:_:q:_) = (read $ T.unpack fld, (a, read $ T.unpack q))
+
+readMarkers :: FilePath -> IO [(T.Text, [T.Text])]
+readMarkers fl = M.toList . M.fromListWith (++) . map (f . T.splitOn "\t") .
+    T.lines <$> T.readFile fl
+  where
+    f (a:b:_) = (b, [T.toUpper a])
