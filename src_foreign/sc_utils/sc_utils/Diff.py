@@ -11,7 +11,7 @@ def diff(args):
     bg = readMatrix(args.bg, binary=True)
     if (args.index):
         with open(args.index, 'r') as fl:
-            idx_set = set([int(l.strip) for l in fl])
+            idx_set = set([int(l.strip()) for l in fl])
         idx, pval, enrichment = diffTest(fg, bg, idx_set)
     else:
         idx, pval, enrichment = diffTest(fg, bg)

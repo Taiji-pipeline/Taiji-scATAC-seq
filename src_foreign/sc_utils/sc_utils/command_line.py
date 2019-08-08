@@ -36,6 +36,7 @@ parser_clust.set_defaults(func=sc.clustering)
 parser_doublet = subparsers.add_parser('doublet', help='doublet detection')
 parser_doublet.add_argument('input', type=str, help='input matrix')
 parser_doublet.add_argument('output', type=str, help='output')
+parser_doublet.add_argument('--plot', type=str, help='plot')
 parser_doublet.set_defaults(func=detectDoublet)
 
 # create the parser for the "diff" command
