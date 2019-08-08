@@ -88,6 +88,10 @@ preClustering = do
             mergePeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
             |] $ return ()
         path ["Extract_Tags", "Call_Peaks", "Merge_Peaks"]
+        node "Get_Peak_List" [| \inputs -> mergePeaks "/temp/Pre/Peak/" $
+            flip concatMap inputs $ \input -> input^.replicates._2.files
+            |] $ return ()
+        path ["Call_Peaks", "Get_Peak_List"]
 
         node "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
             input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
@@ -153,6 +157,11 @@ builder :: Builder ()
 builder = do
     basicAnalysis
     preClustering
+
+    node "Remove_Doublets_Prep" [| return . uncurry zipExp |] $ return ()
+    ["Get_Bed", "Pre_Detect_Doublet"] ~> "Remove_Doublets_Prep"
+    nodePar "Remove_Doublets" 'removeDoublet $ return ()
+    path ["Remove_Doublets_Prep", "Remove_Doublets"]
 --------------------------------------------------------------------------------
 -- QC
 --------------------------------------------------------------------------------

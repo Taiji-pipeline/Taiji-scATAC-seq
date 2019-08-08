@@ -17,6 +17,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , tssEnrichment
     , readTSS
     , detectDoublet
+    , removeDoublet
     , plotClusterQC
     ) where
 
@@ -34,6 +35,8 @@ import Control.Arrow (second)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
+import qualified Data.HashSet as S
+import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
@@ -41,7 +44,7 @@ import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
 import Shelly (shelly, run_)
 
-import Taiji.Prelude
+import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
@@ -198,9 +201,27 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
 
+removeDoublet :: SCATACSeqConfig config
+              => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
+                             , (File '[] 'Tsv, Double) )
+              -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
+removeDoublet input = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
+    let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . (\(bedFl, (statFl, th)) -> do
+        stats <- readStats $ statFl^.location
+        let cells = S.fromList $ map _barcode $ filter ((<=th) . _doublet_score) stats
+            f :: [BED] -> Bool
+            f = (`S.member` cells) . fromJust . (^.name) . head
+        runResourceT $ runConduit $ streamBedGzip (bedFl^.location) .|
+            groupBy ((==) `on` (^.name)) .| filterC f .|
+            concatC .| sinkFileBedGzip output
+        return $ location .~ output $ emptyFile )
+
 detectDoublet :: SCATACSeqConfig config
               => SCATACSeq S (File tags 'Other, (a, b, File '[] 'Tsv ))
-              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
+              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, Double))
 detectDoublet input = do
     dir <- qcDir
     let output = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
@@ -215,7 +236,7 @@ detectDoublet input = do
             ds_sim = map readDouble $ B.words sim_sc
             rate = fromIntegral (length $ filter (>=th) ds) /
                 fromIntegral (length ds) :: Double
-        savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> show rate)
+        savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> printf "%.3f" rate)
             , mkHist ds_sim th] []
 
         statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location
@@ -224,7 +245,7 @@ detectDoublet input = do
         B.writeFile (stat^.location) $ B.unlines $ flip map (zip bcs ds) $ \(bc, val) -> 
             let s = M.findWithDefault undefined bc statMap
             in showStat s{_doublet_score = val}
-        return stat
+        return (stat, th)
         )
   where
     mkHist xs ref = plt <> rule
@@ -320,7 +341,7 @@ plotCells input = plt <> axes <> vline <> hline <> scales
 
 plotClusterQC :: SCATACSeqConfig config
               => SCATACSeq S
-                ( File '[] 'Tsv
+                ( (File '[] 'Tsv, a)
                 , File '[] 'Other
                 , (FilePath, File '[Gzip] 'Other)
                 , ([String], File '[] 'Tsv) )
@@ -335,7 +356,7 @@ plotClusterQC input = do
         df <- DF.readTable $ markerFl^.location
         clusterQC output cls stats (genes, geneExpr) df
   where
-    (statFl, clFl, (idxFl, matFl), (genes, markerFl)) = input^.replicates._2.files
+    ((statFl,_), clFl, (idxFl, matFl), (genes, markerFl)) = input^.replicates._2.files
 
 clusterQC :: FilePath
           -> [CellCluster]
