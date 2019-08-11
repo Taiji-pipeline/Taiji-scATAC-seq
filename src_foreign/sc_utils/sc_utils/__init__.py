@@ -4,6 +4,7 @@ import math
 from gensim.matutils import corpus2dense, corpus2csc
 from sklearn.neighbors import kneighbors_graph
 import igraph as ig
+import leidenalg as la
 
 from .DiffusionMap import diffusionMap
 
@@ -34,21 +35,23 @@ def getEmbedding(mat, output, method="umap"):
     np.savetxt(output, embedding, delimiter='\t')
 
 def clustering(args):
-    import leidenalg as la
 
-    data = readCoordinates(args.input, n_dim=args.dim,
+    fls = args.input.split(',')
+
+    data = readCoordinates(fls[0], n_dim=args.dim,
         discard=args.discard, scale=args.scale)
 
-    print("Start KNN")
-    gr = mkKNNGraph([args.input], k=args.k)
+    if (len(fls) > 1):
+        print("Start KNN -- weighted")
+        is_weighted = True
+    else:
+        print("Start KNN")
+        is_weighted = False
+
+    gr = mkKNNGraph(fls, k=args.k, weighted=is_weighted)
 
     print("Start clustering")
-    if(args.res):
-        partition = la.find_partition(gr, la.CPMVertexPartition,
-            n_iterations=10, seed=12343, resolution_parameter = args.res)
-    else:
-        partition = la.find_partition(gr, la.ModularityVertexPartition,
-            n_iterations=10, seed=12343)
+    partition = leiden(gr, resolution=args.res, weighted=is_weighted)
 
     print("Clusters: ")
     print(len(partition)) 
@@ -75,16 +78,34 @@ def readCoordinates(fl, n_dim=None, discard=None, scale=None):
         data = np.apply_along_axis(scaling, 1, data)
     return data
 
-def mkKNNGraph(fls, k=25):
+def mkKNNGraph(fls, k=25, weighted=False):
     adj = None
     for fl in fls:
         mat = readCoordinates(fl)
         if (adj == None):
-            adj = kneighbors_graph(mat, k, mode='distance')
+            adj = kneighbors_graph(mat, k, mode='connectivity')
         else:
-            adj += kneighbors_graph(mat, k, mode='distance')
+            adj += kneighbors_graph(mat, k, mode='connectivity')
     vcount = max(adj.shape)
     sources, targets = adj.nonzero()
     edgelist = list(zip(sources.tolist(), targets.tolist()))
-    gr = ig.Graph(vcount, edgelist)
+
+    if (weighted):
+        gr = ig.Graph(n=vcount, edges=edgelist,
+            edge_attrs={ "weight": np.ravel(adj[(sources, targets)]) })
+    else:
+        gr = ig.Graph(n=vcount, edges=edgelist)
     return gr
+
+def leiden(gr, resolution=None, weighted=False):
+    weights = None
+    if weighted:
+        weights = gr.es["weight"]
+    if resolution:
+        partition = la.find_partition(gr, la.CPMVertexPartition,
+            n_iterations=10, seed=12343, resolution_parameter=resolution,
+            weights=weights)
+    else:
+        partition = la.find_partition(gr, la.ModularityVertexPartition,
+            n_iterations=10, seed=12343, weights=weights)
+    return partition
