@@ -30,7 +30,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 performLSA :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
            => FilePath
            -> SCATACSeq S (a, File tags 'Other)
-           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
+           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv]))
 performLSA prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     tmp <- asks _scatacseq_temp_dir
@@ -44,7 +44,7 @@ performLSA prefix input = do
         runResourceT $ runConduit $
             streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
         return ( location .~ rownames $ emptyFile
-               , location .~ output $ emptyFile ) )
+               , [location .~ output $ emptyFile] ) )
   where
     f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 

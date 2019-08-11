@@ -6,14 +6,14 @@ from sklearn.linear_model import LinearRegression
 from .Utils import readMatrix, regress
 
 def diffusionMap(args):
-    nSample = 2000
-    nChunk = 1000
+    nSample = min(1000, args.sample_size)
+    nChunk = 10000
 
     print("Read Data")
     mat = readMatrix(args.input, binary=True)
 
-    (n,_) = mat.get_shape()
-    if (nSample < n):
+    n, _ = mat.get_shape()
+    if nSample < n:
         idx = np.arange(n)
         np.random.shuffle(idx)
         sample = mat[idx[:nSample], :]
@@ -51,7 +51,7 @@ class DiffusionMap:
         L = np.matmul(self.D, S)
 
         print("Reduction")
-        (evals, evecs) = sp.sparse.linalg.eigs(L, n_dim+1, which='LR')
+        evals, evecs = sp.sparse.linalg.eigs(L, n_dim+1, which='LR')
         ix = evals.argsort()[::-1]
         self.evals = np.real(evals[ix])
         self.evecs = np.real(evecs[:, ix])
@@ -72,7 +72,7 @@ class DiffusionMap:
 """ Compute pair-wise jaccard index
 """
 def jaccard(mat):
-    (n,_) = mat.get_shape()
+    n, _ = mat.get_shape()
     coverage = mat.sum(axis=1)
     jm = mat.dot(mat.T).todense()
     c = coverage.dot(np.ones((1,n)))

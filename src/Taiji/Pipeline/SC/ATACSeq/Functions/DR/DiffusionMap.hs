@@ -20,7 +20,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 performDM :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath  -- ^ directory
           -> SCATACSeq S (File tags 'Other)
-          -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
+          -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv]))
 performDM prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_dm.tsv.gz" dir
@@ -38,12 +38,15 @@ performDM prefix input = do
         let idx = U.toList $ U.imapMaybe
                 (\i x -> if x < -2 || x > 2 then Just i else Nothing) v
         filterCols tmp idx $ fl^.location
+
         diffusionMap output tmp
 
         runResourceT $ runConduit $
             streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
+
+        let o = [ location .~ output $ emptyFile ]
         return ( location .~ rownames $ emptyFile
-               , location .~ output $ emptyFile ) )
+               , o ) )
   where
     f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 

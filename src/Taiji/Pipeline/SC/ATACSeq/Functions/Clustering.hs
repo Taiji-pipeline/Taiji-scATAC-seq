@@ -96,7 +96,7 @@ toParams ClustOpt{..} = embed ++ normalize ++ dim ++ res ++
 doClustering :: SCATACSeqConfig config
              => FilePath
              -> ClustOpt
-             -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
+             -> SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv])
              -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 doClustering prefix opt input = do
     tmp <- asks _scatacseq_temp_dir
@@ -109,16 +109,16 @@ doClustering prefix opt input = do
 
 clust :: ClustOpt
       -> Maybe FilePath      -- ^ temp dir
-      -> (File '[] 'Tsv, File '[Gzip] 'Tsv)   -- ^ lsa input matrix
+      -> (File '[] 'Tsv, [File '[Gzip] 'Tsv])   -- ^ lsa input matrix
       -> IO [CellCluster]
-clust opt dir (coverage, mat) = withTempDir dir $ \tmpD -> do
+clust opt dir (coverage, mats) = withTempDir dir $ \tmpD -> do
       let sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
               ZipSource seqDepthC <*>
               ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
                 mapC (map readDouble . B.split '\t') )
-      shelly $ run_ "sc_utils" $ [ "clust",
-          T.pack $ mat^.location, T.pack tmpD <> "/clust",
+          input = T.pack $ intercalate "," $ map (^.location) mats
+      shelly $ run_ "sc_utils" $ [ "clust", input, T.pack tmpD <> "/clust",
           "--embed", T.pack tmpD <> "/embed" ] ++ toParams opt
       cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
       clusters <- readClusters $ tmpD <> "/clust"

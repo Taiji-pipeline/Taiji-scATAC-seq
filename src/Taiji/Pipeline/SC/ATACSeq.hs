@@ -61,7 +61,8 @@ preClustering = do
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
-        dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None, _resolution = Just 0.002}
+        --dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None, _resolution = Just 0.002}
+        dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None}
         path ["Make_Window_Mat", "DM_Reduce"]
 
         -- Extract tags for each cluster
