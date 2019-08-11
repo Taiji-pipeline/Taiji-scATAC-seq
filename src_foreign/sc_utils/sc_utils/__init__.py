@@ -2,38 +2,16 @@ import scipy as sp
 import numpy as np
 import math
 from gensim.matutils import corpus2dense, corpus2csc
+from sklearn.neighbors import kneighbors_graph
+import igraph as ig
 
-from .LSI import lsiTransform
 from .DiffusionMap import diffusionMap
-
-'''
-    def transform(self, u):
-        for doc in self:
-            vec = corpus2csc([doc], num_terms=self.num_terms)
-            yield vec.T * u
-'''
-
-def ldaTransform(args):
-    from gensim.models.ldamodel import LdaModel
-    import logging
-    logging.basicConfig(filename='gensim.log',
-        format="%(asctime)s:%(levelname)s:%(message)s",
-        level=logging.INFO)
-
-    data = InputData(args.input)
-    n_dim = 15
-
-    model = LdaModel(data, num_topics=n_dim, chunksize=10000, random_state=2347, passes=40, iterations=5000, eval_every=10)
-    data_transformed = corpus2dense(model[data], n_dim).T
-    np.savetxt(args.output, data_transformed, delimiter='\t')
 
 def reduceDimension(args):
     if(args.method == "svd"):
         lsiTransform(args)
-    elif(args.method == "dm"):
-        diffusionMap(args)
     else:
-        ldaTransform(args)
+        diffusionMap(args)
 
 def getEmbedding(mat, output, method="umap"):
     print(method)
@@ -55,57 +33,16 @@ def getEmbedding(mat, output, method="umap"):
         embedding = np.concatenate((e1, e2), axis=1)
     np.savetxt(output, embedding, delimiter='\t')
 
-# regress out a variable
-def regressOut(X, y):
-    from sklearn.linear_model import Lasso
-    reg = Lasso(alpha=0.1).fit(X, y)
-    return np.subtract(y.flatten(), reg.predict(X))
-
 def clustering(args):
-    from sklearn.neighbors import kneighbors_graph
-    import igraph as ig
     import leidenalg as la
 
-    def readCoverage(fl):
-        with open(fl, 'r') as f:
-            return np.array([[math.log(int(line.strip()))] for line in f])
-
-    def scaling(xs):
-        s = 0
-        for x in xs:
-            s = s + x * x
-        s = math.sqrt(s)
-        return np.array([x / s for x in xs])
-
-    data_transformed = np.loadtxt(args.input)
-    if (args.dim):
-        data_transformed = data_transformed[..., :args.dim]
-    print(data_transformed.shape)
-
-    if (args.coverage):
-        print("Performing regression")
-        cov = readCoverage(args.coverage)
-        def normalize(y):
-            return regressOut(cov, np.array([[x] for x in y]))
-        data_transformed = np.apply_along_axis(normalize, 0, data_transformed)
-
-    if (args.discard):
-        data_transformed = data_transformed[..., 1:]
-
-    if (args.scale):
-        data_transformed = np.apply_along_axis(scaling, 1, data_transformed)
-
-    print(data_transformed.shape)
+    data = readCoordinates(args.input, n_dim=args.dim,
+        discard=args.discard, scale=args.scale)
 
     print("Start KNN")
-    adj = kneighbors_graph(data_transformed, args.k, mode='distance')
+    gr = mkKNNGraph([args.input], k=args.k)
 
     print("Start clustering")
-    vcount = max(adj.shape)
-    sources, targets = adj.nonzero()
-    edgelist = list(zip(sources.tolist(), targets.tolist()))
-    gr = ig.Graph(vcount, edgelist)
-
     if(args.res):
         partition = la.find_partition(gr, la.CPMVertexPartition,
             n_iterations=10, seed=12343, resolution_parameter = args.res)
@@ -120,4 +57,34 @@ def clustering(args):
 
     if(args.embed):
         print("Create Embedding:")
-        getEmbedding(data_transformed, args.embed, method=args.embed_method)
+        getEmbedding(data, args.embed, method=args.embed_method)
+
+def readCoordinates(fl, n_dim=None, discard=None, scale=None):
+    def scaling(xs):
+        s = 0
+        for x in xs:
+            s = s + x * x
+        s = math.sqrt(s)
+        return np.array([x / s for x in xs])
+    data = np.loadtxt(fl)
+    if (n_dim):
+        data = data[..., :n_dim]
+    if (discard):
+        data = data[..., 1:]
+    if (scale):
+        data = np.apply_along_axis(scaling, 1, data)
+    return data
+
+def mkKNNGraph(fls, k=25):
+    adj = None
+    for fl in fls:
+        mat = readCoordinates(fl)
+        if (adj == None):
+            adj = kneighbors_graph(mat, k, mode='distance')
+        else:
+            adj += kneighbors_graph(mat, k, mode='distance')
+    vcount = max(adj.shape)
+    sources, targets = adj.nonzero()
+    edgelist = list(zip(sources.tolist(), targets.tolist()))
+    gr = ig.Graph(vcount, edgelist)
+    return gr

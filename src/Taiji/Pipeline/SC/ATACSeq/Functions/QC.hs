@@ -235,8 +235,8 @@ detectDoublet input = do
             ds = map readDouble $ B.words sc
             ds_sim = map readDouble $ B.words sim_sc
             rate = fromIntegral (length $ filter (>=th) ds) /
-                fromIntegral (length ds) :: Double
-        savePlots outputPlot [mkHist ds th <> title ("doublet rate: " <> printf "%.3f" rate)
+                fromIntegral (length ds) * 100 :: Double
+        savePlots outputPlot [mkHist ds th <> title (printf "doublet percentage: %.1f\%" rate)
             , mkHist ds_sim th] []
 
         statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location
