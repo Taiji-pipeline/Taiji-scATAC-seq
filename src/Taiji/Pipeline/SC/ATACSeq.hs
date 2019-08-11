@@ -54,6 +54,7 @@ preClustering = do
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
     ["Pre_Get_Windows", "Get_Genes"] ~> "Pre_Make_Gene_Mat_Prep"
     ["Get_Genes"] ~> "Pre_Get_Markers"
+    ["Get_Bed", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
         nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
@@ -89,10 +90,6 @@ preClustering = do
             mergePeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
             |] $ return ()
         path ["Extract_Tags", "Call_Peaks", "Merge_Peaks"]
-        node "Get_Peak_List" [| \inputs -> mergePeaks "/temp/Pre/Peak/" $
-            flip concatMap inputs $ \input -> input^.replicates._2.files
-            |] $ return ()
-        path ["Call_Peaks", "Get_Peak_List"]
 
         node "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
             input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
@@ -144,6 +141,9 @@ preClustering = do
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
         nodePar "Detect_Doublet" 'detectDoublet $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
+        node "Remove_Doublets_Prep" [| return . uncurry zipExp |] $ return ()
+        nodePar "Remove_Doublets" 'removeDoublet $ return ()
+        path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
         node "Cluster_QC_Prep" [| \(x1,x2,x3,x4) -> return $
             (zipExp x1 $ zipExp x2 $ zipExp x3 x4) &
@@ -154,20 +154,41 @@ preClustering = do
             ~> "Cluster_QC_Prep"
         ["Cluster_QC_Prep"] ~> "Cluster_QC"
 
+        -- Make feature matrix
+        node "Get_Peak_List" [| \inputs -> mergePeaks "/temp/Pre/Peak/" $
+            flip concatMap inputs $ \input -> input^.replicates._2.files
+            |] $ return ()
+        path ["Call_Peaks", "Get_Peak_List"]
+        node "Make_Feat_Mat_Prep" [| \(bed, pk) -> return $
+            flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
+                x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
+            |] $ return ()
+        nodePar "Make_Feat_Mat" [| mkPeakMat "/temp/Pre/Peak/" |] $ return ()
+        ["Remove_Doublets", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
+        node "Merge_Feat_Mat" [| \mats -> do
+            dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/"))
+            let output = dir <> "Merged_cell_by_peak.mat.gz"
+            liftIO $ concatMatrix output $ flip map mats $ \mat ->
+                ( Just $ B.pack $ T.unpack $ mat^.eid
+                , mat^.replicates._2.files.location )
+            return $ (head mats & eid .~ "Merged") &
+                replicates._2.files.location .~ output
+            |] $ return ()
+        path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
+
 builder :: Builder ()
 builder = do
     basicAnalysis
     preClustering
 
-    node "Remove_Doublets_Prep" [| return . uncurry zipExp |] $ return ()
-    ["Get_Bed", "Pre_Detect_Doublet"] ~> "Remove_Doublets_Prep"
-    nodePar "Remove_Doublets" 'removeDoublet $ return ()
-    path ["Remove_Doublets_Prep", "Remove_Doublets"]
 --------------------------------------------------------------------------------
 -- QC
 --------------------------------------------------------------------------------
     node "QC" 'plotStat $ return ()
     ["Remove_Duplicates"] ~> "QC"
+
+    node "Merged_Cluster_Reduce" [| performDM "/Cluster/" |] $ return ()
+    path ["Pre_Merge_Feat_Mat", "Merged_Cluster_Reduce"]
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix

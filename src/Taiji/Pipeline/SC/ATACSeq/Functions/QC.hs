@@ -37,6 +37,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
 import qualified Data.HashSet as S
 import Data.Conduit.List (groupBy)
+import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
@@ -204,7 +205,7 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
 removeDoublet :: SCATACSeqConfig config
               => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
                              , (File '[] 'Tsv, Double) )
-              -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
+              -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, Int))
 removeDoublet input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
     let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
@@ -214,10 +215,10 @@ removeDoublet input = do
         let cells = S.fromList $ map _barcode $ filter ((<=th) . _doublet_score) stats
             f :: [BED] -> Bool
             f = (`S.member` cells) . fromJust . (^.name) . head
-        runResourceT $ runConduit $ streamBedGzip (bedFl^.location) .|
-            groupBy ((==) `on` (^.name)) .| filterC f .|
-            concatC .| sinkFileBedGzip output
-        return $ location .~ output $ emptyFile )
+            sink = zipSinks lengthC $ concatC .| sinkFileBedGzip output
+        (nCells, _) <- runResourceT $ runConduit $ streamBedGzip (bedFl^.location) .|
+            groupBy ((==) `on` (^.name)) .| filterC f .| sink
+        return (location .~ output $ emptyFile, nCells) )
 
 detectDoublet :: SCATACSeqConfig config
               => SCATACSeq S (File tags 'Other, (a, b, File '[] 'Tsv ))
