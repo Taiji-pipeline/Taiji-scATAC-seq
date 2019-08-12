@@ -188,7 +188,12 @@ builder = do
     ["Remove_Duplicates"] ~> "QC"
 
     node "Merged_Cluster_Reduce" [| performDM "/Cluster/" |] $ return ()
-    path ["Pre_Merge_Feat_Mat", "Merged_Cluster_Reduce"]
+    node "Merged_Cluster" [| doClustering "/Cluster/" defClustOpt{_normalization = None} |] $ return ()
+    node "Merged_Cluster_Viz" [| \x -> do
+        dir <- asks ((<> asDir "/Cluster/") . _scatacseq_output_dir) >>= getPath
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Pre_Merge_Feat_Mat", "Merged_Cluster_Reduce", "Merged_Cluster", "Merged_Cluster_Viz"]
 
 --------------------------------------------------------------------------------
 -- Creating Cell by Window matrix

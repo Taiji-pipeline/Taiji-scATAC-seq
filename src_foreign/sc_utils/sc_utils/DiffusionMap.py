@@ -6,7 +6,7 @@ from sklearn.linear_model import LinearRegression
 from .Utils import readMatrix, regress
 
 def diffusionMap(args):
-    nSample = min(1000, args.sample_size)
+    nSample = max(1000, args.sample_size)
     nChunk = 10000
 
     print("Read Data")
