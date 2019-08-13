@@ -29,7 +29,7 @@ def detectDoublet(args):
 
 def findThresHold_fit(X, output=None):
     X = np.array([X]).T
-    gmm = BayesianGaussianMixture(n_components=2).fit(X)
+    gmm = BayesianGaussianMixture(n_components=2, max_iter=1000).fit(X)
     
     m1 = gmm.means_[0]
     s1 = gmm.covariances_[0,0]

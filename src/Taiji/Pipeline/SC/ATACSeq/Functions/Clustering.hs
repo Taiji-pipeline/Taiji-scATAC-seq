@@ -35,6 +35,7 @@ import qualified Data.Vector as V
 import System.Random.MWC.Distributions
 import System.Random.MWC
 import System.IO
+import Data.List.Ordered (nubSort)
 import Bio.Utils.Misc (readDouble, readInt)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
@@ -43,10 +44,12 @@ import Data.Conduit.Zlib (gzip)
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature
 import Taiji.Pipeline.SC.ATACSeq.Functions.DR.LSA
 import Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap
-import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import qualified Taiji.Utils.DataFrame as DF
+import Taiji.Utils.Plot
+import Taiji.Utils.Plot.ECharts
 
 -- | Embedding method
 data Embedding = UMAP
@@ -279,34 +282,6 @@ mergeBedCluster prefix (cName, fls) = do
             run_ "rm" $ map (\x -> T.pack $ x^.location) fls
         return (cName, location .~ output $ emptyFile)
 
-plotClusters :: FilePath
-             -> SCATACSeq S (File '[] 'Other)
-             -> IO ()
-plotClusters dir input = do
-    inputData <- decodeFile $ input^.replicates._2.files.location
-    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        stat = printf "%s/%s_rep%d_cluster_stat.html" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    when (B.elem '+' $ _cell_barcode $ head $ _cluster_member $ head inputData) $ clusterStat stat inputData
-    clusters <- sampleCells inputData
-    visualizeCluster output clusters
-
-sampleCells :: [CellCluster] -> IO [CellCluster]
-sampleCells clusters
-    | ratio >= 1 = return clusters
-    | otherwise = do
-        gen <- create
-        forM clusters $ \c -> do
-            s <- sampling gen ratio $ V.fromList $ _cluster_member c
-            return $ c {_cluster_member = V.toList s}
-  where
-    n = foldl1' (+) $ map (length . _cluster_member) clusters
-    ratio = 1 / (fromIntegral n / 30000) :: Double
-    sampling gen frac v = V.take n' <$> uniformShuffle v gen
-      where
-        n' = max 100 $ truncate $ frac * fromIntegral (V.length v)
-
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
                  => FilePath   -- ^ dir
@@ -347,3 +322,66 @@ combineClusters prefix inputs = do
     liftIO $ encodeFile output cls
     return $ head inputs & eid .~ "All"
                          & replicates._2.files.location .~ output
+--------------------------------------------------------------------------------
+-- Vizualization
+--------------------------------------------------------------------------------
+
+plotClusters :: FilePath
+             -> SCATACSeq S (File '[] 'Other)
+             -> IO ()
+plotClusters dir input = do
+    inputData <- decodeFile $ input^.replicates._2.files.location
+    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        stats = if B.elem '+' (_cell_barcode $ head $ _cluster_member $ head inputData)
+            then clusterStat inputData
+            else []
+    clusters <- sampleCells inputData
+    savePlots output [] $ [visualizeCluster clusters] ++ stats
+
+visualizeCluster :: [CellCluster] -> EChart
+visualizeCluster cs = scatter dat2D viz <> toolbox
+  where
+    dat2D = flip map cs $ \(CellCluster nm cells) ->
+        (B.unpack nm, map _cell_2d cells)
+    viz = Categorical $ concatMap
+        (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
+    getName x = let prefix = fst $ B.breakEnd (=='+') x
+                in if B.null prefix then "" else B.unpack $ B.init prefix
+
+clusterStat :: [CellCluster] -> [EChart]
+clusterStat clusters = 
+    [ stackBar $ DF.mapCols normalize df
+    , stackBar $ DF.mapCols normalize $ DF.transpose df
+    , heatmap $ DF.orderDataFrame id $ DF.spearman df
+    , heatmap $ DF.orderDataFrame id $ DF.spearman $ DF.transpose df ]
+  where
+    df = DF.mkDataFrame rownames colnames $
+        map (\x -> map (\i -> fromIntegral $ M.lookupDefault 0 i x) colnames) rows
+    (rownames, rows) = unzip $ map f clusters
+    colnames = nubSort $ concatMap M.keys rows
+    f CellCluster{..} = ( T.pack $ B.unpack _cluster_name,
+        M.fromListWith (+) $ map (\x -> (tissueName x, 1::Int)) _cluster_member )
+    tissueName Cell{..} = let prefix = fst $ B.breakEnd (=='+') _cell_barcode
+                          in if B.null prefix then "" else T.pack $ B.unpack $ B.init prefix
+    normalize xs 
+        | V.all (==0) xs = xs
+        | otherwise = V.map (\x -> round' $ x / s) xs
+      where 
+        round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
+        s = V.foldl1' (+) xs
+
+sampleCells :: [CellCluster] -> IO [CellCluster]
+sampleCells clusters
+    | ratio >= 1 = return clusters
+    | otherwise = do
+        gen <- create
+        forM clusters $ \c -> do
+            s <- sampling gen ratio $ V.fromList $ _cluster_member c
+            return $ c {_cluster_member = V.toList s}
+  where
+    n = foldl1' (+) $ map (length . _cluster_member) clusters
+    ratio = 1 / (fromIntegral n / 30000) :: Double
+    sampling gen frac v = V.take n' <$> uniformShuffle v gen
+      where
+        n' = max 100 $ truncate $ frac * fromIntegral (V.length v)

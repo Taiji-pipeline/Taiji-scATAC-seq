@@ -341,6 +341,9 @@ plotCells input = plt <> axes <> vline <> hline <> scales
         }
     } |]
 
+--------------------------------------------------------------------------------
+-- Cluster level QC
+--------------------------------------------------------------------------------
 
 plotClusterQC :: SCATACSeqConfig config
               => ( FilePath

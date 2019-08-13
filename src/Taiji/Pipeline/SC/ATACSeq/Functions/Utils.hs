@@ -30,8 +30,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , mkFeatMat
     , groupCells
     , mergeMatrix
-
-    , visualizeCluster
     ) where
 
 import Bio.Data.Bed
@@ -67,8 +65,6 @@ import qualified Data.Text as T
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Utils.Plot
-import Taiji.Utils.Plot.ECharts
 
 -------------------------------------------------------------------------------
 -- BASIC
@@ -360,16 +356,3 @@ mergeMatrix inputs idxOut = do
     getIndices idxFls = fmap S.toList $ runResourceT $ runConduit $
         mapM_ (streamBedGzip . (^.location)) idxFls .|
         foldlC (flip S.insert) S.empty
-
-visualizeCluster :: FilePath
-                 -> [CellCluster]
-                 -> IO ()
-visualizeCluster output cs = savePlots output []
-    [scatter dat2D viz <> toolbox]
-  where
-    dat2D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map _cell_2d cells)
-    viz = Categorical $ concatMap
-        (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
-    getName x = let prefix = fst $ B.breakEnd (=='+') x
-                in if B.null prefix then "" else B.unpack $ B.init prefix

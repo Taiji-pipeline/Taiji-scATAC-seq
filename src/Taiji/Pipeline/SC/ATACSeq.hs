@@ -242,10 +242,9 @@ builder = do
         zip3 (repeat genes) input $ repeat $ ref^.replicates._2.files
         |] $ return ()
     nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
+    node "Diff_Gene_Viz" 'plotDiffGene $ return ()
     ["Pre_Get_Genes", "Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
-    path ["Diff_Gene_Prep", "Diff_Gene"]
-
-
+    path ["Diff_Gene_Prep", "Diff_Gene", "Diff_Gene_Viz"]
 
 {-
 --------------------------------------------------------------------------------

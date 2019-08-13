@@ -30,7 +30,6 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
-                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR.LSA
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC

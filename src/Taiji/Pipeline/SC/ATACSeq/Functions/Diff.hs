@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuasiQuotes #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     ( sampleCells
     , mkRefMat
@@ -9,18 +10,24 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     , diffGenes
     , rpkmPeak
     , rpkmDiffPeak
+    , plotDiffGene
     ) where
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import Language.Javascript.JMacro
 import Bio.Data.Bed
+import Bio.Utils.Functions (scale)
+import Control.Arrow (second)
 import Data.Binary (decodeFile)
 import Bio.Data.Bed.Utils (rpkmBed)
 import Data.Conduit.Internal (zipSources)
 import System.Random.MWC (create)
 import System.Random.MWC.Distributions (uniformShuffle)
+import Data.List.Ordered (nubSort)
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
 import qualified Data.Matrix.Unboxed as MU
@@ -30,6 +37,9 @@ import Shelly hiding (FilePath)
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import qualified Taiji.Utils.DataFrame as DF
+import Taiji.Utils.Plot
+import qualified Taiji.Utils.Plot.ECharts as E
 
 sampleCells :: Int   -- ^ Number of cells
             -> SCATACSeq S (File tags 'Other)   -- ^ clusters
@@ -174,6 +184,47 @@ diffGenes prefix idx (nameFl, input, ref) = do
             concatMapC f .| unlinesAsciiC .| sinkFile output
         return $ location .~ output $ emptyFile )
 
+plotDiffGene :: SCATACSeqConfig config
+             => [SCATACSeq S (File '[] 'Tsv)]
+             -> ReaderT config IO ()
+plotDiffGene inputs = do
+    dir <- figDir
+    (cls, fdrs) <- liftIO $ fmap unzip $ forM inputs $ \input -> do
+        fdr <- readFDR $ input^.replicates._2.files.location
+        return (input^.eid, fdr)
+    markers <- asks _scatacseq_marker_gene_list >>= \case
+        Nothing -> return []
+        Just fl -> liftIO $ readMarkers fl
+    let output = dir <> "/diff_gene.html"
+        genes = nubSort $ concatMap M.keys fdrs
+        df1 = DF.mkDataFrame cls (map fst markers) $ flip map fdrs $ \fdr ->
+            U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
+        df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr ->
+            map (\g -> M.lookupDefault 0 g fdr) genes
+    liftIO $ savePlots output [] [mkHeatmap df1, mkHeatmap df2]
+  where
+    mkHeatmap df = p <> E.toolbox <> E.option
+        [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
+      where
+        p = E.heatmap $ DF.reorderRows (DF.orderByCluster id) $
+            DF.reorderColumns (DF.orderByCluster id) df
+    scale' xs | U.all (==0) xs = xs
+              | otherwise = scale xs
+    enrichment markers fdr = map (second f) markers
+      where
+        f xs = foldl' (+) 0 (map (\k -> M.lookupDefault 0 k fdr) xs) /
+            fromIntegral (length xs)
+    readFDR fl = M.fromList . map snd . filter ((>2) . fst) .
+        map (f . T.splitOn "\t") . T.lines <$> T.readFile fl
+      where
+        f (a:fld:_:q:_) = (read $ T.unpack fld :: Double, (a, read $ T.unpack q))
+        f _ = undefined
+    readMarkers :: FilePath -> IO [(T.Text, [T.Text])]
+    readMarkers fl = M.toList . M.fromListWith (++) . map (f . T.splitOn "\t") .
+        T.lines <$> T.readFile fl
+      where
+        f (a:b:_) = (b, [T.toUpper a])
+        f _ = undefined
 
 diffAnalysis :: FilePath  -- ^ foreground
              -> FilePath  -- ^ background

@@ -14,6 +14,7 @@ def diffusionMap(args):
 
     n, _ = mat.get_shape()
     if nSample < n:
+        np.random.seed(args.seed)
         idx = np.arange(n)
         np.random.shuffle(idx)
         sample = mat[idx[:nSample], :]
