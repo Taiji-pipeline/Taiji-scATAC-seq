@@ -138,7 +138,7 @@ preClustering = do
         node "Cluster_QC_Prep" [| \(genes, x1, x2, x3, diff) -> do
             let diff' = concatMap split $ mergeExp $ flip map diff $ \x ->
                     let (i, cl) = T.breakOn "+" $ x^.eid
-                    in eid .~ T.init i $ replicates._2.files %~ (,) cl $ x
+                    in eid .~ i $ replicates._2.files %~ (,) (T.tail cl) $ x
             return $ zip (repeat genes) $ (zipExp x1 $ zipExp x2 $ zipExp x3 diff') &
                 traverse.replicates.traverse.files %~ (\(a,(b,(c,d))) -> (a,b,c,d))
             |] $ return ()
