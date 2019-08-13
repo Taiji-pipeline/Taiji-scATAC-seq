@@ -37,12 +37,15 @@ def process(fg, bg, X, z, idx):
     return (probs, enrichment)
 
 def diffTest(fg, bg, idx_set=None):
-    (n1,_) = fg.shape
+    (n1,m) = fg.shape
     (n2,_) = bg.shape
 
-    idx1 = np.where(np.sum(fg, axis=0) > 0.05*n1)[1]
-    idx2 = np.where(np.sum(bg, axis=0) > 0.05*n2)[1]
-    idx = list(set(list(idx1) + list(idx2)))
+    idx = []
+    p1 = np.ravel(np.sum(fg, axis=0)) / n1
+    p2 = np.ravel(np.sum(bg, axis=0)) / n2
+    for i in range(m):
+        if (p1[i] / p2[i] >= 1.5 or p2[i] / p1[i] >= 1.5) and (p1[i] > 0.05 or p2[i] > 0.05):
+            idx.append(i)
     if(idx_set):
         idx = list(set(idx).intersection(idx_set))
     idx.sort()

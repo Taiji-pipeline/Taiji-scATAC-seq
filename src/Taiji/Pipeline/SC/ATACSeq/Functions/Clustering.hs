@@ -314,11 +314,11 @@ sampleCells clusters
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
                  => FilePath   -- ^ dir
-                 -> SCATACSeq S ((a, File tags 'Other), File '[] 'Other)
-                 -> ReaderT config IO [SCATACSeq S (a, File tags 'Other)]
+                 -> SCATACSeq S (File tags 'Other, File '[] 'Other)
+                 -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
 extractSubMatrix prefix input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
-    let ((idxFl, matFl), clFl) = input^.replicates._2.files
+    let (matFl, clFl) = input^.replicates._2.files
     liftIO $ do
         clusters <- decodeFile $ clFl^.location
         mat <- mkSpMatrix id $ matFl^.location
@@ -327,7 +327,7 @@ extractSubMatrix prefix input = do
                 gzip .| (sinkFile output >> return res)
               where
                 res = input & eid .~ input^.eid <> "+" <> T.pack (B.unpack _cluster_name)
-                            & replicates._2.files .~ (idxFl, location .~ output $ matFl)
+                            & replicates._2.files .~ (location .~ output $ matFl)
                 output = dir <> T.unpack (input^.eid) <> "_" <> B.unpack _cluster_name <> ".mat.gz"
                 header = B.pack $ printf "Sparse matrix: %d x %d" nCell
                     (_num_col mat)

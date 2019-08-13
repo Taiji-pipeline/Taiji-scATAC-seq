@@ -33,30 +33,30 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
-             -> (SCATACSeq S (File tags 'Bed, a, Int), FilePath)
-             -> ReaderT config IO (SCATACSeq S (FilePath, File '[Gzip] 'Other))
+             -> (SCATACSeq S (File tags 'Bed, Int), FilePath)
+             -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
 mkCellByGene prefix (input, genes) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_cell_by_gene.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . ( \(fl,_,nCell) -> do
+    input & replicates.traverse.files %%~ liftIO . ( \(fl, nCell) -> do
         regions <- map snd <$> readTSS genes
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
             groupCells .| mkFeatMat nCell regions .| sinkFile output
-        return $ (genes, emptyFile & location .~ output) )
+        return $ emptyFile & location .~ output )
 
 mergeCellByGeneMatrix :: SCATACSeqConfig config
-                      => [SCATACSeq S (a, File '[Gzip] 'Other)]
-                      -> ReaderT config IO [SCATACSeq S (a, File '[Gzip] 'Other)]
+                      => [SCATACSeq S (File '[Gzip] 'Other)]
+                      -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
 mergeCellByGeneMatrix inputs = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "/Merged_cell_by_gene.mat.gz"
         mats = flip map inputs $ \input -> 
             let nm = B.pack $ T.unpack $ input^.eid
-            in (Just nm, input^.replicates._2.files._2.location)
+            in (Just nm, input^.replicates._2.files.location)
     liftIO $ concatMatrix output mats
-    return $ return $ head inputs & eid .~ "Merged" &
-        replicates._2.files._2.location .~ output
+    return $ head inputs & eid .~ "Merged" &
+        replicates._2.files.location .~ output
 
 getGeneNames :: SCATACSeqConfig config
              => ReaderT config IO FilePath

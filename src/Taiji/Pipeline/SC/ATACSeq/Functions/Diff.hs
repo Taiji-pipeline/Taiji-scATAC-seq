@@ -51,12 +51,12 @@ sampleCells n input = input & replicates.traversed.files %%~ ( \fl -> do
 mkRefMat :: SCATACSeqConfig config
          => FilePath   -- ^ Prefix
          -> Bool
-         -> SCATACSeq S ( [[B.ByteString]], (a, File '[Gzip] 'Other) )
+         -> SCATACSeq S ([[B.ByteString]], File '[Gzip] 'Other)
          -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
 mkRefMat prefix addName input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = dir <> "/" <> T.unpack (input^.eid) <> "_ref_mat.gz"
-    input & replicates.traversed.files %%~ ( \(bcs, (_, fl)) -> liftIO $ do
+    input & replicates.traversed.files %%~ ( \(bcs, fl) -> liftIO $ do
         mat <- mkSpMatrix id $ fl^.location
         let header = B.pack $ printf "Sparse matrix: %d x %d" (S.size bc) (_num_col mat)
             bc = S.fromList $ concat bcs
@@ -155,14 +155,15 @@ getPeakIndex query ref = flip map query $ \q -> M.lookupDefault undefined
 diffGenes :: SCATACSeqConfig config
           => FilePath
           -> Maybe FilePath
-          -> ( SCATACSeq S (FilePath, File tags 'Other)
+          -> ( FilePath   -- ^ gene list
+             , SCATACSeq S (File tags 'Other) 
              , File '[Gzip] 'Other ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
-diffGenes prefix idx (input, ref) = do
+diffGenes prefix idx (nameFl, input, ref) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.tsv" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \(nameFl, fl) -> do
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
             diffAnalysis (fl^.location) (ref^.location) idx
         let f (i, nm) = case M.lookup i stats of

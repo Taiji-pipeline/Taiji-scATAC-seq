@@ -341,13 +341,14 @@ plotCells input = plt <> axes <> vline <> hline <> scales
 
 
 plotClusterQC :: SCATACSeqConfig config
-              => SCATACSeq S
-                ( (File '[] 'Tsv, a)
-                , File '[] 'Other
-                , (FilePath, File '[Gzip] 'Other)
-                , ([String], File '[] 'Tsv) )
+              => ( FilePath
+                 , SCATACSeq S
+                    ( (File '[] 'Tsv, a)
+                    , File '[] 'Other
+                    , File '[Gzip] 'Other
+                    , ([String], File '[] 'Tsv) ) )
               -> ReaderT config IO ()
-plotClusterQC input = do
+plotClusterQC (idxFl, input) = do
     dir <- qcDir
     let output = dir <> T.unpack (input^.eid) <> "_cluster_qc.html"
     liftIO $ do
@@ -357,7 +358,7 @@ plotClusterQC input = do
         df <- DF.readTable $ markerFl^.location
         clusterQC output cls stats (genes, geneExpr) df
   where
-    ((statFl,_), clFl, (idxFl, matFl), (genes, markerFl)) = input^.replicates._2.files
+    ((statFl,_), clFl, matFl, (genes, markerFl)) = input^.replicates._2.files
 
 clusterQC :: FilePath
           -> [CellCluster]
