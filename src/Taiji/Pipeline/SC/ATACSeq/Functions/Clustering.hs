@@ -13,7 +13,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , extractSubMatrix
     , doClustering
     , getBedCluster
-    , getClusterBarcodes
     , extractBedByBarcode 
     , Embedding(..)
     , Normalization(..)
@@ -199,45 +198,26 @@ dmClust prefix opt = do
 extractTags :: FilePath   -- ^ Directory to save the results
             -> Builder ()
 extractTags prefix = do
-    node "Extract_Tags_Prep"  [| liftIO . getClusterBarcodes |] $ return ()
     nodePar "Extract_Tags" 'getBedCluster $ return ()
     node "Merge_Tags_Prep" [| \input -> return $
         map (first head . unzip) $ groupBy ((==) `on` fst) $
         sortBy (comparing fst) $ concat $ input^..folded.replicates._2.files
         |] $ return ()
     nodePar "Merge_Tags" [| mergeBedCluster prefix |] $ return ()
-    path ["Extract_Tags_Prep", "Extract_Tags", "Merge_Tags_Prep", "Merge_Tags"]
-
--- | Get barcodes
-getClusterBarcodes :: ([SCATACSeq S file], [SCATACSeq S (File '[] 'Other)])
-                   -> IO [(SCATACSeq S (file, [(B.ByteString, [B.ByteString])]))]
-getClusterBarcodes (inputs, clusters) = do
-    clusters' <- case clusters of
-        [x] -> zip (repeat "") <$> decodeFile (x^.replicates._2.files.location)
-        xs -> fmap concat $ forM xs $ \x ->
-            zip (repeat $ B.pack $ T.unpack $ x^.eid) <$>
-            decodeFile (x^.replicates._2.files.location)
-    return $ flip map inputs $ \input ->
-        let res = flip map clusters' $ \(prefix, CellCluster{..}) ->
-                (prefix <> _cluster_name, mapMaybe (getBarcode (input^.eid)) _cluster_member)
-        in input & replicates.traverse.files %~ (\f -> (f, res))
-  where
-    getBarcode e x | B.unpack (B.init i) == T.unpack e = Just bc
-                   | otherwise = Nothing
-      where
-        (i, bc) = B.breakEnd (=='+') $ _cell_barcode x
+    path ["Extract_Tags", "Merge_Tags_Prep", "Merge_Tags"]
 
 -- | Extract BEDs for each cluster.
 getBedCluster :: SCATACSeqConfig config
-              => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
-                             , [(B.ByteString, [B.ByteString])] )  -- ^ clusters
+              => ( SCATACSeq S (File '[NameSorted, Gzip] 'Bed, a)
+                 , [SCATACSeq S (File '[] 'Other)] ) -- ^ Cluster files
               -> ReaderT config IO
                     (SCATACSeq S [(B.ByteString, File '[] 'Bed)])
-getBedCluster input = do
+getBedCluster (input, clFl) = do
     let idRep = asDir $ "/temp/" <> T.unpack (input^.eid) <>
             "_rep" <> show (input^.replicates._1)
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
-    input & replicates.traverse.files %%~ liftIO . ( \(bed, _) -> do
+    input & replicates.traverse.files %%~ ( \(bed,_) -> liftIO $ do
+        clusters <- getClusterBarcodes (B.pack $ T.unpack $ input^.eid) clFl
         let outputs = M.fromList $
                 map (\x -> (x, dir ++ "/" ++ B.unpack x ++ ".bed")) $
                 S.toList $ S.fromList $ M.elems clusters
@@ -249,8 +229,24 @@ getBedCluster input = do
         runResourceT $ runConduit $ streamBedGzip (bed^.location) .| mapM_C f
         return $ M.toList $ fmap (\x -> location .~ x $ emptyFile) outputs )
   where
-    clusters = M.fromListWith (error "same barcode") $
-        concatMap (\(x, ys) -> zip ys $ repeat x) $ input^.replicates._2.files._2
+    getClusterBarcodes :: B.ByteString    -- ^ experiment id
+                    -> [SCATACSeq S (File '[] 'Other)]   -- ^ Cluster files
+                    -> IO (M.HashMap B.ByteString B.ByteString)  -- ^ Barcode to cluster map
+    getClusterBarcodes exp_id clusters = do
+        clusters' <- case clusters of
+            [x] -> zip (repeat "") <$> decodeFile (x^.replicates._2.files.location)
+            xs -> fmap concat $ forM xs $ \x ->
+                zip (repeat $ B.pack $ T.unpack $ x^.eid) <$>
+                decodeFile (x^.replicates._2.files.location)
+        return $ M.fromListWith (error "same barcode") $
+            flip concatMap clusters' $ \(prefix, CellCluster{..}) ->
+                zip (mapMaybe getBarcode _cluster_member) $
+                repeat (prefix <> _cluster_name)
+      where
+        getBarcode x | B.init i == exp_id = Just bc
+                     | otherwise = Nothing
+          where
+            (i, bc) = B.breakEnd (=='+') $ _cell_barcode x
 
 extractBedByBarcode :: (Elem 'Gzip tags ~ 'True, Elem 'NameSorted tags ~ 'True)
                     => [FilePath]   -- ^ Outputs

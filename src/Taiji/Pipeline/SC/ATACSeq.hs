@@ -53,8 +53,8 @@ preClustering = do
     ["Get_Bed", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
-        nodePar "Get_Windows" [| getWindows "/temp/Pre/Window/" |] $ return ()
-        nodePar "Make_Window_Mat" [| mkWindowMat "/temp/Pre/Window/" |] $ return ()
+        nodePar "Get_Windows" [| getWindows "/Feature/Window/" |] $ return ()
+        nodePar "Make_Window_Mat" [| mkWindowMat "/Feature/Window/" |] $ return ()
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
@@ -147,28 +147,6 @@ preClustering = do
             ~> "Cluster_QC_Prep"
         ["Cluster_QC_Prep"] ~> "Cluster_QC"
 
-        -- Make feature matrix
-        node "Get_Peak_List" [| \inputs -> mergePeaks "/temp/Pre/Peak/" $
-            flip concatMap inputs $ \input -> input^.replicates._2.files
-            |] $ return ()
-        path ["Call_Peaks", "Get_Peak_List"]
-        node "Make_Feat_Mat_Prep" [| \(bed, pk) -> return $
-            flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
-                x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
-            |] $ return ()
-        nodePar "Make_Feat_Mat" [| mkPeakMat "/temp/Pre/Peak/" |] $ return ()
-        ["Remove_Doublets", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
-        node "Merge_Feat_Mat" [| \mats -> do
-            dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/"))
-            let output = dir <> "Merged_cell_by_peak.mat.gz"
-            liftIO $ concatMatrix output $ flip map mats $ \mat ->
-                ( Just $ B.pack $ T.unpack $ mat^.eid
-                , mat^.replicates._2.files.location )
-            return $ (head mats & eid .~ "Merged") &
-                replicates._2.files.location .~ output
-            |] $ return ()
-        path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
-
 builder :: Builder ()
 builder = do
     basicAnalysis
@@ -181,6 +159,30 @@ builder = do
     ["Remove_Duplicates"] ~> "QC"
 
 --------------------------------------------------------------------------------
+-- Make cell by peak matrix
+--------------------------------------------------------------------------------
+    node "Get_Peak_List" [| \inputs -> mergePeaks "/Feature/Peak/" $
+        flip concatMap inputs $ \input -> input^.replicates._2.files
+        |] $ return ()
+    path ["Pre_Call_Peaks", "Get_Peak_List"]
+    node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
+        flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
+            x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
+        |] $ return ()
+    nodePar "Make_Peak_Mat" [| mkPeakMat "/Feature/Peak/" |] $ return ()
+    ["Pre_Remove_Doublets", "Get_Peak_List"] ~> "Make_Peak_Mat_Prep"
+    node "Merge_Peak_Mat" [| \mats -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Feature/Peak/"))
+        let output = dir <> "Merged_cell_by_peak.mat.gz"
+        liftIO $ concatMatrix output $ flip map mats $ \mat ->
+            ( Just $ B.pack $ T.unpack $ mat^.eid
+            , mat^.replicates._2.files.location )
+        return $ (head mats & eid .~ "Merged") &
+            replicates._2.files.location .~ output
+        |] $ return ()
+    path ["Make_Peak_Mat_Prep", "Make_Peak_Mat", "Merge_Peak_Mat"]
+
+--------------------------------------------------------------------------------
 -- Clustering
 --------------------------------------------------------------------------------
     node "Merged_Cluster_Reduce" [| performDM "/Cluster/" |] $ return ()
@@ -189,13 +191,13 @@ builder = do
         dir <- asks ((<> asDir "/Cluster/") . _scatacseq_output_dir) >>= getPath
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["Pre_Merge_Feat_Mat", "Merged_Cluster_Reduce", "Merged_Cluster", "Merged_Cluster_Viz"]
+    path ["Merge_Peak_Mat", "Merged_Cluster_Reduce", "Merged_Cluster", "Merged_Cluster_Viz"]
 
     -- Subclustering
     node "Extract_Sub_Matrix" [| \(x,y) -> 
         let [input] = zipExp [x] [y]
         in extractSubMatrix "/temp/" input |] $ return ()
-    ["Pre_Merge_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
+    ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
     nodePar "Merged_Subcluster_Reduce" [| performDM "/Subcluster/" |] $ return ()
     nodePar "Merged_Subcluster" [| doClustering "/Subcluster/" defClustOpt{_normalization = None} |] $ return ()
     nodePar "Merged_Subcluster_Viz" [| \x -> do
@@ -204,6 +206,18 @@ builder = do
         |] $ return ()
     path ["Extract_Sub_Matrix", "Merged_Subcluster_Reduce", "Merged_Subcluster", "Merged_Subcluster_Viz"]
 
+    -- Extract tags for each cluster
+    node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()
+    extractTags "/Bed/Cluster/"
+    ["Pre_Remove_Doublets", "Merged_Cluster"] ~> "Extract_Tags_Prep"
+    ["Extract_Tags_Prep"] ~> "Extract_Tags"
+    
+    -- Extract tags for subclusters
+    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
+    namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
+    ["Pre_Remove_Doublets", "Merged_Subcluster"] ~> "Subcluster_Extract_Tags_Prep"
+    ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
+    
 
 --------------------------------------------------------------------------------
 -- Differential genes
@@ -232,36 +246,8 @@ builder = do
     path ["Diff_Gene_Prep", "Diff_Gene"]
 
 
+
 {-
-
---------------------------------------------------------------------------------
--- Creating Cell by Peak matrix
---------------------------------------------------------------------------------
-    -- Extract tags for each cluster
-    extractTags "/Bed/Cluster/"
-    ["Get_Bed", "Peak_LSA_Cluster"] ~> "Extract_Tags_Prep"
-
-    -- Extract tags for subclusters
-    namespace "SubCluster" $ extractTags "/Bed/SubCluster/"
-    ["Get_Bed", "SubCluster_LSA_Cluster"] ~> "SubCluster_Extract_Tags_Prep"
-
-    -- Call peaks in each cluster and generate peak matrix
-    genPeakMat "/Feature/Peak/Cluster/" Nothing "Merge_Tags" "Get_Windows"
-    node "Extract_Cluster_Matrix" [| \(x,y) -> 
-        let [input] = zipExp x y
-        in extractSubMatrix "/Feature/Peak/Cluster/" input |] $ return ()
-    ["Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Cluster_Matrix"
-
-    node "Cluster_Correlation" 'clusterCorrelation $ return ()
-    ["Call_Peaks", "Merge_Peaks"] ~> "Cluster_Correlation"
-
-    -- Call peaks SubCluster
-    genPeakMat "/Feature/Peak/SubCluster/" (Just "SubCluster")
-        "SubCluster_Merge_Tags" "Get_Windows"
-
-    node "SubCluster_Correlation" 'clusterCorrelation $ return ()
-    ["SubCluster_Call_Peaks", "SubCluster_Merge_Peaks"] ~> "SubCluster_Correlation"
-
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
 --------------------------------------------------------------------------------
@@ -308,13 +294,14 @@ builder = do
     nodePar "SubCluster_Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
     path ["SubCluster_Diff_Gene_Prep", "SubCluster_Diff_Gene"]
 
+    -}
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
     node "Cicero" 'cicero $ return ()
-    ["SubCluster_Merge_Peaks", "Merge_Peak_Matrix"] ~> "Cicero"
+    ["Get_Peak_List", "Merge_Peak_Mat"] ~> "Cicero"
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
@@ -324,6 +311,4 @@ builder = do
     -- Motif finding
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
     nodePar "Find_TFBS" 'findMotifs $ return ()
-    path ["SubCluster_Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
-
-    -}
+    path ["Get_Peak_List", "Find_TFBS_Prep", "Find_TFBS"]

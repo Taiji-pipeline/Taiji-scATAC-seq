@@ -408,7 +408,8 @@ plotDiffGene inputs = do
             U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
         df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr ->
             map (\g -> M.findWithDefault 0 g fdr) genes
-    return (genes, mkHeatmap df1, mkHeatmap df2)
+    return ( filter (`elem` concatMap snd markers) genes
+           , mkHeatmap df1, mkHeatmap df2 )
   where
     mkHeatmap df = p <> E.toolbox <> E.option
         [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]

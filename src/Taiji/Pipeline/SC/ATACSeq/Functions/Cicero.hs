@@ -23,16 +23,16 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 cicero :: SCATACSeqConfig config
        => ( Maybe (File '[Gzip] 'NarrowPeak)
-          , [SCATACSeq S (a, File '[Gzip] 'Other)] )
+          , SCATACSeq S (File '[Gzip] 'Other) )
        -> ReaderT config IO (Maybe FilePath)
-cicero (Just peakFl, [matFl]) = do
+cicero (Just peakFl, matFl) = do
     dir <- asks ((<> "/Cicero") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "/cicero.tsv"
     genome <- asks (fromJust . _scatacseq_genome_index)
     liftIO $ do
         chrSizes <- withGenome genome $ return . getChrSizes
         peaks <- runResourceT $ runConduit $ streamBedGzip (peakFl^.location) .| sinkList
-        mat <- mkSpMatrix readInt $ matFl^.replicates._2.files._2.location
+        mat <- mkSpMatrix readInt $ matFl^.replicates._2.files.location
         withTempDir Nothing $ \tmpdir -> do
             --let count = tmpdir <> "/count"
             let count = "count.txt"

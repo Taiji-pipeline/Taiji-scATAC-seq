@@ -37,7 +37,7 @@ import Taiji.Utils.Plot.ECharts
 mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath
           -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
-          -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+          -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
 mkPeakMat prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)

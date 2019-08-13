@@ -32,7 +32,6 @@ findMotifsPre :: SCATACSeqConfig config
               -> Maybe (File '[Gzip] 'NarrowPeak)   -- ^ Regions to look for
               -> ReaderT config IO
                   [(B.ByteString, File '[Gzip] 'NarrowPeak, File '[] 'Other)]
-findMotifsPre _ Nothing = return []
 findMotifsPre p (Just region) = do
     motifFile <- fromMaybe (error "Motif file is not specified!") <$>
         asks _scatacseq_motif_file
@@ -42,6 +41,7 @@ findMotifsPre p (Just region) = do
     let output = dir ++ "/motif.bin"
     liftIO $ map (mkCutoffMotif def p) <$> readMEME motifFile >>= encodeFile output
     return $ zip3 chrs (repeat region) $ repeat $ location .~ output $ emptyFile
+findMotifsPre _ _ = return []
 
 -- | Identify motif binding sites.
 findMotifs :: SCATACSeqConfig config
