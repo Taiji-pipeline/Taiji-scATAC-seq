@@ -72,14 +72,15 @@ mkRefMat prefix addName input = do
         return $ location .~ output $ emptyFile )
 
 diffPeaks :: SCATACSeqConfig config
-          => ( SCATACSeq S (File '[Gzip] 'Bed, File tags 'Other)
+          => ( File '[Gzip] 'NarrowPeak
+             , SCATACSeq S (File tags 'Other)
              , File '[Gzip] 'Other ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'NarrowPeak))
-diffPeaks (input, ref) = do
+diffPeaks (peakFl, input, ref) = do
     dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.np.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \(peakFl, fl) -> do
+    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
         stats <- fmap (M.fromList . map (\(a,b,c,d) -> (a, (b,c,d))) . filter (\x -> x^._4 < 0.01)) $
             diffAnalysis (fl^.location) (ref^.location) Nothing
         let f :: (Int, BED3) -> Maybe NarrowPeak

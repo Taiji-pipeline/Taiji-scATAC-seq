@@ -17,6 +17,7 @@ parser_run.add_argument('input', type=str, help='gzipped input file')
 parser_run.add_argument('output', type=str, help='output matrix in .npy format')
 parser_run.add_argument('--method', help='algorithm: svd, lda, dm')
 parser_run.add_argument('--sample-size', default=30000, type=int, help='sampling size')
+parser_run.add_argument('--seed', default=3484, type=int, help='random seed')
 parser_run.set_defaults(func=sc.reduceDimension)
 
 # create the parser for the "clust" command
@@ -31,7 +32,6 @@ parser_clust.add_argument('--scale', action='store_true', help='scale to unit ba
 parser_clust.add_argument('--dim', type=int, help='dimension')
 parser_clust.add_argument('-k', default=20, type=int, help='neighbors')
 parser_clust.add_argument('--res', type=float, help='resolution')
-parser_clust.add_argument('--seed', default=3484, type=int, help='random seed')
 parser_clust.set_defaults(func=sc.clustering)
 
 # create the parser for the "doublet" command
