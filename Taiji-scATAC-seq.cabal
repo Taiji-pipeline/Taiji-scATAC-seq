@@ -32,7 +32,6 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering.Utils
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR.LSA
-                       Taiji.Pipeline.SC.ATACSeq.Functions.DR.SnapTools
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
                        Taiji.Pipeline.SC.ATACSeq.Functions.Diff
@@ -60,8 +59,8 @@ library
                      , filepath
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
-                     , jmacro
                      , inline-r
+                     , jmacro
                      , mtl
                      , matrices
                      , SciFlow >= 0.7.0
