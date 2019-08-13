@@ -124,9 +124,8 @@ preClustering = do
             zip3 (repeat genes) input $ repeat ref
             |] $ return ()
         nodePar "Diff_Gene" [| diffGenes "/temp/Pre/Diff/" Nothing |] $ return ()
-        node "Marker_Enrichment" [| computeMarkerEnrichment "/temp/Pre/Diff/" |] $ return ()
         ["Get_Genes", "Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
-        path ["Diff_Gene_Prep", "Diff_Gene", "Marker_Enrichment"]
+        path ["Diff_Gene_Prep", "Diff_Gene"]
 
         -- Doublet detection
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
@@ -136,12 +135,15 @@ preClustering = do
         nodePar "Remove_Doublets" 'removeDoublet $ return ()
         path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
-        node "Cluster_QC_Prep" [| \(genes, x1, x2, x3, x4) -> return $
-            zip (repeat genes) $ (zipExp x1 $ zipExp x2 $ zipExp x3 x4) &
+        node "Cluster_QC_Prep" [| \(genes, x1, x2, x3, diff) -> do
+            let diff' = concatMap split $ mergeExp $ flip map diff $ \x ->
+                    let (i, cl) = T.breakOn "+" $ x^.eid
+                    in eid .~ T.init i $ replicates._2.files %~ (,) cl $ x
+            return $ zip (repeat genes) $ (zipExp x1 $ zipExp x2 $ zipExp x3 diff') &
                 traverse.replicates.traverse.files %~ (\(a,(b,(c,d))) -> (a,b,c,d))
             |] $ return ()
         nodePar "Cluster_QC" 'plotClusterQC $ return ()
-        ["Get_Genes", "Detect_Doublet", "DM_Cluster", "Make_Gene_Mat", "Marker_Enrichment"]
+        ["Get_Genes", "Detect_Doublet", "DM_Cluster", "Make_Gene_Mat", "Diff_Gene"]
             ~> "Cluster_QC_Prep"
         ["Cluster_QC_Prep"] ~> "Cluster_QC"
 

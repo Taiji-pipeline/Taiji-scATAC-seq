@@ -30,6 +30,7 @@ import Data.Binary (decodeFile)
 import           Bio.Data.Bed
 import Bio.RealWorld.GENCODE
 import           Bio.Data.Bed.Types
+import Bio.Utils.Functions (scale)
 import Bio.Utils.Misc (readInt, readDouble)
 import Control.Arrow (second)
 import qualified Data.ByteString.Char8 as B
@@ -39,6 +40,7 @@ import qualified Data.HashSet as S
 import Data.Conduit.List (groupBy)
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
 import qualified Data.Vector.Unboxed as U
@@ -346,54 +348,37 @@ plotClusterQC :: SCATACSeqConfig config
                     ( (File '[] 'Tsv, a)
                     , File '[] 'Other
                     , File '[Gzip] 'Other
-                    , ([String], File '[] 'Tsv) ) )
+                    , [(T.Text, File '[] 'Tsv)] ) )
               -> ReaderT config IO ()
 plotClusterQC (idxFl, input) = do
     dir <- qcDir
     let output = dir <> T.unpack (input^.eid) <> "_cluster_qc.html"
+    (geneList, plt1, plt2) <- plotDiffGene diff
     liftIO $ do
-        stats <- readStats $ statFl^.location
+        stats <- M.fromList . map (\x -> (_barcode x, x)) <$>
+            readStats (statFl^.location)
         cls <- decodeFile $ clFl^.location
-        geneExpr <- M.fromList <$> readGeneExpr (map B.pack genes) idxFl matFl
-        df <- DF.readTable $ markerFl^.location
-        clusterQC output cls stats (genes, geneExpr) df
+        geneExpr <- M.fromList <$>
+            readGeneExpr (map (B.pack . T.unpack) geneList) idxFl matFl
+        let points = flip map cls $ \(CellCluster nm cells) ->
+                (B.unpack nm, map _cell_3d cells)
+            statViz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
+                , ("TSS enrichment", map _te statOrdered)
+                , ("duplication rate", map _dup_rate statOrdered)
+                , ("mito rate", map _mito_rate statOrdered)
+                , ("doublet score", map _doublet_score statOrdered) ]
+            geneViz = zipWith (\x y -> (x, map fromIntegral y))
+                (map T.unpack geneList) $ transpose $ concatMap (map (\x ->
+                    M.findWithDefault undefined (_cell_barcode x) geneExpr) .
+                    _cluster_member) cls
+            statOrdered = concatMap (map
+                (\x -> M.findWithDefault undefined (_cell_barcode x) stats) .
+                _cluster_member) cls
+        savePlots output []
+            [ E.scatter3D' points (statViz <> geneViz) <> E.toolbox
+            , plt1, plt2 ]
   where
-    ((statFl,_), clFl, matFl, (genes, markerFl)) = input^.replicates._2.files
-
-clusterQC :: FilePath
-          -> [CellCluster]
-          -> [Stat]
-          -> ([String], M.Map B.ByteString [Int])
-          -> DF.DataFrame Double
-          -> IO ()
-clusterQC output cs stats (names, expr) df = savePlots output []
-    [ E.scatter3D' dat3D viz <> E.toolbox
-    , hp <> E.toolbox <> E.option
-        [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
-    ]
-  where
-    viz = statViz <> geneViz
-    statViz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
-              , ("TSS enrichment", map _te statOrdered)
-              , ("duplication rate", map _dup_rate statOrdered)
-              , ("mito rate", map _mito_rate statOrdered)
-              , ("doublet score", map _doublet_score statOrdered) ]
-    geneViz = zipWith (\x y -> (x, map fromIntegral y)) names $ transpose $
-        concatMap (map (\x -> M.findWithDefault undefined (_cell_barcode x) expr) .
-            _cluster_member) cs
-    dat3D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map _cell_3d cells)
-    statOrdered = concatMap (map
-        (\x -> M.findWithDefault undefined (_cell_barcode x) stats') .
-        _cluster_member) cs
-    stats' = M.fromList $ map (\x -> (_barcode x, x)) stats
-
-    hp = E.heatmap $ DF.reorderRows (DF.orderByCluster id) $
-        DF.reorderColumns (DF.orderByCluster id) df
-    viridis :: [String]
-    viridis = ["#440154", "#482173", "#433E85", "#38598C", "#2D708E",
-        "#25858E", "#1E9B8A", "#2BB07F", "#51C56A", "#85D54A", "#C2DF23", "#FDE725"]
- 
+    ((statFl,_), clFl, matFl, diff) = input^.replicates._2.files
 
 readGeneExpr :: [B.ByteString] 
              -> FilePath   -- ^ Index
@@ -407,3 +392,46 @@ readGeneExpr genes idxFl fl = do
                in map (\k -> M.findWithDefault 0 k m) idx
     mat <- mkSpMatrix readInt $ fl^.location
     runResourceT $ runConduit $ streamRows mat .| mapC (second f) .| sinkList
+
+plotDiffGene :: SCATACSeqConfig config
+             => [(T.Text, File '[] 'Tsv)]
+             -> ReaderT config IO ([T.Text], E.EChart, E.EChart)
+plotDiffGene inputs = do
+    (cls, fdrs) <- liftIO $ fmap unzip $ forM inputs $ \(cl, fl) -> do
+        fdr <- readFDR $ fl^.location
+        return (cl, fdr)
+    markers <- asks _scatacseq_marker_gene_list >>= \case
+        Nothing -> return []
+        Just fl -> liftIO $ readMarkers fl
+    let genes = nubSort $ concatMap M.keys fdrs
+        df1 = DF.mkDataFrame cls (map fst markers) $ flip map fdrs $ \fdr ->
+            U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
+        df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr ->
+            map (\g -> M.findWithDefault 0 g fdr) genes
+    return (genes, mkHeatmap df1, mkHeatmap df2)
+  where
+    mkHeatmap df = p <> E.toolbox <> E.option
+        [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
+      where
+        p = E.heatmap $ DF.reorderRows (DF.orderByCluster id) $
+            DF.reorderColumns (DF.orderByCluster id) df
+    scale' xs | U.all (==0) xs = xs
+              | otherwise = scale xs
+    enrichment :: [(T.Text, [T.Text])] -> M.Map T.Text Double
+               -> [(T.Text, Double)]
+    enrichment markers fdr = map (second f) markers
+      where
+        f xs = foldl' (+) 0 (map (\k -> M.findWithDefault 0 k fdr) xs) /
+            fromIntegral (length xs)
+    readFDR :: FilePath -> IO (M.Map T.Text Double)
+    readFDR fl = M.fromList . map snd . filter ((>2) . fst) .
+        map (f . T.splitOn "\t") . T.lines <$> T.readFile fl
+      where
+        f (a:fld:_:q:_) = (read $ T.unpack fld :: Double, (a, read $ T.unpack q))
+        f _ = undefined
+    readMarkers :: FilePath -> IO [(T.Text, [T.Text])]
+    readMarkers fl = M.toList . M.fromListWith (++) . map (f . T.splitOn "\t") .
+        T.lines <$> T.readFile fl
+      where
+        f (a:b:_) = (b, [T.toUpper a])
+        f _ = undefined
