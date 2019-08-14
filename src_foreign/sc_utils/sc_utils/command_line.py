@@ -30,7 +30,7 @@ parser_clust.add_argument('--embed-method', help='embedding method')
 parser_clust.add_argument('--discard', action='store_true', help='remove first dimension')
 parser_clust.add_argument('--scale', action='store_true', help='scale to unit ball')
 parser_clust.add_argument('--dim', type=int, help='dimension')
-parser_clust.add_argument('-k', default=20, type=int, help='neighbors')
+parser_clust.add_argument('-k', default=25, type=int, help='neighbors')
 parser_clust.add_argument('--res', type=float, help='resolution')
 parser_clust.set_defaults(func=sc.clustering)
 

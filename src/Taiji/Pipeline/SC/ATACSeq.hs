@@ -199,9 +199,10 @@ builder = do
         in extractSubMatrix "/Feature/Peak/Cluster/" input |] $ return ()
     ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
     nodePar "Merged_Subcluster_Reduce" [| performDM "/Subcluster/" |] $ return ()
-    nodePar "Merged_Subcluster" [| doClustering "/Subcluster/" defClustOpt{_normalization = None} |] $ return ()
+    nodePar "Merged_Subcluster" [| doClustering "/Subcluster/"
+        defClustOpt{_normalization = None, _resolution=Just 0.7} |] $ return ()
     nodePar "Merged_Subcluster_Viz" [| \x -> do
-        dir <- asks ((<> asDir "/Subcluster/") . _scatacseq_output_dir) >>= getPath
+        dir <- figDir
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["Extract_Sub_Matrix", "Merged_Subcluster_Reduce", "Merged_Subcluster", "Merged_Subcluster_Viz"]

@@ -102,7 +102,7 @@ def leiden(gr, resolution=None, weighted=False):
     if weighted:
         weights = gr.es["weight"]
     if resolution:
-        partition = la.find_partition(gr, la.CPMVertexPartition,
+        partition = la.find_partition(gr, la.RBConfigurationVertexPartition,
             n_iterations=10, seed=12343, resolution_parameter=resolution,
             weights=weights)
     else:
