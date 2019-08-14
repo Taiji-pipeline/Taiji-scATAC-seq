@@ -57,10 +57,6 @@ class DiffusionMap:
         self.evals = np.real(evals[ix])
         self.evecs = np.real(evecs[:, ix])
         self.coordinates = self.evecs
-        #self.coordinates = np.matmul(np.matmul(self.Q, self.evecs), np.diag(self.evals**self.t))
-        print(self.evals)
-        print(self.evecs)
-        #self.evecs = np.matmul(Q_i, np.real(evecs[:, ix]))
 
     def fit(self, data):
         jm = jaccard2(self.sample, data)

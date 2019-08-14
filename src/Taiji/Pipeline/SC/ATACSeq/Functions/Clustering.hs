@@ -336,8 +336,11 @@ plotClusters dir input = do
         stats = if B.elem '+' (_cell_barcode $ head $ _cluster_member $ head inputData)
             then clusterStat inputData
             else []
+        (nms, num_cells) = unzip $ map (\CellCluster nm cells ->
+            (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
+        plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
     clusters <- sampleCells inputData
-    savePlots output [] $ [visualizeCluster clusters] ++ stats
+    savePlots output [] $ [visualizeCluster clusters, plt] ++ stats
 
 visualizeCluster :: [CellCluster] -> EChart
 visualizeCluster cs = scatter dat2D viz <> toolbox

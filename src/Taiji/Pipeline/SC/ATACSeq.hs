@@ -58,7 +58,6 @@ preClustering = do
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
-        --dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None, _resolution = Just 0.002}
         dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None}
         path ["Make_Window_Mat", "DM_Reduce"]
 
@@ -188,7 +187,7 @@ builder = do
     node "Merged_Cluster_Reduce" [| performDM "/Cluster/" |] $ return ()
     node "Merged_Cluster" [| doClustering "/Cluster/" defClustOpt{_normalization = None} |] $ return ()
     node "Merged_Cluster_Viz" [| \x -> do
-        dir <- asks ((<> asDir "/Cluster/") . _scatacseq_output_dir) >>= getPath
+        dir <- figDir
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["Merge_Peak_Mat", "Merged_Cluster_Reduce", "Merged_Cluster", "Merged_Cluster_Viz"]
@@ -231,13 +230,11 @@ builder = do
         let [input] = zipExp [x] [y]
         in extractSubMatrix "/Feature/Gene/Cluster/" input |] $ return ()
     ["Merge_Gene_Mat", "Merged_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
-
     node "Make_Ref_Gene_Mat" [| \(ref, mat) ->
         let [input] = zipExp [ref] [mat]
         in mkRefMat "/Feature/Gene/" False input
         |] $ return ()
     ["Get_Ref_Cells", "Merge_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
-
     node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $
         zip3 (repeat genes) input $ repeat $ ref^.replicates._2.files
         |] $ return ()
@@ -245,6 +242,13 @@ builder = do
     node "Diff_Gene_Viz" 'plotDiffGene $ return ()
     ["Pre_Get_Genes", "Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
     path ["Diff_Gene_Prep", "Diff_Gene", "Diff_Gene_Viz"]
+
+    {-
+    node "Extract_Subcluster_Gene_Matrix" [| \(x,y) -> 
+        let [input] = zipExp [x] [y]
+        in extractSubMatrix "/Feature/Gene/Cluster/" input |] $ return ()
+    ["Merge_Gene_Mat", "Merged_Subcluster"] ~> "Extract_Cluster_Gene_Matrix"
+    -}
 
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
