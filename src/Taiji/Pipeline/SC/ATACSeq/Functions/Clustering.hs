@@ -336,19 +336,19 @@ plotClusters dir input = do
         stats = if B.elem '+' (_cell_barcode $ head $ _cluster_member $ head inputData)
             then clusterStat inputData
             else []
-        (nms, num_cells) = unzip $ map (\CellCluster nm cells ->
+        (nms, num_cells) = unzip $ map (\(CellCluster nm cells) ->
             (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
         plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
     clusters <- sampleCells inputData
-    savePlots output [] $ [visualizeCluster clusters, plt] ++ stats
+    savePlots output [] $ plt : visualizeCluster clusters ++ stats
 
-visualizeCluster :: [CellCluster] -> EChart
-visualizeCluster cs = scatter dat2D viz <> toolbox
+visualizeCluster :: [CellCluster] -> [EChart]
+visualizeCluster cs = [scatter' dat2D <> toolbox, scatter' dat2D' <> toolbox] 
   where
     dat2D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map _cell_2d cells)
-    viz = Categorical $ concatMap
-        (map (\x -> getName $ _cell_barcode x) . _cluster_member) cs
+    dat2D' = map (first head . unzip) $ groupBy ((==) `on` fst) $ sortBy (comparing fst) $ concatMap
+        (map (\x -> (getName $ _cell_barcode x, _cell_2d x)) . _cluster_member) cs
     getName x = let prefix = fst $ B.breakEnd (=='+') x
                 in if B.null prefix then "" else B.unpack $ B.init prefix
 

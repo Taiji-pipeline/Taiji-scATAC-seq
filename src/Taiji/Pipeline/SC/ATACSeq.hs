@@ -12,6 +12,7 @@ import Data.Binary
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (concatMatrix)
+import Taiji.Pipeline.SC.ATACSeq.Types
 
 -- | The basic analysis.
 basicAnalysis :: Builder ()
