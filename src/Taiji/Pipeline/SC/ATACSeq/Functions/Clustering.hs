@@ -356,8 +356,8 @@ clusterStat :: [CellCluster] -> [EChart]
 clusterStat clusters = 
     [ stackBar $ DF.mapCols normalize df
     , stackBar $ DF.mapCols normalize $ DF.transpose df
-    , heatmap $ DF.orderDataFrame id $ DF.spearman df
-    , heatmap $ DF.orderDataFrame id $ DF.spearman $ DF.transpose df ]
+    , heatmap (DF.orderDataFrame id $ DF.spearman df) <> toolbox
+    , heatmap (DF.orderDataFrame id $ DF.spearman $ DF.transpose df) <> toolbox ]
   where
     df = DF.mkDataFrame rownames colnames $
         map (\x -> map (\i -> fromIntegral $ M.lookupDefault 0 i x) colnames) rows

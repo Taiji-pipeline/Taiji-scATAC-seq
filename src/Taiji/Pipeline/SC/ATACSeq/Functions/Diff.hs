@@ -200,8 +200,8 @@ plotDiffGene inputs = do
         genes = nubSort $ concatMap M.keys fdrs
         df1 = DF.mkDataFrame cls (map fst markers) $ flip map fdrs $ \fdr ->
             U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
-        df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr ->
-            map (\g -> logBase 2 $ M.lookupDefault 1 g fdr) genes
+        df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr -> U.toList $
+            scale' $ U.fromList $ map (\g -> M.lookupDefault 0 g fdr) genes
     liftIO $ savePlots output [] [mkHeatmap df1, mkHeatmap df2]
   where
     mkHeatmap df = p <> E.toolbox <> E.option
