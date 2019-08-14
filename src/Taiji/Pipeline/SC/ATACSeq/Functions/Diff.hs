@@ -192,7 +192,7 @@ plotDiffGene inputs = do
     dir <- figDir
     (cls, fdrs) <- liftIO $ fmap unzip $ forM inputs $ \input -> do
         fdr <- readFDR $ input^.replicates._2.files.location
-        return (input^.eid, fdr)
+        return (T.tail $ snd $ T.breakOn "+" $ input^.eid, fdr)
     markers <- asks _scatacseq_marker_gene_list >>= \case
         Nothing -> return []
         Just fl -> liftIO $ readMarkers fl
@@ -201,7 +201,7 @@ plotDiffGene inputs = do
         df1 = DF.mkDataFrame cls (map fst markers) $ flip map fdrs $ \fdr ->
             U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
         df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr ->
-            map (\g -> M.lookupDefault 0 g fdr) genes
+            map (\g -> logBase 2 $ M.lookupDefault 1 g fdr) genes
     liftIO $ savePlots output [] [mkHeatmap df1, mkHeatmap df2]
   where
     mkHeatmap df = p <> E.toolbox <> E.option
