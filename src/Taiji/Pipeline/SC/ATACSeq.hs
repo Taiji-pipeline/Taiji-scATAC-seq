@@ -200,7 +200,7 @@ builder = do
     ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
     nodePar "Merged_Subcluster_Reduce" [| performDM "/Subcluster/" |] $ return ()
     nodePar "Merged_Subcluster" [| doClustering "/Subcluster/"
-        defClustOpt{_normalization = None, _resolution=Just 0.7} |] $ return ()
+        defClustOpt{_normalization = None, _resolution=Just 0.6} |] $ return ()
     nodePar "Merged_Subcluster_Viz" [| \x -> do
         dir <- figDir
         liftIO $ plotClusters dir x

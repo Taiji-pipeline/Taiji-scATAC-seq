@@ -41,17 +41,10 @@ def clustering(args):
     data = readCoordinates(fls[0], n_dim=args.dim,
         discard=args.discard, scale=args.scale)
 
-    if (len(fls) > 1):
-        print("Start KNN -- weighted")
-        is_weighted = True
-    else:
-        print("Start KNN")
-        is_weighted = False
-
-    gr = mkKNNGraph(fls, k=args.k, weighted=is_weighted)
+    gr = mkKNNGraph(fls, k=args.k)
 
     print("Start clustering")
-    partition = leiden(gr, resolution=args.res, weighted=is_weighted)
+    partition = leiden(gr, resolution=args.res)
 
     print("Clusters: ")
     print(len(partition)) 
@@ -78,29 +71,24 @@ def readCoordinates(fl, n_dim=None, discard=None, scale=None):
         data = np.apply_along_axis(scaling, 1, data)
     return data
 
-def mkKNNGraph(fls, k=25, weighted=False):
+def mkKNNGraph(fls, k=25):
     adj = None
     for fl in fls:
         mat = readCoordinates(fl)
         if (adj == None):
-            adj = kneighbors_graph(mat, k, mode='connectivity')
+            adj = kneighbors_graph(mat, k, mode='distance')
         else:
-            adj += kneighbors_graph(mat, k, mode='connectivity')
+            adj += kneighbors_graph(mat, k, mode='distance')
     vcount = max(adj.shape)
     sources, targets = adj.nonzero()
     edgelist = list(zip(sources.tolist(), targets.tolist()))
 
-    if (weighted):
-        gr = ig.Graph(n=vcount, edges=edgelist,
-            edge_attrs={ "weight": np.ravel(adj[(sources, targets)]) })
-    else:
-        gr = ig.Graph(n=vcount, edges=edgelist)
+    gr = ig.Graph(n=vcount, edges=edgelist,
+        edge_attrs={ "weight": np.ravel(adj[(sources, targets)]) })
     return gr
 
-def leiden(gr, resolution=None, weighted=False):
-    weights = None
-    if weighted:
-        weights = gr.es["weight"]
+def leiden(gr, resolution=None):
+    weights = gr.es["weight"]
     if resolution:
         partition = la.find_partition(gr, la.RBConfigurationVertexPartition,
             n_iterations=10, seed=12343, resolution_parameter=resolution,
