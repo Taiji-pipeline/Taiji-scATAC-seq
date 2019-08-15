@@ -186,9 +186,10 @@ diffGenes prefix idx (nameFl, input, ref) = do
         return $ location .~ output $ emptyFile )
 
 plotDiffGene :: SCATACSeqConfig config
-             => [SCATACSeq S (File '[] 'Tsv)]
+             => FilePath
+             -> [SCATACSeq S (File '[] 'Tsv)]
              -> ReaderT config IO ()
-plotDiffGene inputs = do
+plotDiffGene filename inputs = do
     dir <- figDir
     (cls, fdrs) <- liftIO $ fmap unzip $ forM inputs $ \input -> do
         fdr <- readFDR $ input^.replicates._2.files.location
@@ -196,7 +197,7 @@ plotDiffGene inputs = do
     markers <- asks _scatacseq_marker_gene_list >>= \case
         Nothing -> return []
         Just fl -> liftIO $ readMarkers fl
-    let output = dir <> "/diff_gene.html"
+    let output = dir <> filename
         genes = nubSort $ concatMap M.keys fdrs
         df1 = DF.mkDataFrame cls (map fst markers) $ flip map fdrs $ \fdr ->
             U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
