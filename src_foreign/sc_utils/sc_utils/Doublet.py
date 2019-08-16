@@ -18,7 +18,7 @@ def detectDoublet(args):
         n_prin_comps=30
         )
 
-    threshold = findThresHold_fit(scrub.doublet_scores_sim_, output=args.plot)
+    threshold = findThresHold_fit(scrub.doublet_scores_sim_)
 
     with open(args.output, 'w') as fl:
         fl.write(str(threshold))
@@ -27,10 +27,13 @@ def detectDoublet(args):
         fl.write("\n")
         fl.write('\t'.join(map(str, scrub.doublet_scores_sim_)))
 
-def findThresHold_fit(X, output=None):
+def findThresHold_fit(X):
     X = np.array([X]).T
     gmm = BayesianGaussianMixture(n_components=2, max_iter=1000).fit(X)
+    probs = gmm.predict_proba(X)[:,1]
+    th = min(X[np.argwhere(probs>0.9)])[0][0]
     
+    '''
     m1 = gmm.means_[0]
     s1 = gmm.covariances_[0,0]
     m2 = gmm.means_[1]
@@ -39,17 +42,7 @@ def findThresHold_fit(X, output=None):
     c1 = sp.stats.norm.ppf(0.9,m1,s1)[0]
     c2 = sp.stats.norm.ppf(0.01,m2,s2)[0]
     th = max(c1,c2)
-
-    if (output):
-        plt.hist(X, bins=150, density=True)
-        drawGaussian(m1,s1)
-        drawGaussian(m2,s2)
-        plt.axvline(x=th)
-        plt.savefig(output)
+    print(th)
+    '''
 
     return th
-
-def drawGaussian(m, s):
-    x = np.linspace(0, 1, 150)
-    y = sp.stats.norm.pdf(x,m,s)
-    plt.plot(x,y)
