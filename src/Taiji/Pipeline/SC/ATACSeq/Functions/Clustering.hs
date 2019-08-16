@@ -387,4 +387,4 @@ sampleCells clusters
     ratio = 1 / (fromIntegral n / 30000) :: Double
     sampling gen frac v = V.take n' <$> uniformShuffle v gen
       where
-        n' = max 100 $ truncate $ frac * fromIntegral (V.length v)
+        n' = max 200 $ truncate $ frac * fromIntegral (V.length v)

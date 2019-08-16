@@ -12,6 +12,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ) where
 
 import Bio.Data.Bed
+import Bio.Data.Bed.Types (BED(..))
 import Bio.Data.Bam
 import           Bio.HTS
 import Data.Conduit.Internal (zipSinks)
@@ -157,13 +158,20 @@ filterCell input = do
         let cells = S.fromList $ map _barcode $ filter passQC stats
         header <- getBamHeader $ bamFl^.location
         runResourceT $ runConduit $ streamBam (bamFl^.location) .|
-            bamToBedC header .| mapC changeName .|
-            groupBy ((==) `on` (^.name)) .|
+            mapC (toBed header) .| groupBy ((==) `on` (^.name)) .|
             filterC ((`S.member` cells) . fromJust . (^.name) . head) .|
             concatC .| sinkFileBedGzip output
         return $ location .~ output $ emptyFile )
   where
-    changeName x = let bc = fmap extractBarcode $ x^.name
-                   in name .~ bc $ x
+    toBed header bam
+        | tLen bam > 0 = BED chr (start+4) end nm sc str
+        | otherwise = BED chr start (end-5) nm sc str
+      where
+        chr = fromJust $ refName header bam 
+        start = startLoc bam
+        end = endLoc bam
+        nm = Just $ extractBarcode $ queryName bam
+        str = Just $ not $ isRev bam
+        sc = Just $ fromIntegral $ mapq bam
     passQC Stat{..} = _uniq_reads >= 1000 && _te >= 7
 {-# INLINE filterCell #-}

@@ -31,6 +31,7 @@ performDM prefix input = do
         sp <- mkSpMatrix readInt $ fl^.location
 
         -- filtering
+        {-
         vec <- UM.replicate (_num_col sp) 0
         runResourceT $ runConduit $ streamRows sp .| concatMapC snd .|
             mapC fst .| mapM_C (UM.unsafeModify vec (+1))
@@ -40,6 +41,8 @@ performDM prefix input = do
         filterCols tmp idx $ fl^.location
 
         diffusionMap output tmp
+        -}
+        diffusionMap output $ fl^.location
 
         runResourceT $ runConduit $
             streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
