@@ -49,7 +49,7 @@ basicAnalysis = do
 preClustering :: Builder ()
 preClustering = do
     path ["Get_Bed", "Pre_Get_Windows"]
-    ["Get_Bed", "Pre_DM_Cluster"] ~> "Pre_Extract_Tags_Prep"
+    ["Get_Bed", "Pre_Cluster"] ~> "Pre_Extract_Tags_Prep"
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
     ["Get_Bed", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
     namespace "Pre" $ do
@@ -59,8 +59,8 @@ preClustering = do
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
-        dmClust "/temp/Pre/Cluster/" defClustOpt{_normalization = None}
-        path ["Make_Window_Mat", "DM_Reduce"]
+        spectralClustPar "/temp/Pre/Cluster/" defClustOpt
+        path ["Make_Window_Mat", "Reduce_Dims"]
 
         -- Extract tags for each cluster
         node "Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
@@ -106,7 +106,7 @@ preClustering = do
 
         -- Differetial genes
         nodePar "Get_Ref_Cells" [| liftIO . sampleCells 20 |] $ return ()
-        ["DM_Cluster"] ~> "Get_Ref_Cells"
+        ["Cluster"] ~> "Get_Ref_Cells"
         node "Make_Ref_Gene_Mat" [| \(ref, mat) -> do
             dir <- asks _scatacseq_output_dir >>= getPath
             let output = dir <> "/temp/Pre/merged_ref.mat.gz" 
@@ -118,7 +118,7 @@ preClustering = do
         node "Extract_Cluster_Gene_Matrix" [| \(mat, cl) -> fmap concat $
             mapM (extractSubMatrix "/temp/Pre/Cluster/") $ zipExp mat cl
             |] $ return ()
-        ["Make_Gene_Mat", "DM_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
+        ["Make_Gene_Mat", "Cluster"] ~> "Extract_Cluster_Gene_Matrix"
 
         node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $
             zip3 (repeat genes) input $ repeat ref
@@ -143,7 +143,7 @@ preClustering = do
                 traverse.replicates.traverse.files %~ (\(a,(b,(c,d))) -> (a,b,c,d))
             |] $ return ()
         nodePar "Cluster_QC" 'plotClusterQC $ return ()
-        ["Get_Genes", "Detect_Doublet", "DM_Cluster", "Make_Gene_Mat", "Diff_Gene"]
+        ["Get_Genes", "Detect_Doublet", "Cluster", "Make_Gene_Mat", "Diff_Gene"]
             ~> "Cluster_QC_Prep"
         ["Cluster_QC_Prep"] ~> "Cluster_QC"
 
@@ -185,27 +185,18 @@ builder = do
 --------------------------------------------------------------------------------
 -- Clustering
 --------------------------------------------------------------------------------
-    node "Merged_Cluster_Reduce" [| performDM "/Cluster/" |] $ return ()
-    node "Merged_Cluster" [| doClustering "/Cluster/" defClustOpt{_normalization = None} |] $ return ()
-    node "Merged_Cluster_Viz" [| \x -> do
-        dir <- figDir
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Merge_Peak_Mat", "Merged_Cluster_Reduce", "Merged_Cluster", "Merged_Cluster_Viz"]
+    namespace "Merged" $ spectralClust "/Cluster/" defClustOpt
+    path ["Merge_Peak_Mat", "Merged_Reduce_Dims"]
 
     -- Subclustering
     node "Extract_Sub_Matrix" [| \(x,y) -> 
         let [input] = zipExp [x] [y]
         in extractSubMatrix "/Feature/Peak/Cluster/" input |] $ return ()
     ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
-    nodePar "Merged_Subcluster_Reduce" [| performDM "/Subcluster/" |] $ return ()
-    nodePar "Merged_Subcluster" [| doClustering "/Subcluster/"
-        defClustOpt{_normalization = None, _resolution=Just 0.6} |] $ return ()
-    nodePar "Merged_Subcluster_Viz" [| \x -> do
-        dir <- figDir
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Extract_Sub_Matrix", "Merged_Subcluster_Reduce", "Merged_Subcluster", "Merged_Subcluster_Viz"]
+
+    namespace "Merged_Iterative" $
+        spectralClustPar "/Subcluster/" defClustOpt{_resolution=Just 0.6}
+    path ["Extract_Sub_Matrix", "Merged_Iterative_Reduce_Dims"]
 
     -- Extract tags for each cluster
     node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()
@@ -216,7 +207,7 @@ builder = do
     -- Extract tags for subclusters
     node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
     namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
-    ["Pre_Remove_Doublets", "Merged_Subcluster"] ~> "Subcluster_Extract_Tags_Prep"
+    ["Pre_Remove_Doublets", "Merged_Iterative_Cluster"] ~> "Subcluster_Extract_Tags_Prep"
     ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
     
 
@@ -251,7 +242,7 @@ builder = do
         mapM (extractSubMatrix "/Feature/Gene/Subcluster/") $ flip map ys $ \y ->
             y & replicates._2.files %~ (,) (x^.replicates._2.files)
         |] $ return ()
-    ["Merge_Gene_Mat", "Merged_Subcluster"] ~> "Extract_Subcluster_Gene_Matrix"
+    ["Merge_Gene_Mat", "Merged_Iterative_Cluster"] ~> "Extract_Subcluster_Gene_Matrix"
     node "Subcluster_Diff_Gene_Prep" [| \(genes, input, ref) -> return $
         zip3 (repeat genes) (concat input) $ repeat $ ref^.replicates._2.files
         |] $ return ()

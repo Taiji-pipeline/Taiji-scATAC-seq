@@ -1,18 +1,20 @@
 import scipy as sp
 import numpy as np
 import math
-from gensim.matutils import corpus2dense, corpus2csc
 from sklearn.neighbors import kneighbors_graph
 import igraph as ig
 import leidenalg as la
 
-from .DiffusionMap import diffusionMap
+from .Spectral import spectral
+from .LSI import lsiTransform
 
 def reduceDimension(args):
-    if(args.method == "svd"):
+    if args.method == "spectral":
+        spectral(args)
+    elif args.method == "svg":
         lsiTransform(args)
     else:
-        diffusionMap(args)
+        print("Unknown method")
 
 def getEmbedding(mat, output, method="umap"):
     print(method)

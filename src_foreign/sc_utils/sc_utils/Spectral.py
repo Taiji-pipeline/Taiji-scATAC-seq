@@ -5,7 +5,7 @@ from sklearn.linear_model import LinearRegression
 
 from .Utils import readMatrix, regress
 
-def diffusionMap(args):
+def spectral(args):
     nSample = max(1000, args.sample_size)
     nChunk = 10000
 
@@ -18,7 +18,7 @@ def diffusionMap(args):
         idx = np.arange(n)
         np.random.shuffle(idx)
         sample = mat[idx[:nSample], :]
-        dm = DiffusionMap(sample, sampling_rate=nSample/n)
+        dm = Spectral(sample, sampling_rate=nSample/n)
         i = nSample
         res = [dm.coordinates]
         while i < n:
@@ -28,11 +28,11 @@ def diffusionMap(args):
         res = np.concatenate(res, axis=0)[:, 1:]
         res = res[np.argsort(idx), :]
     else:
-        res = DiffusionMap(mat).coordinates[:, 1:]
+        res = Spectral(mat).coordinates[:, 1:]
 
     np.savetxt(args.output, res, delimiter='\t')
 
-class DiffusionMap:
+class Spectral:
     def __init__(self, mat, n_dim=30, sampling_rate=1):
         self.sample = mat
         self.sampling_rate = sampling_rate

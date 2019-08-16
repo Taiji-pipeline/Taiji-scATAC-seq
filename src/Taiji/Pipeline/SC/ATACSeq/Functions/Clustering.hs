@@ -6,12 +6,10 @@
 {-# LANGUAGE DeriveLift #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( plotClusters
-    , clust
-    , lsaBuilder
-    , dmClust
+    , spectralClust
+    , spectralClustPar
     , extractTags
     , extractSubMatrix
-    , doClustering
     , getBedCluster
     , extractBedByBarcode 
     , Embedding(..)
@@ -41,15 +39,37 @@ import Shelly (shelly, run_, escaping)
 import Control.Workflow
 import Data.Conduit.Zlib (gzip)
    
-import Taiji.Pipeline.SC.ATACSeq.Functions.Feature
-import Taiji.Pipeline.SC.ATACSeq.Functions.DR.LSA
-import Taiji.Pipeline.SC.ATACSeq.Functions.DR.DiffusionMap
+import Taiji.Pipeline.SC.ATACSeq.Functions.DR
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.ECharts
+
+-- | Perform spectral clustering.
+spectralClust :: FilePath   -- ^ Directory to save the results
+              -> ClustOpt -> Builder ()
+spectralClust prefix opt = do
+    node "Reduce_Dims" [| spectral prefix |] $ return ()
+    node "Cluster" [| clustering prefix opt |] $ return ()
+    node "Cluster_Viz" [| \x -> do
+        dir <- figDir
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Reduce_Dims", "Cluster", "Cluster_Viz"]
+
+-- | Perform spectral clustering.
+spectralClustPar :: FilePath   -- ^ Directory to save the results
+                 -> ClustOpt -> Builder ()
+spectralClustPar prefix opt = do
+    nodePar "Reduce_Dims" [| spectral prefix |] $ return ()
+    nodePar "Cluster" [| clustering prefix opt |] $ return ()
+    nodePar "Cluster_Viz" [| \x -> do
+        dir <- figDir
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Reduce_Dims", "Cluster", "Cluster_Viz"]
 
 -- | Embedding method
 data Embedding = UMAP
@@ -73,7 +93,7 @@ data ClustOpt = ClustOpt
     } deriving (Lift)
 
 defClustOpt :: ClustOpt
-defClustOpt = ClustOpt UnitBall UMAP Nothing 20 Nothing
+defClustOpt = ClustOpt None UMAP Nothing 50 Nothing
 
 toParams :: ClustOpt -> [T.Text]
 toParams ClustOpt{..} = embed ++ normalize ++ dim ++ res ++
@@ -93,27 +113,26 @@ toParams ClustOpt{..} = embed ++ normalize ++ dim ++ res ++
     res = case _resolution of
         Nothing -> []
         Just r -> ["--res", T.pack $ show r]
-
  
-doClustering :: SCATACSeqConfig config
-             => FilePath
-             -> ClustOpt
-             -> SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv])
-             -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
-doClustering prefix opt input = do
+clustering :: SCATACSeqConfig config
+           => FilePath
+           -> ClustOpt
+           -> SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv])
+           -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
+clustering prefix opt input = do
     tmp <- asks _scatacseq_temp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        clust opt tmp fl >>= encodeFile output
+        clustering' opt tmp fl >>= encodeFile output
         return $ location .~ output $ emptyFile )
 
-clust :: ClustOpt
-      -> Maybe FilePath      -- ^ temp dir
-      -> (File '[] 'Tsv, [File '[Gzip] 'Tsv])   -- ^ lsa input matrix
-      -> IO [CellCluster]
-clust opt dir (coverage, mats) = withTempDir dir $ \tmpD -> do
+clustering' :: ClustOpt
+            -> Maybe FilePath      -- ^ temp dir
+            -> (File '[] 'Tsv, [File '[Gzip] 'Tsv])   -- ^ lsa input matrix
+            -> IO [CellCluster]
+clustering' opt dir (coverage, mats) = withTempDir dir $ \tmpD -> do
       let sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
               ZipSource seqDepthC <*>
@@ -133,38 +152,9 @@ clust opt dir (coverage, mats) = withTempDir dir $ \tmpD -> do
         mapC ((\[a,b] -> (a,b)) . B.split '\t')
     f (i, (bc, dep), [d1,d2,d3,d4,d5]) = Cell i (d1,d2) (d3,d4,d5) bc $ readInt dep
     f _ = error "formatting error"
-{-# INLINE clust #-}
+{-# INLINE clustering' #-}
 
---------------------------------------------------------------------------------
--- LSA
---------------------------------------------------------------------------------
-lsaBuilder :: Builder ()
-lsaBuilder = do
-    -- Clustering 1st round (By Window)
-    namespace "Window" $ lsaClust "/Cluster_by_window/LSA/" defClustOpt
-    path ["Merge_Window_Matrix", "Window_LSA_Reduce"]
-
-    -- Extract tags for each cluster
-    namespace "Window_LSA" $ extractTags "/temp/Bed/Cluster/"
-    ["Get_Bed", "Window_LSA_Cluster"] ~> "Window_LSA_Extract_Tags_Prep"
-
-    -- Call peaks 1st round
-    genPeakMat "/temp/Peak/" (Just "LSA_1st") 
-        "Window_LSA_Merge_Tags" "Get_Windows"
-
-    -- Clustering 2nd round
-    namespace "Peak" $ lsaClust "/Cluster_by_peak/LSA/" defClustOpt
-    path ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Reduce"]
-
-    -- Subclustering
-    node "Extract_Sub_Matrix" [| \(x,y) -> 
-        let [input] = zipExp x y
-        in extractSubMatrix "/temp/" input |] $ return ()
-    ["LSA_1st_Merge_Peak_Matrix", "Peak_LSA_Cluster"] ~> "Extract_Sub_Matrix"
-    namespace "SubCluster" $ lsaClust "/Cluster_by_peak/LSA/SubCluster/" $ defClustOpt{_resolution = Just 0.0007}
-    path ["Extract_Sub_Matrix", "SubCluster_LSA_Reduce"]
-
-
+{-
 -- | Perform LSA analysis.
 lsaClust :: FilePath   -- ^ Directory to save the results
          -> ClustOpt
@@ -182,20 +172,8 @@ lsaClust prefix opt = do
         liftIO $ plotClusters dir x
         |] $ return ()
     path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
+-}
 
-
--- | Perform LSA analysis.
-dmClust :: FilePath   -- ^ Directory to save the results
-        -> ClustOpt
-        -> Builder ()
-dmClust prefix opt = do
-    nodePar "DM_Reduce" [| performDM prefix |] $ return ()
-    nodePar "DM_Cluster" [| doClustering prefix opt |] $ return ()
-    nodePar "DM_Viz" [| \x -> do
-        dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["DM_Reduce", "DM_Cluster", "DM_Viz"]
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
