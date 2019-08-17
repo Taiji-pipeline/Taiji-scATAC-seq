@@ -33,6 +33,7 @@ filterMatrix prefix input = do
     let output = printf "%s/%s_rep%d_filt.mat.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
         rownames = printf "%s/%s_rep%d_rownames.txt" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ ( \fl -> liftIO $ do
         sp <- mkSpMatrix readInt $ fl^.location
         runResourceT $ runConduit $

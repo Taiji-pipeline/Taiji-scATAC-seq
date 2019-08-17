@@ -37,12 +37,7 @@ def getEmbedding(mat, output, method="umap"):
     np.savetxt(output, embedding, delimiter='\t')
 
 def clustering(args):
-
     fls = args.input.split(',')
-
-    data = readCoordinates(fls[0], n_dim=args.dim,
-        discard=args.discard, scale=args.scale)
-
     gr = mkKNNGraph(fls, k=args.k)
 
     print("Start clustering")
@@ -55,6 +50,8 @@ def clustering(args):
 
     if(args.embed):
         print("Create Embedding:")
+        data = readCoordinates(fls[0], n_dim=args.dim,
+           discard=args.discard, scale=args.scale)
         getEmbedding(data, args.embed, method=args.embed_method)
 
 def readCoordinates(fl, n_dim=None, discard=None, scale=None):
