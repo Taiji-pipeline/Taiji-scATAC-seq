@@ -59,8 +59,8 @@ preClustering = do
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
-        spectralClustPar "/temp/Pre/Cluster/" defClustOpt
-        path ["Make_Window_Mat", "Reduce_Dims"]
+        spectralClust "/temp/Pre/Cluster/" defClustOpt
+        path ["Make_Window_Mat", "Filter_Mat"]
 
         -- Extract tags for each cluster
         node "Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
@@ -185,8 +185,19 @@ builder = do
 --------------------------------------------------------------------------------
 -- Clustering
 --------------------------------------------------------------------------------
-    namespace "Merged" $ spectralClust "/Cluster/" defClustOpt
-    path ["Merge_Peak_Mat", "Merged_Reduce_Dims"]
+    node "Merged_Filter_Mat" [| filterMatrix "/Cluster/" |] $ return ()
+    node "Merged_Reduce_Dims_Prep" [| \x -> return $ zip [1::Int ..5] $ repeat x |] $ return ()
+    nodePar "Merged_Reduce_Dims" [| \(i,x) -> spectral ("/Cluster/" ++ show i ++ "/") x |] $ return ()
+    node "Merged_Cluster" [| \x ->
+        let [x'] = concatMap split $ mergeExp x
+        in clustering "/Cluster/" defClustOpt x'
+        |] $ return ()
+    node "Merged_Cluster_Viz" [| \x -> do
+        dir <- figDir
+        liftIO $ plotClusters dir x
+        |] $ return ()
+    path ["Merge_Peak_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep", "Merged_Reduce_Dims",
+        "Merged_Cluster", "Merged_Cluster_Viz"]
 
     -- Subclustering
     node "Extract_Sub_Matrix" [| \(x,y) -> 
@@ -195,8 +206,8 @@ builder = do
     ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
 
     namespace "Merged_Iterative" $
-        spectralClustPar "/Subcluster/" defClustOpt{_resolution=Just 0.6}
-    path ["Extract_Sub_Matrix", "Merged_Iterative_Reduce_Dims"]
+        spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.6}
+    path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
 
     -- Extract tags for each cluster
     node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()

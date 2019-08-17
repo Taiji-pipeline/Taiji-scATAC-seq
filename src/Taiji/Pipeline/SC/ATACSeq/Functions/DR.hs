@@ -5,6 +5,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.DR
     ( spectral
     , lsi
+    , filterMatrix
     ) where 
 
 import Control.Arrow
@@ -23,21 +24,19 @@ import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
--- | Reduce dimensionality using spectral clustering
-spectral :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
-         => FilePath  -- ^ directory
-         -> SCATACSeq S (File tags 'Other)
-         -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv]))
-spectral prefix input = do
+filterMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+             => FilePath
+             -> SCATACSeq S (File tags 'Other)
+             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File tags 'Other))
+filterMatrix prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_dm.tsv.gz" dir
+    let output = printf "%s/%s_rep%d_filt.mat.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
-        rownames = printf "%s/%s_rep%d_dm.rownames.txt" dir
-            (T.unpack $ input^.eid) (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> withTemp Nothing $ \tmp -> do
+        rownames = printf "%s/%s_rep%d_rownames.txt" dir
+    input & replicates.traversed.files %%~ ( \fl -> liftIO $ do
         sp <- mkSpMatrix readInt $ fl^.location
-
-        -- filtering
+        runResourceT $ runConduit $
+            streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
         counts <- do
             v <- UM.replicate (_num_col sp) 0
             runResourceT $ runConduit $ streamRows sp .| concatMapC snd .|
@@ -47,22 +46,26 @@ spectral prefix input = do
                 U.zip (U.enumFromN 0 (U.length counts)) counts
             (i, v) = U.unzip nonzeros
             idx = U.toList $ fst $ U.unzip $ U.filter ((>1.65) . snd) $ U.zip i $ scale v
-        filterCols tmp (idx ++ U.toList (fst $ U.unzip zeros)) $ fl^.location
-        spectral' output tmp
-
-        runResourceT $ runConduit $
-            streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
-
-        let o = [ location .~ output $ emptyFile ]
+        filterCols output (idx ++ U.toList (fst $ U.unzip zeros)) $ fl^.location
         return ( location .~ rownames $ emptyFile
-               , o ) )
+               , location .~ output $ emptyFile ) )
   where
     f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
 
-spectral' :: FilePath -> FilePath -> IO ()
-spectral' output input = shelly $ run_ "sc_utils"
-    ["reduce", "--method", "spectral", T.pack input, T.pack output]
-{-# INLINE spectral' #-}
+-- | Reduce dimensionality using spectral clustering
+spectral :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+         => FilePath  -- ^ directory
+         -> SCATACSeq S (a, File tags 'Other)
+         -> ReaderT config IO (SCATACSeq S (a, File '[Gzip] 'Tsv))
+spectral prefix input = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_spectral.tsv.gz" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \(rownames, fl) -> do
+        shelly $ run_ "sc_utils" ["reduce", "--method", "spectral"
+            , T.pack $ fl^.location, T.pack output]
+        return (rownames, location .~ output $ emptyFile)
+        )
 
 --------------------------------------------------------------------------------
 -- LSI

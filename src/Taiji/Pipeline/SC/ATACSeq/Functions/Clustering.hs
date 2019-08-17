@@ -7,7 +7,6 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( plotClusters
     , spectralClust
-    , spectralClustPar
     , extractTags
     , extractSubMatrix
     , getBedCluster
@@ -16,6 +15,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , Normalization(..)
     , ClustOpt(..)
     , defClustOpt
+    , clustering
     , combineClusters
     ) where
 
@@ -51,25 +51,16 @@ import Taiji.Utils.Plot.ECharts
 spectralClust :: FilePath   -- ^ Directory to save the results
               -> ClustOpt -> Builder ()
 spectralClust prefix opt = do
-    node "Reduce_Dims" [| spectral prefix |] $ return ()
-    node "Cluster" [| clustering prefix opt |] $ return ()
-    node "Cluster_Viz" [| \x -> do
-        dir <- figDir
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Reduce_Dims", "Cluster", "Cluster_Viz"]
-
--- | Perform spectral clustering.
-spectralClustPar :: FilePath   -- ^ Directory to save the results
-                 -> ClustOpt -> Builder ()
-spectralClustPar prefix opt = do
+    nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
     nodePar "Reduce_Dims" [| spectral prefix |] $ return ()
-    nodePar "Cluster" [| clustering prefix opt |] $ return ()
+    nodePar "Cluster" [| \x -> clustering prefix opt $ x &
+        replicates.traverse.files %~ return
+        |] $ return ()
     nodePar "Cluster_Viz" [| \x -> do
         dir <- figDir
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["Reduce_Dims", "Cluster", "Cluster_Viz"]
+    path ["Filter_Mat", "Reduce_Dims", "Cluster", "Cluster_Viz"]
 
 -- | Embedding method
 data Embedding = UMAP
@@ -117,7 +108,7 @@ toParams ClustOpt{..} = embed ++ normalize ++ dim ++ res ++
 clustering :: SCATACSeqConfig config
            => FilePath
            -> ClustOpt
-           -> SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv])
+           -> SCATACSeq S [(File '[] 'Tsv, File '[Gzip] 'Tsv)]
            -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 clustering prefix opt input = do
     tmp <- asks _scatacseq_temp_dir
@@ -130,9 +121,9 @@ clustering prefix opt input = do
 
 clustering' :: ClustOpt
             -> Maybe FilePath      -- ^ temp dir
-            -> (File '[] 'Tsv, [File '[Gzip] 'Tsv])   -- ^ lsa input matrix
+            -> [(File '[] 'Tsv, File '[Gzip] 'Tsv)]   -- ^ lsa input matrix
             -> IO [CellCluster]
-clustering' opt dir (coverage, mats) = withTempDir dir $ \tmpD -> do
+clustering' opt dir fls = withTempDir dir $ \tmpD -> do
       let sourceCells = getZipSource $ (,,) <$>
               ZipSource (iterateC succ 0) <*>
               ZipSource seqDepthC <*>
@@ -146,6 +137,8 @@ clustering' opt dir (coverage, mats) = withTempDir dir $ \tmpD -> do
       return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
           map (map (cells V.!)) clusters
   where
+    coverage = head $ fst $ unzip fls
+    mats = snd $ unzip fls
     readClusters fl = map (map readInt . B.split ',') . B.lines <$>
         B.readFile fl
     seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
