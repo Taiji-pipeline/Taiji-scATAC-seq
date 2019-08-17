@@ -16,7 +16,7 @@ parser_run = subparsers.add_parser('reduce', help='dimension reduction')
 parser_run.add_argument('input', type=str, help='gzipped input file')
 parser_run.add_argument('output', type=str, help='output matrix in .npy format')
 parser_run.add_argument('--method', help='algorithm: svd, spectral')
-parser_run.add_argument('--sample-size', default=40000, type=int, help='sampling size')
+parser_run.add_argument('--sample-size', default=35000, type=int, help='sampling size')
 parser_run.add_argument('--seed', default=3484, type=int, help='random seed')
 parser_run.set_defaults(func=sc.reduceDimension)
 

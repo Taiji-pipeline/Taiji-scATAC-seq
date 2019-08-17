@@ -8,6 +8,7 @@ import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import Data.Binary
+import System.Random.MWC (uniformR, create)
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
@@ -186,8 +187,14 @@ builder = do
 -- Clustering
 --------------------------------------------------------------------------------
     node "Merged_Filter_Mat" [| filterMatrix "/Cluster/" |] $ return ()
-    node "Merged_Reduce_Dims_Prep" [| \x -> return $ zip [1::Int ..5] $ repeat x |] $ return ()
-    nodePar "Merged_Reduce_Dims" [| \(i,x) -> spectral ("/Cluster/" ++ show i ++ "/") x |] $ return ()
+    node "Merged_Reduce_Dims_Prep" [| \x -> liftIO $ do
+        g <- create
+        seeds <- replicateM 5 $ uniformR (1::Int, 100000) g
+        return $ zip seeds $ repeat x
+        |] $ return ()
+    nodePar "Merged_Reduce_Dims" [| \(s,x) ->
+        spectral ("/Cluster/" ++ show s ++ "/") (Just s) x
+        |] $ return ()
     node "Merged_Cluster" [| \x ->
         let [x'] = concatMap split $ mergeExp x
         in clustering "/Cluster/" defClustOpt x'

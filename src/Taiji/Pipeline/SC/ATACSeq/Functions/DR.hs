@@ -56,15 +56,17 @@ filterMatrix prefix input = do
 -- | Reduce dimensionality using spectral clustering
 spectral :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
          => FilePath  -- ^ directory
+         -> Maybe Int  -- ^ seed
          -> SCATACSeq S (a, File tags 'Other)
          -> ReaderT config IO (SCATACSeq S (a, File '[Gzip] 'Tsv))
-spectral prefix input = do
+spectral prefix seed input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_spectral.tsv.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(rownames, fl) -> do
-        shelly $ run_ "sc_utils" ["reduce", "--method", "spectral"
-            , T.pack $ fl^.location, T.pack output]
+        shelly $ run_ "sc_utils" $ ["reduce", "--method", "spectral"
+            , T.pack $ fl^.location, T.pack output] ++ maybe []
+            (\x -> ["--seed", T.pack $ show x]) seed
         return (rownames, location .~ output $ emptyFile)
         )
 

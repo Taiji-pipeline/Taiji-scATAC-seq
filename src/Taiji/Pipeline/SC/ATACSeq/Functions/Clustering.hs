@@ -52,7 +52,7 @@ spectralClust :: FilePath   -- ^ Directory to save the results
               -> ClustOpt -> Builder ()
 spectralClust prefix opt = do
     nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
-    nodePar "Reduce_Dims" [| spectral prefix |] $ return ()
+    nodePar "Reduce_Dims" [| spectral prefix Nothing |] $ return ()
     nodePar "Cluster" [| \x -> clustering prefix opt $ x &
         replicates.traverse.files %~ return
         |] $ return ()
