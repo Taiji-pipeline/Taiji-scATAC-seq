@@ -82,8 +82,8 @@ def mkKNNGraph(fls, k=25):
     sources, targets = adj.nonzero()
     edgelist = list(zip(sources.tolist(), targets.tolist()))
 
-    gr = ig.Graph(n=vcount, edges=edgelist,
-        edge_attrs={ "weight": np.ravel(adj[(sources, targets)]) })
+    weights = 1 / (np.ravel(adj[(sources, targets)]) / len(fls))
+    gr = ig.Graph(n=vcount, edges=edgelist, edge_attrs={"weight": weights})
     return gr
 
 def leiden(gr, resolution=None):

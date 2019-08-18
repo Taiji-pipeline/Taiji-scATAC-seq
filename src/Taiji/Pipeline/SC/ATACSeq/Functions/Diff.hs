@@ -203,7 +203,7 @@ plotDiffGene filename inputs = do
             U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
         df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr -> U.toList $
             scale' $ U.fromList $ map (\g -> M.lookupDefault 0 g fdr) genes
-    liftIO $ savePlots output [] [mkHeatmap df1, mkHeatmap df2]
+    liftIO $ savePlots output [] [mkHeatmap df1] -- mkHeatmap df2]
   where
     mkHeatmap df = p <> E.toolbox <> E.option
         [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
