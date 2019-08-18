@@ -53,14 +53,29 @@ spectralClust :: FilePath   -- ^ Directory to save the results
 spectralClust prefix opt = do
     nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
     nodePar "Reduce_Dims" [| spectral prefix Nothing |] $ return ()
-    nodePar "Cluster" [| \x -> clustering prefix opt $ x &
-        replicates.traverse.files %~ return
+    node "Cluster_Config" [| \xs -> do
+        r <- case _resolution opt of
+            Nothing -> return Nothing
+            Just r -> liftIO $ do
+                let output = prefix ++ "/parameters.txt"
+                writeFile output $ unlines $ map
+                    (\x -> T.unpack (x^.eid) ++ "\t" ++ show r) xs
+                return $ Just output
+        return $ zip (repeat r) xs
+        |] $ return ()
+    nodePar "Cluster" [| \(para, x) -> case para of
+        Nothing -> clustering prefix opt $ x & replicates.traverse.files %~ return
+        Just fl -> do
+            let f [a,b] = (T.pack a, read b)
+            ps <- liftIO $ map (f . words) . lines <$> readFile fl
+            clustering prefix opt{_resolution = lookup (x^.eid) ps} $
+                x & replicates.traverse.files %~ return
         |] $ return ()
     nodePar "Cluster_Viz" [| \x -> do
         dir <- figDir
         liftIO $ plotClusters dir x
         |] $ return ()
-    path ["Filter_Mat", "Reduce_Dims", "Cluster", "Cluster_Viz"]
+    path ["Filter_Mat", "Reduce_Dims", "Cluster_Config", "Cluster", "Cluster_Viz"]
 
 -- | Embedding method
 data Embedding = UMAP
