@@ -213,7 +213,7 @@ builder = do
     ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
 
     namespace "Merged_Iterative" $
-        spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.6}
+        spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.5}
     path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
 
     -- Extract tags for each cluster

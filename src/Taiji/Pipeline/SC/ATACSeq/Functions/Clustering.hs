@@ -54,10 +54,11 @@ spectralClust prefix opt = do
     nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
     nodePar "Reduce_Dims" [| spectral prefix Nothing |] $ return ()
     node "Cluster_Config" [| \xs -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
         r <- case _resolution opt of
             Nothing -> return Nothing
             Just r -> liftIO $ do
-                let output = prefix ++ "/parameters.txt"
+                let output = dir ++ "/parameters.txt"
                 writeFile output $ unlines $ map
                     (\x -> T.unpack (x^.eid) ++ "\t" ++ show r) xs
                 return $ Just output
