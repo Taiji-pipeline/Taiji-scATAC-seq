@@ -44,7 +44,7 @@ def diffTest(fg, bg, idx_set=None):
     p1 = (np.ravel(np.sum(fg, axis=0)) + 1) / n1
     p2 = (np.ravel(np.sum(bg, axis=0)) + 1) / n2
     for i in range(m):
-        if (p1[i] / p2[i] >= 1.5 or p2[i] / p1[i] >= 1.5) and (p1[i] > 0.05 or p2[i] > 0.05):
+        if p1[i] / p2[i] >= 1.5 and p1[i] > 0.05:
             idx.append(i)
     if(idx_set):
         idx = list(set(idx).intersection(idx_set))
