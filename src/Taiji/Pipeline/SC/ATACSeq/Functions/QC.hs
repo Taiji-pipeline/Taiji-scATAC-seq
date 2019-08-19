@@ -5,6 +5,7 @@
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ( Stat(..)
+    , passedQC
     , plotStat
     , readStats
     , showStat
@@ -19,6 +20,10 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , detectDoublet
     , removeDoublet
     , plotClusterQC
+    , plotNumReads
+    , plotDupRate
+    , plotMitoRate
+    , plotTE
     ) where
 
 import           Bio.Data.Bam
@@ -63,20 +68,30 @@ data Stat = Stat
     , _uniq_reads :: Int
     , _doublet_score :: Double }
 
+-- | Whether the given cell passes the QC.
+passedQC :: Double   -- doublet score cutoff
+         -> Stat -> Bool
+passedQC th x = _te x >= 7 && _uniq_reads x >= 1000 && _doublet_score x <= th
+
 plotStat :: SCATACSeqConfig config
-         => [SCATACSeq S (a, b, File '[] 'Tsv )]
-         -> ReaderT config IO ()
+         => [SCATACSeq S (File '[] 'Tsv, a)]
+         -> ReaderT config IO FilePath
 plotStat inputs = do
     dir <- qcDir
     let output = dir <> "/qc.html"
+        outputStat = dir <> "/qc_stats.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
-            stats <- readStats $ input^.replicates._2.files._3.location
-            let stats' = filter (\x -> _te x >= 7 && _uniq_reads x >= 1000) stats
+            stats <- readStats $ input^.replicates._2.files._1.location
+            let stats' = filter (passedQC 1) stats
                 cellQC = plotCells stats <> title
                     (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
             return (cellQC, (input^.eid, stats'))
-        savePlots output ([plotNumReads stats, plotDupRate stats, plotMitoRate stats] <> cellQCs) []
+        savePlots output ([plotNumReads stats, plotTE stats, plotDupRate stats, plotMitoRate stats] <> cellQCs) []
+        B.writeFile outputStat $ B.unlines $ map showStat $
+            flip concatMap stats $ \(i, stat) -> map (\x ->
+                x{_barcode = B.pack (T.unpack i) <> "_" <> _barcode x}) stat
+        return outputStat
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . B.lines) . B.readFile
@@ -266,7 +281,6 @@ detectDoublet input = do
             }
        } |]
 
-
 --------------------------------------------------------------------------------
 -- Plotting
 --------------------------------------------------------------------------------
@@ -285,6 +299,10 @@ plotMitoRate stats = violin $ flip map stats $ \(nm, stat) ->
 plotNumReads :: [(T.Text, [Stat])] -> Vega
 plotNumReads stats = violin $ flip map stats $ \(nm, stat) -> 
     (nm, map (logBase 10 . fromIntegral . _uniq_reads) stat)
+
+plotTE :: [(T.Text, [Stat])] -> Vega
+plotTE stats = violin $ flip map stats $ \(nm, stat) -> 
+    (nm, map _te stat)
 
 plotCells :: [Stat] -> Vega
 plotCells input = plt <> axes <> vline <> hline <> scales

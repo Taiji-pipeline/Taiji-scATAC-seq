@@ -6,6 +6,7 @@
 {-# LANGUAGE DeriveLift #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( plotClusters
+    , plotClusters'
     , spectralClust
     , extractTags
     , extractSubMatrix
@@ -39,6 +40,7 @@ import Shelly (shelly, run_, escaping)
 import Control.Workflow
 import Data.Conduit.Zlib (gzip)
    
+import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Pipeline.SC.ATACSeq.Functions.DR
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -313,6 +315,33 @@ combineClusters prefix inputs = do
 -- Vizualization
 --------------------------------------------------------------------------------
 
+plotClusters' :: FilePath
+             -> (FilePath, SCATACSeq S (File '[] 'Other))
+             -> IO ()
+plotClusters' dir (qc, input) = do
+    stats <- readStats qc
+    inputData <- decodeFile $ input^.replicates._2.files.location
+    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        barchart = if B.elem '+' (_cell_barcode $ head $ _cluster_member $ head inputData)
+            then clusterStat inputData
+            else []
+        (nms, num_cells) = unzip $ map (\(CellCluster nm cells) ->
+            (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
+        plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
+    clusters <- sampleCells inputData
+    savePlots output (clusterQC stats inputData) $ plt : visualizeCluster clusters ++ barchart
+  where
+    clusterQC stats cls =
+        [ plotNumReads res
+        , plotTE res
+        , plotDupRate res ]
+      where
+        res = flip map cls $ \x ->
+            (T.pack $ B.unpack $ _cluster_name x, map f $ _cluster_member x)
+        f x = M.lookupDefault undefined (_cell_barcode x) statMap
+        statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
+
 plotClusters :: FilePath
              -> SCATACSeq S (File '[] 'Other)
              -> IO ()
@@ -328,6 +357,7 @@ plotClusters dir input = do
         plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
     clusters <- sampleCells inputData
     savePlots output [] $ plt : visualizeCluster clusters ++ stats
+
 
 visualizeCluster :: [CellCluster] -> [EChart]
 visualizeCluster cs = [scatter' dat2D <> toolbox, scatter' dat2D' <> toolbox] 

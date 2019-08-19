@@ -155,7 +155,7 @@ filterCell input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bamFl, _, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter passQC stats
+        let cells = S.fromList $ map _barcode $ filter (passedQC 1) stats
         header <- getBamHeader $ bamFl^.location
         runResourceT $ runConduit $ streamBam (bamFl^.location) .|
             mapC (toBed header) .| groupBy ((==) `on` (^.name)) .|
@@ -173,5 +173,4 @@ filterCell input = do
         nm = Just $ extractBarcode $ queryName bam
         str = Just $ not $ isRev bam
         sc = Just $ fromIntegral $ mapq bam
-    passQC Stat{..} = _uniq_reads >= 1000 && _te >= 7
 {-# INLINE filterCell #-}

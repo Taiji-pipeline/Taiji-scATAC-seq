@@ -157,7 +157,7 @@ builder = do
 -- QC
 --------------------------------------------------------------------------------
     node "QC" 'plotStat $ return ()
-    ["Remove_Duplicates"] ~> "QC"
+    ["Pre_Detect_Doublet"] ~> "QC"
 
 --------------------------------------------------------------------------------
 -- Make cell by peak matrix
@@ -199,12 +199,13 @@ builder = do
         let [x'] = concatMap split $ mergeExp x
         in clustering "/Cluster/" defClustOpt x'
         |] $ return ()
+    path ["Merge_Peak_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep", "Merged_Reduce_Dims",
+        "Merged_Cluster"]
     node "Merged_Cluster_Viz" [| \x -> do
         dir <- figDir
-        liftIO $ plotClusters dir x
+        liftIO $ plotClusters' dir x
         |] $ return ()
-    path ["Merge_Peak_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep", "Merged_Reduce_Dims",
-        "Merged_Cluster", "Merged_Cluster_Viz"]
+    ["QC", "Merged_Cluster"] ~> "Merged_Cluster_Viz"
 
     -- Subclustering
     node "Extract_Sub_Matrix" [| \(x,y) -> 
