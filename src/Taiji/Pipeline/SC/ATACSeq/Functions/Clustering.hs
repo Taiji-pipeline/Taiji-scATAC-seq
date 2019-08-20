@@ -74,11 +74,7 @@ spectralClust prefix opt = do
             clustering prefix opt{_resolution = lookup (x^.eid) ps} $
                 x & replicates.traverse.files %~ return
         |] $ return ()
-    nodePar "Cluster_Viz" [| \x -> do
-        dir <- figDir
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["Filter_Mat", "Reduce_Dims", "Cluster_Config", "Cluster", "Cluster_Viz"]
+    path ["Filter_Mat", "Reduce_Dims", "Cluster_Config", "Cluster"]
 
 -- | Embedding method
 data Embedding = UMAP
@@ -330,8 +326,8 @@ plotClusters' dir (qc, input) = do
             (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
         plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
     clusters <- sampleCells inputData
-    savePlots output [] $ plt : visualizeCluster clusters ++
-        barchart ++ clusterQC stats inputData
+    savePlots output [] $ plt : clusterQC stats inputData ++
+        visualizeCluster clusters -- ++ barchart
   where
     clusterQC stats cls =
         [ plotNumReads res

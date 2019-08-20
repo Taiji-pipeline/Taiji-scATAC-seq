@@ -291,20 +291,44 @@ detectDoublet input = do
 --plotNumCells stats = $ flip map stats $ \(nm, stat) -> (nm, length stat)
 
 plotDupRate :: [(T.Text, [Stat])] -> E.EChart
-plotDupRate stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
-    (nm, map _dup_rate stat)
+plotDupRate stats = plt <> E.option [jmacroE| {
+    yAxis: {
+        name: "duplication rate",
+        nameLocation: "middle",
+        nameGap: 50
+    }
+    }|]
+  where
+    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
+        (nm, map _dup_rate stat)
 
 plotMitoRate :: [(T.Text, [Stat])] -> E.EChart
 plotMitoRate stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
     (nm, map _mito_rate stat)
 
 plotNumReads :: [(T.Text, [Stat])] -> E.EChart
-plotNumReads stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
-    (nm, map (logBase 10 . fromIntegral . _uniq_reads) stat)
+plotNumReads stats = plt <> E.option [jmacroE| {
+    yAxis: {
+        name: "log10(number of fragments)",
+        nameLocation: "middle",
+        nameGap: 50
+    }
+    }|]
+  where
+    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
+        (nm, map (logBase 10 . fromIntegral . _uniq_reads) stat)
 
 plotTE :: [(T.Text, [Stat])] -> E.EChart
-plotTE stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
-    (nm, map _te stat)
+plotTE stats = plt <> E.option [jmacroE| {
+    yAxis: {
+        name: "TSS enrichment",
+        nameLocation: "middle",
+        nameGap: 50
+    }
+    }|]
+  where
+    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
+        (nm, map _te stat)
 
 plotCells :: [Stat] -> Vega
 plotCells input = plt <> axes <> vline <> hline <> scales
