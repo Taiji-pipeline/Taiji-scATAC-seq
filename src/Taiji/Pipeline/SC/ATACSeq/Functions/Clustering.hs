@@ -6,7 +6,6 @@
 {-# LANGUAGE DeriveLift #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( plotClusters
-    , plotClusters'
     , spectralClust
     , extractTags
     , extractSubMatrix
@@ -311,23 +310,22 @@ combineClusters prefix inputs = do
 -- Vizualization
 --------------------------------------------------------------------------------
 
-plotClusters' :: FilePath
+plotClusters :: FilePath
              -> (FilePath, SCATACSeq S (File '[] 'Other))
              -> IO ()
-plotClusters' dir (qc, input) = do
+plotClusters dir (qc, input) = do
     stats <- readStats qc
     inputData <- decodeFile $ input^.replicates._2.files.location
     let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        barchart = if B.elem '+' (_cell_barcode $ head $ _cluster_member $ head inputData)
-            then clusterStat inputData
-            else []
         (nms, num_cells) = unzip $ map (\(CellCluster nm cells) ->
             (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
         plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
+        compos = composition inputData
     clusters <- sampleCells inputData
-    savePlots output [] $ plt : clusterQC stats inputData ++
-        visualizeCluster clusters -- ++ barchart
+    savePlots output [] $ visualizeCluster clusters ++
+        clusterComposition compos : tissueComposition compos : plt :
+            clusterQC stats inputData
   where
     clusterQC stats cls =
         [ plotNumReads res
@@ -339,23 +337,6 @@ plotClusters' dir (qc, input) = do
         f x = M.lookupDefault undefined (_cell_barcode x) statMap
         statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
 
-plotClusters :: FilePath
-             -> SCATACSeq S (File '[] 'Other)
-             -> IO ()
-plotClusters dir input = do
-    inputData <- decodeFile $ input^.replicates._2.files.location
-    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        stats = if B.elem '+' (_cell_barcode $ head $ _cluster_member $ head inputData)
-            then clusterStat inputData
-            else []
-        (nms, num_cells) = unzip $ map (\(CellCluster nm cells) ->
-            (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
-        plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
-    clusters <- sampleCells inputData
-    savePlots output [] $ plt : visualizeCluster clusters ++ stats
-
-
 visualizeCluster :: [CellCluster] -> [EChart]
 visualizeCluster cs = [scatter' dat2D <> toolbox, scatter' dat2D' <> toolbox] 
   where
@@ -366,28 +347,38 @@ visualizeCluster cs = [scatter' dat2D <> toolbox, scatter' dat2D' <> toolbox]
     getName x = let prefix = fst $ B.breakEnd (=='+') x
                 in if B.null prefix then "" else B.unpack $ B.init prefix
 
-clusterStat :: [CellCluster] -> [EChart]
-clusterStat clusters = 
-    [ stackBar $ DF.mapCols normalize df
-    , stackBar $ DF.mapCols normalize $ DF.transpose df
-    , heatmap (DF.orderDataFrame id $ DF.spearman df) <> toolbox
-    , heatmap (DF.orderDataFrame id $ DF.spearman $ DF.transpose df) <> toolbox ]
+-- | Compute the normalized tissue composition for each cluster.
+tissueComposition :: DF.DataFrame Int -> EChart
+tissueComposition = stackBar . DF.map round' . DF.mapCols normalize .
+    DF.transpose . DF.mapCols normalize . DF.map fromIntegral
   where
-    df = DF.mkDataFrame rownames colnames $
-        map (\x -> map (\i -> fromIntegral $ M.lookupDefault 0 i x) colnames) rows
-    (rownames, rows) = unzip $ map f clusters
-    colnames = nubSort $ concatMap M.keys rows
-    f CellCluster{..} = ( T.pack $ B.unpack _cluster_name,
-        M.fromListWith (+) $ map (\x -> (tissueName x, 1::Int)) _cluster_member )
-    tissueName Cell{..} = let prefix = fst $ B.breakEnd (=='+') _cell_barcode
-                          in if B.null prefix then "" else T.pack $ B.unpack $ B.init prefix
-    normalize xs 
-        | V.all (==0) xs = xs
-        | otherwise = V.map (\x -> round' $ x / s) xs
-      where 
-        round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
-        s = V.foldl1' (+) xs
+    round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
+    normalize xs | V.all (==0) xs = xs
+                 | otherwise = V.map (/V.sum xs) xs
 
+-- | Compute the cluster composition for each tissue.
+clusterComposition :: DF.DataFrame Int -> EChart
+clusterComposition = stackBar . DF.map round' . DF.mapCols normalize .
+    DF.map fromIntegral
+  where
+    round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
+    normalize xs | V.all (==0) xs = xs
+                 | otherwise = V.map (/V.sum xs) xs
+
+-- | Compute the cluster x tissue composition table.
+composition :: [CellCluster] -> DF.DataFrame Int
+composition clusters = DF.mkDataFrame rownames colnames $
+    flip map rows $ \x -> map (\i -> M.lookupDefault 0 i x) colnames
+  where
+    (rownames, rows) = unzip $ flip map clusters $ \CellCluster{..} ->
+        ( T.pack $ B.unpack _cluster_name
+        , M.fromListWith (+) $ map (\x -> (getName x, 1)) _cluster_member )
+    colnames = nubSort $ concatMap M.keys rows
+    getName Cell{..} =
+        let prefix = fst $ B.breakEnd (=='+') _cell_barcode
+        in if B.null prefix then "" else T.pack $ B.unpack $ B.init prefix
+
+-- | Random sample 30,000 cells.
 sampleCells :: [CellCluster] -> IO [CellCluster]
 sampleCells clusters
     | ratio >= 1 = return clusters

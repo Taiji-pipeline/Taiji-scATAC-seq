@@ -203,7 +203,7 @@ builder = do
         "Merged_Cluster"]
     node "Merged_Cluster_Viz" [| \x -> do
         dir <- figDir
-        liftIO $ plotClusters' dir x
+        liftIO $ plotClusters dir x
         |] $ return ()
     ["QC", "Merged_Cluster"] ~> "Merged_Cluster_Viz"
 
@@ -218,7 +218,7 @@ builder = do
     path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
     node "Merged_Iterative_Cluster_Viz" [| \(qc, xs) -> do
         dir <- figDir
-        liftIO $ mapM_ (\x -> plotClusters' dir (qc, x)) xs
+        liftIO $ mapM_ (\x -> plotClusters dir (qc, x)) xs
         |] $ return ()
     ["QC", "Merged_Iterative_Cluster"] ~> "Merged_Iterative_Cluster_Viz"
 
