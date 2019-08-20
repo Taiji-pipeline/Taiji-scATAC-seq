@@ -330,7 +330,8 @@ plotClusters' dir (qc, input) = do
             (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
         plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
     clusters <- sampleCells inputData
-    savePlots output (clusterQC stats inputData) $ plt : visualizeCluster clusters ++ barchart
+    savePlots output [] $ plt : visualizeCluster clusters ++
+        barchart ++ clusterQC stats inputData
   where
     clusterQC stats cls =
         [ plotNumReads res

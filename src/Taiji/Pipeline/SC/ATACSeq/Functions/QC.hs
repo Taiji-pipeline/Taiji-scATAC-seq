@@ -87,10 +87,12 @@ plotStat inputs = do
                 cellQC = plotCells stats <> title
                     (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
             return (cellQC, (input^.eid, stats'))
-        savePlots output ([plotNumReads stats, plotTE stats, plotDupRate stats, plotMitoRate stats] <> cellQCs) []
+        savePlots output cellQCs 
+            [ plotNumReads stats, plotTE stats, plotDupRate stats
+            , plotMitoRate stats ]
         B.writeFile outputStat $ B.unlines $ map showStat $
             flip concatMap stats $ \(i, stat) -> map (\x ->
-                x{_barcode = B.pack (T.unpack i) <> "_" <> _barcode x}) stat
+                x{_barcode = B.pack (T.unpack i) <> "+" <> _barcode x}) stat
         return outputStat
 
 readStats :: FilePath -> IO [Stat]
@@ -288,20 +290,20 @@ detectDoublet input = do
 --plotNumCells :: [(T.Text, [Stat])] -> Vega
 --plotNumCells stats = $ flip map stats $ \(nm, stat) -> (nm, length stat)
 
-plotDupRate :: [(T.Text, [Stat])] -> Vega
-plotDupRate stats = violin $ flip map stats $ \(nm, stat) -> 
+plotDupRate :: [(T.Text, [Stat])] -> E.EChart
+plotDupRate stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
     (nm, map _dup_rate stat)
 
-plotMitoRate :: [(T.Text, [Stat])] -> Vega
-plotMitoRate stats = violin $ flip map stats $ \(nm, stat) -> 
+plotMitoRate :: [(T.Text, [Stat])] -> E.EChart
+plotMitoRate stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
     (nm, map _mito_rate stat)
 
-plotNumReads :: [(T.Text, [Stat])] -> Vega
-plotNumReads stats = violin $ flip map stats $ \(nm, stat) -> 
+plotNumReads :: [(T.Text, [Stat])] -> E.EChart
+plotNumReads stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
     (nm, map (logBase 10 . fromIntegral . _uniq_reads) stat)
 
-plotTE :: [(T.Text, [Stat])] -> Vega
-plotTE stats = violin $ flip map stats $ \(nm, stat) -> 
+plotTE :: [(T.Text, [Stat])] -> E.EChart
+plotTE stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
     (nm, map _te stat)
 
 plotCells :: [Stat] -> Vega
