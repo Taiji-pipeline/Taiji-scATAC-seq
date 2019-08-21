@@ -31,7 +31,6 @@ import Data.List.Ordered (nubSort)
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
 import qualified Data.Matrix.Unboxed as MU
-import Data.Conduit.Zlib (gzip)
 import Shelly hiding (FilePath)
 
 import Taiji.Prelude
@@ -40,6 +39,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot
 import qualified Taiji.Utils.Plot.ECharts as E
+import Taiji.Pipeline.SC.ATACSeq.Functions.Feature (streamMatrices)
 
 sampleCells :: Int   -- ^ Number of cells
             -> SCATACSeq S (File tags 'Other)   -- ^ clusters
@@ -54,22 +54,19 @@ sampleCells n input = input & replicates.traversed.files %%~ ( \fl -> do
 
 mkRefMat :: SCATACSeqConfig config
          => FilePath   -- ^ Prefix
-         -> Bool
-         -> SCATACSeq S ([[B.ByteString]], File '[Gzip] 'Other)
-         -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
-mkRefMat prefix addName input = do
+         -> [B.ByteString]   -- ^ barcodes
+         -> [SCATACSeq S (File '[Gzip] 'Other)]    -- ^ matrices
+         -> ReaderT config IO (File '[Gzip] 'Other)
+mkRefMat prefix bcs mats = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output = dir <> "/" <> T.unpack (input^.eid) <> "_ref_mat.gz"
-    input & replicates.traversed.files %%~ ( \(bcs, fl) -> liftIO $ do
-        mat <- mkSpMatrix id $ fl^.location
-        let header = B.pack $ printf "Sparse matrix: %d x %d" (S.size bc) (_num_col mat)
-            bc = S.fromList $ concat bcs
-            filterFn x | addName = (B.pack (T.unpack $ input^.eid) <> "+" <> x) `S.member` bc
-                       | otherwise = x `S.member` bc
-        runResourceT $ runConduit $ streamRows mat .| filterC (filterFn . fst) .|
-            (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
-            gzip .| sinkFile output
-        return $ location .~ output $ emptyFile )
+    let output = dir <> "/ref_mat.gz"
+    liftIO $ do
+        mat <- mkSpMatrix id $ head mats ^. replicates._2.files.location
+        runResourceT $ runConduit $ streamMatrices id mats .|
+            filterC ((`S.member` bcSet) . fst) .| sinkRows (S.size bcSet) (_num_col mat) id output
+        return $ location .~ output $ emptyFile
+  where
+    bcSet = S.fromList bcs
 
 diffPeaks :: SCATACSeqConfig config
           => ( File '[Gzip] 'NarrowPeak

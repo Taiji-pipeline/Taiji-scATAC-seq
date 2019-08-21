@@ -20,6 +20,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , Row
     , mkSpMatrix
     , streamRows
+    , sinkRows
     , decodeRowWith
     , encodeRowWith
 
@@ -230,6 +231,18 @@ mkSpMatrix f input = do
 
 streamRows :: SpMatrix a -> ConduitT () (Row a) (ResourceT IO) ()
 streamRows sp = (_decoder sp) (_filepath sp)
+
+sinkRows :: Int   -- ^ Number of rows
+         -> Int   -- ^ Number of cols
+         -> (a -> B.ByteString) 
+         -> FilePath
+         -> ConduitT (Row a) Void (ResourceT IO) ()
+sinkRows n m encoder output = do
+    (l, _) <- (yield header >> mapC (encodeRowWith encoder)) .| zipSinks lengthC sink
+    when (l + 1 /= n) $ error "incorrect number of rows"
+  where
+    header = B.pack $ printf "Sparse matrix: %d x %d" n m
+    sink = unlinesAsciiC .| gzip .| sinkFile output
 
 decodeSpMatrix :: (B.ByteString -> a)
                -> FilePath -> ConduitT () (Row a) (ResourceT IO) ()

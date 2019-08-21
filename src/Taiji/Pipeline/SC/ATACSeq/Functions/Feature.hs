@@ -6,7 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
-    ( genPeakMat
+    ( streamMatrices
     , mergeFeatMatrix
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
@@ -16,6 +16,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
 
 import qualified Data.ByteString.Char8 as B
 import Data.Conduit.List (groupBy)
+import Control.Arrow (first)
 import           Control.Workflow
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
@@ -32,39 +33,14 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
 
-genPeakMat :: FilePath   -- ^ directory
-           -> Maybe T.Text     -- ^ namespace
-           -> T.Text     -- ^ Input 1
-           -> T.Text     -- ^ Input 2
-           -> Builder ()
-genPeakMat prefix nm input1 input2 = case nm of
-    Just n -> do
-        namespace n builder
-        path [input1, n <> "_Call_Peaks"]
-        [input2, n <> "_Merge_Peaks"] ~> (n <> "_Make_Peak_Matrix_Prep")
-    Nothing -> do
-        builder
-        path [input1, "Call_Peaks"]
-        [input2, "Merge_Peaks"] ~> "Make_Peak_Matrix_Prep"
-  where
-    builder = do
-        nodePar "Call_Peaks" [| findPeaks $ prefix <> "/Peaks/" |] $ return ()
-        node "Merge_Peaks" [| mergePeaks prefix |] $ return ()
-        path ["Call_Peaks", "Merge_Peaks"]
-
-        node "Make_Peak_Matrix_Prep" [| \(exps, pk) -> return $ flip map exps $
-            \e -> e & replicates._2.files %~ (\(a,_,c) -> (a,fromJust pk,c))
-            |] $ return ()
-        nodePar "Make_Peak_Matrix" [| mkPeakMat prefix |] $ return ()
-
-        path ["Make_Peak_Matrix_Prep", "Make_Peak_Matrix"]
-        node "Merge_Peak_Matrix_Prep" [| \(pk, exps) -> return $ flip map exps $
-            \e -> e & replicates._2.files %~ (\x -> (fromJust pk,x))
-            |]$ return ()
-        node "Merge_Peak_Matrix" [| mergeFeatMatrix $ prefix ++ "/merged_cell_by_peak" |] $ return ()
-        ["Merge_Peaks", "Make_Peak_Matrix"] ~> "Merge_Peak_Matrix_Prep"
-        path ["Merge_Peak_Matrix_Prep", "Merge_Peak_Matrix"]
-
+-- | Stream rows and add sample id to barcodes.
+streamMatrices :: (B.ByteString -> a)   -- ^ Element decoder
+               -> [SCATACSeq S (File tags 'Other)]
+               -> ConduitT () (Row a) (ResourceT IO) ()
+streamMatrices decoder inputs = forM_ inputs $ \input -> do
+    mat <- liftIO $ mkSpMatrix decoder $ input^.replicates._2.files.location
+    let f x = B.pack (T.unpack $ input^.eid) <> "+" <> x
+    streamRows mat .| mapC (first f)
 
 mergeFeatMatrix :: ( Elem 'Gzip tags1 ~ 'True
                    , Elem 'Gzip tags2 ~ 'True
