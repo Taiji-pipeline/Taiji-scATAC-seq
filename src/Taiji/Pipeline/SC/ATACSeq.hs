@@ -88,6 +88,11 @@ preClustering = do
             |] $ return ()
         path ["Extract_Tags", "Call_Peaks", "Merge_Peaks"]
 
+        node "Get_Peak_List" [| \inputs -> mergePeaks "/temp/Pre/Peak/" $
+            flip concatMap inputs $ \input -> input^.replicates._2.files
+            |] $ return ()
+        path ["Call_Peaks", "Get_Peak_List"]
+
         node "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
             input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
             |] $ return ()
@@ -136,6 +141,24 @@ preClustering = do
         nodePar "Remove_Doublets" 'removeDoublet $ return ()
         path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
+        -- Make feature matrix
+        node "Make_Feat_Mat_Prep" [| \(bed, pk) -> return $
+            flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
+                x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
+            |] $ return ()
+        nodePar "Make_Feat_Mat" [| mkPeakMat "/temp/Pre/Feature/" |] $ return ()
+        ["Remove_Doublets", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
+        node "Merge_Feat_Mat" [| \mats -> do
+            dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/Feature/"))
+            let output = dir <> "Merged_cell_by_peak.mat.gz"
+            liftIO $ concatMatrix output $ flip map mats $ \mat ->
+                ( Just $ B.pack $ T.unpack $ mat^.eid
+                , mat^.replicates._2.files.location )
+            return $ (head mats & eid .~ "Merged") &
+                replicates._2.files.location .~ output
+            |] $ return ()
+        path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
+
         node "Cluster_QC_Prep" [| \(genes, x1, x2, x3, diff) -> do
             let diff' = concatMap split $ mergeExp $ flip map diff $ \x ->
                     let (i, cl) = T.breakOn "+" $ x^.eid
@@ -160,30 +183,6 @@ builder = do
     ["Pre_Detect_Doublet"] ~> "QC"
 
 --------------------------------------------------------------------------------
--- Make cell by peak matrix
---------------------------------------------------------------------------------
-    node "Get_Peak_List" [| \inputs -> mergePeaks "/Feature/Peak/" $
-        flip concatMap inputs $ \input -> input^.replicates._2.files
-        |] $ return ()
-    path ["Pre_Call_Peaks", "Get_Peak_List"]
-    node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
-        flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
-            x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
-        |] $ return ()
-    nodePar "Make_Peak_Mat" [| mkPeakMat "/Feature/Peak/" |] $ return ()
-    ["Pre_Remove_Doublets", "Get_Peak_List"] ~> "Make_Peak_Mat_Prep"
-    node "Merge_Peak_Mat" [| \mats -> do
-        dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Feature/Peak/"))
-        let output = dir <> "Merged_cell_by_peak.mat.gz"
-        liftIO $ concatMatrix output $ flip map mats $ \mat ->
-            ( Just $ B.pack $ T.unpack $ mat^.eid
-            , mat^.replicates._2.files.location )
-        return $ (head mats & eid .~ "Merged") &
-            replicates._2.files.location .~ output
-        |] $ return ()
-    path ["Make_Peak_Mat_Prep", "Make_Peak_Mat", "Merge_Peak_Mat"]
-
---------------------------------------------------------------------------------
 -- Clustering
 --------------------------------------------------------------------------------
     node "Merged_Filter_Mat" [| filterMatrix "/Cluster/" |] $ return ()
@@ -199,7 +198,7 @@ builder = do
         let [x'] = concatMap split $ mergeExp x
         in clustering "/Cluster/" defClustOpt x'
         |] $ return ()
-    path ["Merge_Peak_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep", "Merged_Reduce_Dims",
+    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep", "Merged_Reduce_Dims",
         "Merged_Cluster"]
     node "Merged_Cluster_Viz" [| \x -> do
         dir <- figDir
@@ -211,7 +210,7 @@ builder = do
     node "Extract_Sub_Matrix" [| \(x,y) -> 
         let [input] = zipExp [x] [y]
         in extractSubMatrix "/Feature/Peak/Cluster/" input |] $ return ()
-    ["Merge_Peak_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
+    ["Pre_Merge_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
 
     namespace "Merged_Iterative" $
         spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.5}
@@ -233,7 +232,13 @@ builder = do
     namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
     ["Pre_Remove_Doublets", "Merged_Iterative_Cluster"] ~> "Subcluster_Extract_Tags_Prep"
     ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
-    
+
+ --------------------------------------------------------------------------------
+-- Make cell by peak matrix
+--------------------------------------------------------------------------------
+    nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/" |] $ return ()
+    node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
+    path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
 --------------------------------------------------------------------------------
 -- Differential genes
@@ -278,6 +283,7 @@ builder = do
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
 --------------------------------------------------------------------------------
+{-
     node "Make_Ref_Peak_Mat" [| \(ref, mat) -> do
         let [input] = zipExp [ref] [mat]
         mkRefMat "/Feature/Peak/" False input
@@ -290,6 +296,7 @@ builder = do
     ["Get_Peak_List", "Extract_Sub_Matrix", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
     nodePar "Diff_Peak" 'diffPeaks $ return ()
     path ["Diff_Peak_Prep", "Diff_Peak"]
+-}
 
     {-
     node "RPKM_Peak_Prep" [| \(x, y) -> return $ zip x $ repeat y |] $ return ()
@@ -304,8 +311,10 @@ builder = do
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
+{-
     node "Cicero" 'cicero $ return ()
     ["Get_Peak_List", "Merge_Peak_Mat"] ~> "Cicero"
+    -}
 
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
@@ -313,6 +322,8 @@ builder = do
     path ["Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
     -- Motif finding
+    {-
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
     nodePar "Find_TFBS" 'findMotifs $ return ()
     path ["Get_Peak_List", "Find_TFBS_Prep", "Find_TFBS"]
+    -}
