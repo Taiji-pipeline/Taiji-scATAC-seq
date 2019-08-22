@@ -265,7 +265,6 @@ builder = do
     ["Pre_Remove_Doublets", "Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
     path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
-
     node "Get_Ref_Cells" [| liftIO . sampleCells 200 |] $ return ()
     ["Merged_Cluster"] ~> "Get_Ref_Cells"
 
@@ -277,16 +276,26 @@ builder = do
         |] $ return ()
     ["Get_Ref_Cells", "Make_Peak_Mat"] ~> "Make_Ref_Peak_Mat"
 
+    node "Cluster_Peak_Mat" [| \(mats, cls) ->
+        subMatrix "/Feature/Peak/Cluster/" mats $ cls^.replicates._2.files
+        |] $ return ()
+    ["Make_Peak_Mat", "Merged_Cluster"] ~> "Cluster_Peak_Mat"
+    node "Cluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $
+        zip3 (repeat $ fromJust pk) x $ repeat ref
+        |] $ return ()
+    ["Merge_Peaks", "Cluster_Peak_Mat", "Make_Ref_Peak_Mat"] ~> "Cluster_Diff_Peak_Prep"
+    nodePar "Cluster_Diff_Peak" [| diffPeaks "/Diff/Peak/Cluster/" |] $ return ()
+    path ["Cluster_Diff_Peak_Prep", "Cluster_Diff_Peak"]
+
     node "Subcluster_Peak_Mat" [| \(mats, cls) ->
         subMatrix "/Feature/Peak/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Make_Peak_Mat", "Combine_Clusters"] ~> "Subcluster_Peak_Mat"
-
     node "Subcluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $
         zip3 (repeat $ fromJust pk) x $ repeat ref
         |] $ return ()
     ["Merge_Peaks", "Subcluster_Peak_Mat", "Make_Ref_Peak_Mat"] ~> "Subcluster_Diff_Peak_Prep"
-    nodePar "Subcluster_Diff_Peak" 'diffPeaks $ return ()
+    nodePar "Subcluster_Diff_Peak" [| diffPeaks "/Diff/Peak/Subcluster/" |] $ return ()
     path ["Subcluster_Diff_Peak_Prep", "Subcluster_Diff_Peak"]
 
 --------------------------------------------------------------------------------

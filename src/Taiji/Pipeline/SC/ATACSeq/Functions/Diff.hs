@@ -69,12 +69,13 @@ mkRefMat prefix bcs mats = do
     bcSet = S.fromList bcs
 
 diffPeaks :: SCATACSeqConfig config
-          => ( File '[Gzip] 'NarrowPeak
+          => FilePath 
+          -> ( File '[Gzip] 'NarrowPeak
              , SCATACSeq S (File tags 'Other)
              , File '[Gzip] 'Other ) -- ^ Ref matrix
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'NarrowPeak))
-diffPeaks (peakFl, input, ref) = do
-    dir <- asks ((<> "/Diff/Peak/") . _scatacseq_output_dir) >>= getPath
+diffPeaks prefix (peakFl, input, ref) = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d.np.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \fl -> do
