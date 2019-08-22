@@ -239,13 +239,13 @@ builder = do
 -- Make Cluster BED file
 --------------------------------------------------------------------------------
     -- Extract tags for each cluster
-    node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()
+    node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
     extractTags "/Bed/Cluster/"
     ["Pre_Remove_Doublets", "Merged_Cluster"] ~> "Extract_Tags_Prep"
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
     
     -- Extract tags for subclusters
-    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()
+    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
     namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
     ["Pre_Remove_Doublets", "Combine_Clusters"] ~> "Subcluster_Extract_Tags_Prep"
     ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"

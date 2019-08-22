@@ -196,7 +196,7 @@ extractTags prefix = do
 -- | Extract BEDs for each cluster.
 getBedCluster :: SCATACSeqConfig config
               => ( SCATACSeq S (File '[NameSorted, Gzip] 'Bed, a)
-                 , [SCATACSeq S (File '[] 'Other)] ) -- ^ Cluster files
+                 , SCATACSeq S (File '[] 'Other) ) -- ^ Cluster files
               -> ReaderT config IO
                     (SCATACSeq S [(B.ByteString, File '[] 'Bed)])
 getBedCluster (input, clFl) = do
@@ -217,23 +217,33 @@ getBedCluster (input, clFl) = do
         return $ M.toList $ fmap (\x -> location .~ x $ emptyFile) outputs )
   where
     getClusterBarcodes :: B.ByteString    -- ^ experiment id
-                    -> [SCATACSeq S (File '[] 'Other)]   -- ^ Cluster files
+                    -> SCATACSeq S (File '[] 'Other)   -- ^ Cluster files
                     -> IO (M.HashMap B.ByteString B.ByteString)  -- ^ Barcode to cluster map
-    getClusterBarcodes exp_id clusters = do
-        clusters' <- case clusters of
-            [x] -> zip (repeat "") <$> decodeFile (x^.replicates._2.files.location)
-            xs -> fmap concat $ forM xs $ \x ->
-                zip (repeat $ B.pack $ T.unpack $ x^.eid) <$>
-                decodeFile (x^.replicates._2.files.location)
+    getClusterBarcodes exp_id clFl = do
+        clusters <- decodeFile $ clFl^.replicates._2.files.location :: IO [CellCluster]
         return $ M.fromListWith (error "same barcode") $
-            flip concatMap clusters' $ \(prefix, CellCluster{..}) ->
-                zip (mapMaybe getBarcode _cluster_member) $
-                repeat (prefix <> _cluster_name)
+            flip concatMap clusters $ \CellCluster{..} ->
+                zip (mapMaybe getBarcode _cluster_member) $ repeat _cluster_name
       where
         getBarcode x | B.init i == exp_id = Just bc
                      | otherwise = Nothing
           where
             (i, bc) = B.breakEnd (=='+') $ _cell_barcode x
+
+-- | Extract BEDs for each cluster.
+mergeBedCluster :: SCATACSeqConfig config
+                => FilePath  -- ^ prefix
+                -> (B.ByteString, [File '[] 'Bed])
+                -> ReaderT config IO (B.ByteString, File '[Gzip] 'Bed)
+mergeBedCluster prefix (cName, fls) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
+    let output = dir <> B.unpack cName <> ".bed.gz"
+    liftIO $ do
+        shelly $ escaping False $ do
+            run_ "cat" $ map (\x -> T.pack $ x^.location) fls ++
+                ["|", "gzip", "-c", ">", T.pack output]
+            run_ "rm" $ map (\x -> T.pack $ x^.location) fls
+        return (cName, location .~ output $ emptyFile)
 
 extractBedByBarcode :: (Elem 'Gzip tags ~ 'True, Elem 'NameSorted tags ~ 'True)
                     => [FilePath]   -- ^ Outputs
@@ -250,21 +260,6 @@ extractBedByBarcode outputs bcs input = do
     runResourceT $ runConduit $ streamBedGzip (input^.location) .|
         CL.groupBy ((==) `on` (^.name)) .| mapM_C f
     return $ map (\x -> location .~ x $ emptyFile) outputs
-
--- | Extract BEDs for each cluster.
-mergeBedCluster :: SCATACSeqConfig config
-                => FilePath  -- ^ prefix
-                -> (B.ByteString, [File '[] 'Bed])
-                -> ReaderT config IO (B.ByteString, File '[Gzip] 'Bed)
-mergeBedCluster prefix (cName, fls) = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
-    let output = dir <> B.unpack cName <> ".bed.gz"
-    liftIO $ do
-        shelly $ escaping False $ do
-            run_ "cat" $ map (\x -> T.pack $ x^.location) fls ++
-                ["|", "gzip", "-c", ">", T.pack output]
-            run_ "rm" $ map (\x -> T.pack $ x^.location) fls
-        return (cName, location .~ output $ emptyFile)
 
 {-
 -- | Extract submatrix
