@@ -39,12 +39,19 @@ getWindows prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_window_idx.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\fl -> do
-        (n, rc) <- binCount fl chrSize res
+    input & replicates.traverse.files %%~ ( \fl -> do
+        (n, rc) <- liftIO $ binCount fl chrSize res
         let windows = forM_ (zip (map fst chrSize) rc) $ \(chr, vec) ->
                 flip U.imapM_ vec $ \i x -> when (x > 0) $ yield $
                     BED chr (i * res) ((i+1) * res) Nothing (Just x) Nothing
-        runResourceT $ runConduit $ windows .| sinkFileBedGzip output
+        asks _scatacseq_blacklist >>= \case
+            Nothing -> liftIO $ do
+                runResourceT $ runConduit $ windows .| sinkFileBedGzip output
+            Just blacklist -> liftIO $ do
+                blackRegions <- readBed blacklist :: IO [BED3]
+                let bedTree = bedToTree const $ map (\x -> (x, ())) blackRegions
+                runResourceT $ runConduit $ windows .|
+                    filterC (not . isIntersected bedTree) .| sinkFileBedGzip output
         return $ (fl, emptyFile & location .~ output, n) )
   where
     res = 5000

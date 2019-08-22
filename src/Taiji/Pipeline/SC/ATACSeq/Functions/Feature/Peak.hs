@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
@@ -58,8 +59,17 @@ findPeaks prefix (cName, bedFl) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     opts <- asks _scatacseq_callpeak_opts
     let output = dir ++ "/" ++ B.unpack cName ++ ".narrowPeak" 
-    r <- liftIO $ callPeaks output bedFl Nothing opts
-    return (cName, r)
+    asks _scatacseq_blacklist >>= \case
+        Nothing -> liftIO $ do
+            r <- callPeaks output bedFl Nothing opts
+            return (cName, r)
+        Just blacklist -> liftIO $ withTemp Nothing $ \tmp -> do
+            _ <- callPeaks tmp bedFl Nothing opts
+            blackRegions <- readBed blacklist :: IO [BED3]
+            let bedTree = bedToTree const $ map (\x -> (x, ())) blackRegions
+            peaks <- readBed tmp :: IO [NarrowPeak]
+            writeBed output $ filter (not . isIntersected bedTree) peaks
+            return (cName, location .~ output $ emptyFile)
 
 -- | Merge peaks
 mergePeaks :: SCATACSeqConfig config
