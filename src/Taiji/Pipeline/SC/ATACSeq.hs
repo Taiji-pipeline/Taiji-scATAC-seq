@@ -220,6 +220,24 @@ builder = do
         |] $ return ()
     ["QC", "Merged_Iterative_Cluster"] ~> "Merged_Iterative_Cluster_Viz"
 
+    -- combine subclusters into a single file
+    node "Combine_Clusters" [| \inputs -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
+        let output = dir <> "all_subclusters.bin"
+        clusters <- fmap concat $ forM inputs $ \input -> liftIO $ do
+            cls <- decodeFile $ input^.replicates._2.files.location
+            let nm = B.pack $ T.unpack $ input^.eid
+            return $ case cls of
+                [cl] -> [cl{_cluster_name = nm}]
+                xs -> map (\x -> x{_cluster_name = nm <> "." <> B.drop 1 (_cluster_name x)}) xs
+        liftIO $ encodeFile output clusters
+        return $ head inputs & eid .~ "Subcluster" & replicates._2.files.location .~ output
+        |] $ return ()
+    ["Merged_Iterative_Cluster"] ~> "Combine_Clusters"
+
+--------------------------------------------------------------------------------
+-- Make Cluster BED file
+--------------------------------------------------------------------------------
     -- Extract tags for each cluster
     node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()
     extractTags "/Bed/Cluster/"
@@ -227,9 +245,9 @@ builder = do
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
     
     -- Extract tags for subclusters
-    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
+    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat [y] |] $ return ()
     namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
-    ["Pre_Remove_Doublets", "Merged_Iterative_Cluster"] ~> "Subcluster_Extract_Tags_Prep"
+    ["Pre_Remove_Doublets", "Combine_Clusters"] ~> "Subcluster_Extract_Tags_Prep"
     ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
 
  --------------------------------------------------------------------------------
@@ -260,10 +278,13 @@ builder = do
     ["Get_Ref_Cells", "Make_Peak_Mat"] ~> "Make_Ref_Peak_Mat"
 
     {-
-    node "Subcluster_Extract_Mat" [| \(x, y) -> 
-        let [input] = zipExp [x] [y]
+    node "Subcluster_Peak_Mat" [| \(mats, cls) -> do
+        dir <- asks ((<> "/Feature/Peak/Subcluster/" ) . _scatacseq_output_dir) >>= getPath
+
+
+
         in extractSubMatrix "/Feature/Peak/Subcluster/" input |] $ return ()
-    ["Merge_Peak_Mat", "Merged_Iterative_Cluster"] ~> "Subcluster_Extract_Mat"
+    ["Make_Peak_Mat", "Merged_Iterative_Cluster"] ~> "Subcluster_Peak_Mat"
     -}
 
 {-

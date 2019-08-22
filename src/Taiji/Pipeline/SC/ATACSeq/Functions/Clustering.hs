@@ -266,6 +266,26 @@ mergeBedCluster prefix (cName, fls) = do
             run_ "rm" $ map (\x -> T.pack $ x^.location) fls
         return (cName, location .~ output $ emptyFile)
 
+{-
+-- | Extract submatrix
+subMatrix :: SCATACSeqConfig config
+          => FilePath   -- ^ dir
+          -> [SCATACSeq S (File tags 'Other)]   -- ^ matrices
+          -> [CellCluster]
+          -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
+subMatrix prefix mats cls = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
+    mat <- mkSpMatrix id $ head mats ^. replicates._2.files.location
+    let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
+            (sinkRows (S.size ids) (_num_col mat) id output >> return res)
+          where
+            ids = S.fromList $ map _cell_barcode _cluster_member
+            output = dir <> B.unpack _cluster_name <> ".mat.gz"
+            res = head mats & eid .~ T.pack (B.unpack _cluster_name)
+                            & replicates._2.files.location .~ output
+    runResourceT $ runConduit $ streamMatrices id mats .| sequenceSinks (map mkSink cls)
+-}
+
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
                  => FilePath   -- ^ dir
