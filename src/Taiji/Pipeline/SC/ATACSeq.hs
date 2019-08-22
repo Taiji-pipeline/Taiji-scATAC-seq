@@ -277,24 +277,17 @@ builder = do
         |] $ return ()
     ["Get_Ref_Cells", "Make_Peak_Mat"] ~> "Make_Ref_Peak_Mat"
 
-    {-
-    node "Subcluster_Peak_Mat" [| \(mats, cls) -> do
-        dir <- asks ((<> "/Feature/Peak/Subcluster/" ) . _scatacseq_output_dir) >>= getPath
-
-
-
-        in extractSubMatrix "/Feature/Peak/Subcluster/" input |] $ return ()
-    ["Make_Peak_Mat", "Merged_Iterative_Cluster"] ~> "Subcluster_Peak_Mat"
-    -}
-
-{-
-    node "Diff_Peak_Prep" [| \(pk, x, ref) -> return $
-        zip3 (repeat $ fromJust pk) x $ repeat $ ref^.replicates._2.files
+    node "Subcluster_Peak_Mat" [| \(mats, cls) ->
+        subMatrix "/Feature/Peak/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
-    ["Get_Peak_List", "Extract_Sub_Matrix", "Make_Ref_Peak_Mat"] ~> "Diff_Peak_Prep"
-    nodePar "Diff_Peak" 'diffPeaks $ return ()
-    path ["Diff_Peak_Prep", "Diff_Peak"]
-    -}
+    ["Make_Peak_Mat", "Combine_Clusters"] ~> "Subcluster_Peak_Mat"
+
+    node "Subcluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $
+        zip3 (repeat $ fromJust pk) x $ repeat ref
+        |] $ return ()
+    ["Merge_Peaks", "Subcluster_Peak_Mat", "Make_Ref_Peak_Mat"] ~> "Subcluster_Diff_Peak_Prep"
+    nodePar "Subcluster_Diff_Peak" 'diffPeaks $ return ()
+    path ["Subcluster_Diff_Peak_Prep", "Subcluster_Diff_Peak"]
 
 --------------------------------------------------------------------------------
 -- Differential genes
@@ -304,33 +297,28 @@ builder = do
         |] $ return ()
     ["Get_Ref_Cells", "Pre_Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
 
-    node "Merge_Gene_Mat" 'mergeCellByGeneMatrix $ return ()
-    path ["Pre_Make_Gene_Mat", "Merge_Gene_Mat"]
-
-    node "Extract_Cluster_Gene_Matrix" [| \(x,y) -> 
-        extractSubMatrix "/Feature/Gene/Cluster/" $
-            y & replicates._2.files %~ (,) (x^.replicates._2.files)
+    node "Cluster_Gene_Mat" [| \(mats, cls) -> 
+        subMatrix "/Feature/Gene/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
-    ["Merge_Gene_Mat", "Merged_Cluster"] ~> "Extract_Cluster_Gene_Matrix"
+    ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
     node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $
         zip3 (repeat genes) input $ repeat ref
         |] $ return ()
     nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
     node "Diff_Gene_Viz" [| plotDiffGene "diff_gene.html" |] $ return ()
-    ["Pre_Get_Genes", "Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
+    ["Pre_Get_Genes", "Cluster_Gene_Mat", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
     path ["Diff_Gene_Prep", "Diff_Gene", "Diff_Gene_Viz"]
 
-    node "Extract_Subcluster_Gene_Matrix" [| \(x, ys) -> 
-        mapM (extractSubMatrix "/Feature/Gene/Subcluster/") $ flip map ys $ \y ->
-            y & replicates._2.files %~ (,) (x^.replicates._2.files)
+    node "Subcluster_Gene_Mat" [| \(mats, cls) -> 
+        subMatrix "/Feature/Gene/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
-    ["Merge_Gene_Mat", "Merged_Iterative_Cluster"] ~> "Extract_Subcluster_Gene_Matrix"
+    ["Pre_Make_Gene_Mat", "Combine_Clusters"] ~> "Subcluster_Gene_Mat"
     node "Subcluster_Diff_Gene_Prep" [| \(genes, input, ref) -> return $
-        zip3 (repeat genes) (concat input) $ repeat ref
+        zip3 (repeat genes) input $ repeat ref
         |] $ return ()
     nodePar "Subcluster_Diff_Gene" [| diffGenes "/Diff/Gene/Subcluster/" Nothing |] $ return ()
     node "Subcluster_Diff_Gene_Viz" [| plotDiffGene "diff_gene_subcluster.html" |] $ return ()
-    ["Pre_Get_Genes", "Extract_Subcluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Subcluster_Diff_Gene_Prep"
+    ["Pre_Get_Genes", "Subcluster_Gene_Mat", "Make_Ref_Gene_Mat"] ~> "Subcluster_Diff_Gene_Prep"
     path ["Subcluster_Diff_Gene_Prep", "Subcluster_Diff_Gene", "Subcluster_Diff_Gene_Viz"]
 
     {-
@@ -346,9 +334,9 @@ builder = do
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
-{-
+    {-
     node "Cicero" 'cicero $ return ()
-    ["Get_Peak_List", "Merge_Peak_Mat"] ~> "Cicero"
+    ["Merge_Peaks", "Merge_Peak_Mat"] ~> "Cicero"
     -}
 
     -- Estimate gene expression
@@ -357,8 +345,6 @@ builder = do
     path ["Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
     -- Motif finding
-    {-
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
     nodePar "Find_TFBS" 'findMotifs $ return ()
-    path ["Get_Peak_List", "Find_TFBS_Prep", "Find_TFBS"]
-    -}
+    path ["Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]

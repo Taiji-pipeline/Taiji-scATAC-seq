@@ -17,7 +17,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
 import qualified Data.ByteString.Char8 as B
 import Data.Conduit.List (groupBy)
 import Control.Arrow (first)
-import           Control.Workflow
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
 import Data.Singletons.Prelude (Elem)

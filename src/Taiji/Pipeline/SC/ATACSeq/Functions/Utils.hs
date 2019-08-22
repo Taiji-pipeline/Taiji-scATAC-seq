@@ -239,7 +239,7 @@ sinkRows :: Int   -- ^ Number of rows
          -> ConduitT (Row a) Void (ResourceT IO) ()
 sinkRows n m encoder output = do
     (l, _) <- (yield header >> mapC (encodeRowWith encoder)) .| zipSinks lengthC sink
-    when (l + 1 /= n) $ error "incorrect number of rows"
+    when (l /= n + 1) $ error "incorrect number of rows"
   where
     header = B.pack $ printf "Sparse matrix: %d x %d" n m
     sink = unlinesAsciiC .| gzip .| sinkFile output

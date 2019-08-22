@@ -7,7 +7,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     , mkExprTable
     , getGeneNames
     , mkCellByGene 
-    , mergeCellByGeneMatrix
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -44,19 +43,6 @@ mkCellByGene prefix (input, genes) = do
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
             groupCells .| mkFeatMat nCell regions .| sinkFile output
         return $ emptyFile & location .~ output )
-
-mergeCellByGeneMatrix :: SCATACSeqConfig config
-                      => [SCATACSeq S (File '[Gzip] 'Other)]
-                      -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
-mergeCellByGeneMatrix inputs = do
-    dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
-    let output = dir <> "/Merged_cell_by_gene.mat.gz"
-        mats = flip map inputs $ \input -> 
-            let nm = B.pack $ T.unpack $ input^.eid
-            in (Just nm, input^.replicates._2.files.location)
-    liftIO $ concatMatrix output mats
-    return $ head inputs & eid .~ "Merged" &
-        replicates._2.files.location .~ output
 
 getGeneNames :: SCATACSeqConfig config
              => ReaderT config IO FilePath

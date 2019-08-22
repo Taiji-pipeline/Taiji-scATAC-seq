@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , spectralClust
     , extractTags
     , extractSubMatrix
+    , subMatrix
     , getBedCluster
     , extractBedByBarcode 
     , Embedding(..)
@@ -44,6 +45,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.DR
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import Taiji.Pipeline.SC.ATACSeq.Functions.Feature (streamMatrices)
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.ECharts
@@ -261,25 +263,26 @@ extractBedByBarcode outputs bcs input = do
         CL.groupBy ((==) `on` (^.name)) .| mapM_C f
     return $ map (\x -> location .~ x $ emptyFile) outputs
 
-{-
 -- | Extract submatrix
 subMatrix :: SCATACSeqConfig config
-          => FilePath   -- ^ dir
-          -> [SCATACSeq S (File tags 'Other)]   -- ^ matrices
-          -> [CellCluster]
+          => FilePath   -- ^ Dir
+          -> [SCATACSeq S (File tags 'Other)]   -- ^ Matrices
+          -> File tag' 'Other   -- Clusters
           -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
-subMatrix prefix mats cls = do
+subMatrix prefix mats clFl = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
-    mat <- mkSpMatrix id $ head mats ^. replicates._2.files.location
-    let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
-            (sinkRows (S.size ids) (_num_col mat) id output >> return res)
-          where
-            ids = S.fromList $ map _cell_barcode _cluster_member
-            output = dir <> B.unpack _cluster_name <> ".mat.gz"
-            res = head mats & eid .~ T.pack (B.unpack _cluster_name)
-                            & replicates._2.files.location .~ output
-    runResourceT $ runConduit $ streamMatrices id mats .| sequenceSinks (map mkSink cls)
--}
+    liftIO $ do
+        cls <- decodeFile $ clFl^.location
+        mat <- mkSpMatrix id $ head mats ^. replicates._2.files.location
+        let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
+                (sinkRows (S.size ids) (_num_col mat) id output >> return res)
+              where
+                ids = S.fromList $ map _cell_barcode _cluster_member
+                output = dir <> B.unpack _cluster_name <> ".mat.gz"
+                res = head mats & eid .~ T.pack (B.unpack _cluster_name)
+                                & replicates._2.files.location .~ output
+        runResourceT $ runConduit $ streamMatrices id mats .|
+            sequenceSinks (map mkSink cls)
 
 -- | Extract submatrix
 extractSubMatrix :: SCATACSeqConfig config
