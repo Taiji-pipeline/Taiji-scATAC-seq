@@ -236,7 +236,7 @@ builder = do
     ["Merged_Iterative_Cluster"] ~> "Combine_Clusters"
 
 --------------------------------------------------------------------------------
--- Make Cluster BED file
+-- Make Cluster BED and BigWig files
 --------------------------------------------------------------------------------
     -- Extract tags for each cluster
     node "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
@@ -250,12 +250,23 @@ builder = do
     ["Pre_Remove_Doublets", "Combine_Clusters"] ~> "Subcluster_Extract_Tags_Prep"
     ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
 
+    nodePar "Subcluster_Make_BigWig" [| \(nm, fl) -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Subcluster/")
+        let output = dir <> B.unpack nm <> ".bw"
+        mkBigWig output fl
+        |] $ return ()
+    ["Subcluster_Merge_Tags"] ~> "Subcluster_Make_BigWig"
+
  --------------------------------------------------------------------------------
 -- Make cell by peak matrix
 --------------------------------------------------------------------------------
     nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/" |] $ return ()
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
+
+    nodePar "Temp_Call_Peaks" [| findPeaks "/temp/Peak/" |] $ return ()
+    node "Temp_Merge_Peaks" [| mergePeaks "/temp/Peak/" |] $ return ()
+    path ["Merge_Tags", "Temp_Call_Peaks", "Temp_Merge_Peaks"]
 
     node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
