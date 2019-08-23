@@ -208,8 +208,7 @@ plotDiffGene filename inputs = do
     mkHeatmap df = p <> E.toolbox <> E.option
         [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
       where
-        p = E.heatmap $ DF.reorderRows (DF.orderByCluster id) $
-            DF.reorderColumns (DF.orderByCluster id) df
+        p = E.heatmap $ DF.orderDataFrame id df
     scale' xs | U.all (==0) xs = xs
               | otherwise = scale xs
     enrichment markers fdr = map (second f) markers
