@@ -13,23 +13,31 @@ def detectDoublet(args):
         min_counts=1, 
         min_cells=3, 
         min_gene_variability_pctl=85,
+        mean_center=True,                                                                                                                                                                                                                                                                
+        normalize_variance=True,
         n_prin_comps=30
         )
 
-    threshold = findThresHold_fit(scrub.doublet_scores_sim_)
+    # Fit a Gaussian mixture model
+    X = scrub.doublet_scores_sim_
+    X = np.array([X]).T
+    gmm = BayesianGaussianMixture(n_components=2, max_iter=1000,
+        random_state=2394).fit(X)
+    i = np.argmax(gmm.means_)
+
+    probs_sim = gmm.predict_proba(X)[:,i]
+    vals = X[np.argwhere(probs_sim>0.5)].flatten()
+    threshold = min(vals)
+
+    X = np.array([doublet_scores]).T
+    probs = gmm.predict_proba(X)[:,i].tolist()
 
     with open(args.output, 'w') as fl:
+        fl.write('\t'.join(map(str, probs)))
+        fl.write("\n")
+
         fl.write(str(threshold))
         fl.write("\n")
         fl.write('\t'.join(map(str, (doublet_scores.tolist()))))
         fl.write("\n")
         fl.write('\t'.join(map(str, scrub.doublet_scores_sim_)))
-
-def findThresHold_fit(X):
-    X = np.array([X]).T
-    gmm = BayesianGaussianMixture(n_components=2, max_iter=1000).fit(X)
-    i = np.argmax(gmm.means_)
-    probs = gmm.predict_proba(X)[:,i]
-    vals = X[np.argwhere(probs>0.5)].flatten()
-    th = min(vals)
-    return th

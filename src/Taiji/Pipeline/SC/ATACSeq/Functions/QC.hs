@@ -69,12 +69,11 @@ data Stat = Stat
     , _doublet_score :: Double }
 
 -- | Whether the given cell passes the QC.
-passedQC :: Double   -- doublet score cutoff
-         -> Stat -> Bool
-passedQC th x = _te x >= 7 && _uniq_reads x >= 1000 && _doublet_score x <= th
+passedQC :: Stat -> Bool
+passedQC x = _te x >= 7 && _uniq_reads x >= 1000 && _doublet_score x <= 0.5
 
 plotStat :: SCATACSeqConfig config
-         => [SCATACSeq S (File '[] 'Tsv, a)]
+         => [SCATACSeq S (File '[] 'Tsv)]
          -> ReaderT config IO FilePath
 plotStat inputs = do
     dir <- qcDir
@@ -82,8 +81,8 @@ plotStat inputs = do
         outputStat = dir <> "/qc_stats.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
-            stats <- readStats $ input^.replicates._2.files._1.location
-            let stats' = filter (passedQC 1) stats
+            stats <- readStats $ input^.replicates._2.files.location
+            let stats' = filter passedQC stats
                 cellQC = plotCells stats <> title
                     (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
             return (cellQC, (input^.eid, stats'))
@@ -223,15 +222,15 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
 
 removeDoublet :: SCATACSeqConfig config
               => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
-                             , (File '[] 'Tsv, Double) )
+                             , File '[] 'Tsv )
               -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, Int))
 removeDoublet input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
     let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(bedFl, (statFl, th)) -> do
+    input & replicates.traverse.files %%~ liftIO . (\(bedFl, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter ((<=th) . _doublet_score) stats
+        let cells = S.fromList $ map _barcode $ filter passedQC stats
             f :: [BED] -> Bool
             f = (`S.member` cells) . fromJust . (^.name) . head
             sink = zipSinks lengthC $ concatC .| sinkFileBedGzip output
@@ -241,7 +240,7 @@ removeDoublet input = do
 
 detectDoublet :: SCATACSeqConfig config
               => SCATACSeq S (File tags 'Other, (a, b, File '[] 'Tsv ))
-              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, Double))
+              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
 detectDoublet input = do
     dir <- qcDir
     let output = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
@@ -250,22 +249,23 @@ detectDoublet input = do
             show (input^.replicates._1) <> ".html"
     input & replicates.traverse.files %%~ liftIO . (\(fl, (_,_,stat)) -> do
         shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack output]
-        [thres, sc, sim_sc] <- B.lines <$> B.readFile output
-        let th = read $ B.unpack thres :: Double
+        [probs, threshold, sc, sim_sc] <- B.lines <$> B.readFile output
+        let th = readDouble threshold
+            dProbs = map readDouble $ B.words probs
             ds = map readDouble $ B.words sc
             ds_sim = map readDouble $ B.words sim_sc
-            rate = fromIntegral (length $ filter (>=th) ds) /
-                fromIntegral (length ds) * 100 :: Double
-        savePlots outputPlot [mkHist ds th <> title (printf "doublet percentage: %.1f%%" rate)
-            , mkHist ds_sim th] []
+            rate = fromIntegral (length $ filter (>0.5) dProbs) /
+                fromIntegral (length dProbs) * 100 :: Double
+        savePlots outputPlot [ mkHist ds th <> title (printf "doublet percentage: %.1f%%" rate)
+            , mkHist ds_sim th ] []
 
         statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location
         mat <- mkSpMatrix id $ fl^.location
         bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
-        B.writeFile (stat^.location) $ B.unlines $ flip map (zip bcs ds) $ \(bc, val) -> 
+        B.writeFile (stat^.location) $ B.unlines $ flip map (zip bcs dProbs) $ \(bc, val) -> 
             let s = M.findWithDefault undefined bc statMap
             in showStat s{_doublet_score = val}
-        return (stat, th)
+        return stat
         )
   where
     mkHist xs ref = plt <> rule
@@ -392,7 +392,7 @@ plotCells input = plt <> axes <> vline <> hline <> scales
 plotClusterQC :: SCATACSeqConfig config
               => ( FilePath
                  , SCATACSeq S
-                    ( (File '[] 'Tsv, a)
+                    ( File '[] 'Tsv
                     , File '[] 'Other
                     , File '[Gzip] 'Other
                     , [(T.Text, File '[] 'Tsv)] ) )
@@ -425,7 +425,7 @@ plotClusterQC (idxFl, input) = do
             [ E.scatter3D' points (statViz <> geneViz) <> E.toolbox
             , plt1, plt2 ]
   where
-    ((statFl,_), clFl, matFl, diff) = input^.replicates._2.files
+    (statFl, clFl, matFl, diff) = input^.replicates._2.files
 
 readGeneExpr :: [B.ByteString] 
              -> FilePath   -- ^ Index

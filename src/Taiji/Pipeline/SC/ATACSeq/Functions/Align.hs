@@ -157,7 +157,7 @@ filterCell input = do
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bamFl, _, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter (passedQC 1) stats
+        let cells = S.fromList $ map _barcode $ filter passedQC stats
         header <- getBamHeader $ bamFl^.location
         runResourceT $ runConduit $ streamBam (bamFl^.location) .|
             mapC (toBed header) .| groupBy ((==) `on` (^.name)) .|
