@@ -81,7 +81,10 @@ preClustering = do
 
         -- Make cell by peak matrix
         nodePar "Call_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-            mapM (findPeaks $ "/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/") 
+            mapM (findPeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
+                 ( def & mode .~ NoModel (-100) 200
+                       & cutoff .~ QValue 0.05
+                 ))
             |] $ return ()
         nodePar "Merge_Peaks" [| \input -> input & replicates.traverse.files %%~ 
             mergePeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
@@ -206,11 +209,10 @@ builder = do
     ["QC", "Merged_Cluster"] ~> "Merged_Cluster_Viz"
 
     -- Subclustering
-    node "Extract_Sub_Matrix" [| \(x,y) -> 
-        let [input] = zipExp [x] [y]
-        in extractSubMatrix "/temp/Feature/Cluster/" input |] $ return ()
-    ["Pre_Merge_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
-
+    node "Extract_Sub_Matrix" [| \(mats, cls) -> 
+        subMatrix "/temp/Feature/Cluster/" mats $ cls^.replicates._2.files
+        |] $ return ()
+    ["Pre_Make_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
     namespace "Merged_Iterative" $
         spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.5}
     path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
@@ -260,13 +262,18 @@ builder = do
  --------------------------------------------------------------------------------
 -- Make cell by peak matrix
 --------------------------------------------------------------------------------
-    nodePar "Call_Peaks" [| findPeaks "/Feature/Peak/" |] $ return ()
+    nodePar "Call_Peaks" [| \x -> do
+        opts <- asks _scatacseq_callpeak_opts
+        findPeaks "/Feature/Peak/" opts x
+        |] $ return ()
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
+    {-
     nodePar "Temp_Call_Peaks" [| findPeaks "/temp/Peak/" |] $ return ()
     node "Temp_Merge_Peaks" [| mergePeaks "/temp/Peak/" |] $ return ()
     path ["Merge_Tags", "Temp_Call_Peaks", "Temp_Merge_Peaks"]
+    -}
 
     node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->

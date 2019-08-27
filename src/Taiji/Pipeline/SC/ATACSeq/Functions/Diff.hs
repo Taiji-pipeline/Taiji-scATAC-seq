@@ -191,7 +191,7 @@ plotDiffGene filename inputs = do
     dir <- figDir
     (cls, fdrs) <- liftIO $ fmap unzip $ forM inputs $ \input -> do
         fdr <- readFDR $ input^.replicates._2.files.location
-        return (T.tail $ snd $ T.breakOn "+" $ input^.eid, fdr)
+        return (input^.eid, fdr)
     markers <- asks _scatacseq_marker_gene_list >>= \case
         Nothing -> return []
         Just fl -> liftIO $ readMarkers fl

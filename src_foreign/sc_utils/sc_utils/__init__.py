@@ -20,10 +20,8 @@ def getEmbedding(mat, output, method="umap"):
     print(method)
     if(method == "umap"):
         import umap
-        e1 = umap.UMAP(random_state=42,
-            n_components=2, min_dist=0).fit_transform(mat)
-        e2 = umap.UMAP(random_state=42,
-            n_components=3, min_dist=0).fit_transform(mat)
+        e1 = umap.UMAP(random_state=42, n_components=2).fit_transform(mat)
+        e2 = umap.UMAP(random_state=42, n_components=3).fit_transform(mat)
         embedding = np.concatenate((e1, e2), axis=1)
     elif(method == "none"):
         e1 = mat[...,:2]

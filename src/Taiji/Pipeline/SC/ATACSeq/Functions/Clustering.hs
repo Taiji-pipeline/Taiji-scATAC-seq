@@ -162,27 +162,6 @@ clustering' opt dir fls = withTempDir dir $ \tmpD -> do
     f _ = error "formatting error"
 {-# INLINE clustering' #-}
 
-{-
--- | Perform LSA analysis.
-lsaClust :: FilePath   -- ^ Directory to save the results
-         -> ClustOpt
-         -> Builder ()
-lsaClust prefix opt = do
-    nodePar "LSA_Reduce" [| performLSA prefix |] $ return ()
-    nodePar "LSA_Cluster" [| \x -> do
-        res <- asks _scatacseq_cluster_resolution 
-        case _resolution opt of
-            Nothing -> doClustering prefix opt{_resolution=res} x
-            _ -> doClustering prefix opt x
-        |] $ return ()
-    nodePar "LSA_Viz" [| \x -> do
-        dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
-        liftIO $ plotClusters dir x
-        |] $ return ()
-    path ["LSA_Reduce", "LSA_Cluster", "LSA_Viz"]
--}
-
-
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
             -> Builder ()
@@ -263,7 +242,7 @@ extractBedByBarcode outputs bcs input = do
         CL.groupBy ((==) `on` (^.name)) .| mapM_C f
     return $ map (\x -> location .~ x $ emptyFile) outputs
 
--- | Extract submatrix
+-- | Extract cluster submatrix
 subMatrix :: SCATACSeqConfig config
           => FilePath   -- ^ Dir
           -> [SCATACSeq S (File tags 'Other)]   -- ^ Matrices

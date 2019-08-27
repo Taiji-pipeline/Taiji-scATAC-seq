@@ -201,13 +201,13 @@ mkBigWig output input = do
       where
         f :: BED -> BED3
         f bed = case bed^.strand of
-            Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 100) (bed^.chromEnd)
+            Just False -> BED3 (bed^.chrom) (max 0 $ bed^.chromEnd - 100) (bed^.chromEnd)
             _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 100)
 
 mkBedGraph :: FilePath  -- ^ Output
            -> FilePath  -- ^ Coordinate sorted bed files
            -> IO ()
-mkBedGraph output input = runResourceT $ runConduit $ streamBedGzip input .|
+mkBedGraph output input = runResourceT $ runConduit $ streamBed input .|
     mergeSortedBedWith (splitOverlapped length :: [BED3] -> [(BED3, Int)]) .|
     concatC .| mapC f .| unlinesAsciiC .| sinkFile output
   where

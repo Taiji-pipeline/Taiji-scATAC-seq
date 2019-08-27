@@ -3,8 +3,6 @@ import scipy as sp
 import numpy as np
 from sklearn.mixture import BayesianGaussianMixture
 
-import matplotlib.pyplot as plt  
-
 from .Utils import readMatrix
 
 def detectDoublet(args):

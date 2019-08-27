@@ -53,11 +53,11 @@ mkPeakMat prefix input = do
 -- | Call Peaks for aggregated files
 findPeaks :: (SingI tags, SCATACSeqConfig config)
           => FilePath
+          -> CallPeakOpts
           -> (B.ByteString, File tags 'Bed)
           -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
-findPeaks prefix (cName, bedFl) = do
+findPeaks prefix opts (cName, bedFl) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
-    opts <- asks _scatacseq_callpeak_opts
     let output = dir ++ "/" ++ B.unpack cName ++ ".narrowPeak" 
     asks _scatacseq_blacklist >>= \case
         Nothing -> liftIO $ do
