@@ -8,7 +8,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Diff
     , mkRefMat
     , diffPeaks
     , diffGenes
-    , rpkmPeak
     , rpkmDiffPeak
     , plotDiffGene
     ) where
@@ -96,23 +95,6 @@ diffPeaks prefix (peakFl, input, ref) = do
             zipSources (iterateC succ 0) (streamBedGzip $ peakFl^.location) .|
             concatMapC f .| sinkFileBedGzip output
         return $ location .~ output $ emptyFile )
-
-
--- | Compute RPKM for each peak
-rpkmPeak :: SCATACSeqConfig config
-         => ( (B.ByteString, File '[Gzip] 'Bed)
-            , Maybe (File '[Gzip] 'NarrowPeak) )
-         -> ReaderT config IO (B.ByteString, FilePath)
-rpkmPeak ((nm, tags), Just peakFl) = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/")
-    let output = dir <> "peak_rpkm_" <> B.unpack nm <> ".txt"
-    liftIO $ do
-        peaks <- runResourceT $ runConduit $
-            streamBedGzip (peakFl^.location) .| sinkList :: IO [BED3]
-        vec <- runResourceT $ runConduit $ streamBedGzip (tags^.location) .| rpkmBed peaks 
-        B.writeFile output $ B.unlines $ map toShortest $ U.toList vec
-        return (nm, output)
-rpkmPeak _ = undefined
 
 rpkmDiffPeak :: SCATACSeqConfig config
              => ( [SCATACSeq S (File '[Gzip] 'NarrowPeak)]   -- ^ Diff peaks

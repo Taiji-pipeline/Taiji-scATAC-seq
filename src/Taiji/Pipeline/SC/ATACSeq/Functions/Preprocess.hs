@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     ( readInput
-    , downloadData
+    , download
     , getFastq
     , getBam
     , getSortedBed
@@ -24,10 +24,10 @@ readInput _ = do
     input <- asks _scatacseq_input
     liftIO $ simpleInputReader input "scATAC-seq" SCATACSeq
 
-downloadData :: SCATACSeqConfig config
-             => [RAWInput]
-             -> ReaderT config IO [RAWInput]
-downloadData input = input & traverse.replicates.traverse.files.traverse %%~
+download :: SCATACSeqConfig config
+         => [RAWInput]
+         -> ReaderT config IO [RAWInput]
+download input = input & traverse.replicates.traverse.files.traverse %%~
     ( \fl -> do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Download"))
         liftIO $ downloadFiles dir fl )

@@ -9,9 +9,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
     ( mkPeakMat
     , findPeaks
     , mergePeaks
+    , getPeakEnrichment
     , mkCellClusterBed
-    , subSampleClusterBed
-    , clusterCorrelation
     ) where
 
 import           Bio.Pipeline
@@ -118,6 +117,38 @@ mkCellClusterBed input = do
     f :: S.HashSet B.ByteString -> BED -> Bool
     f cells x = fromJust (x^.name) `S.member` cells
 
+-- | Get signal enrichment for each peak
+getPeakEnrichment :: SCATACSeqConfig config
+                  => ( [(B.ByteString, File '[] 'NarrowPeak)]
+                     , Maybe (File '[Gzip] 'NarrowPeak) )
+                  -> ReaderT config IO (File '[] 'Tsv)
+getPeakEnrichment (peaks, Just refPeak) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/")
+    let output = dir <> "peak_enrichment.tsv"
+    liftIO $ do
+        list <- runResourceT $ runConduit $
+            streamBedGzip (refPeak^.location) .| sinkList
+        let col = map toString list
+        (row, val) <- fmap unzip $ forM peaks $ \(nm, p) -> do
+            peak <- readBed $ p^.location
+            return (T.pack $ B.unpack nm, getValue peak list)
+        DF.writeTable output (T.pack . show) $ DF.transpose $
+            DF.mkDataFrame row col val
+        return $ location .~ output $ emptyFile
+  where
+    toString x = T.pack (B.unpack $ x^.chrom) <> ":" <>
+        T.pack (show $ x^.chromStart) <> "-" <> T.pack (show $ x^.chromEnd)
+    getValue :: [NarrowPeak]  -- ^ query
+            -> [BED3]  -- ^ Peak list
+            -> [Double]
+    getValue query peakList = runIdentity $ runConduit $
+        yieldMany peakList .| intersectBedWith f query .| sinkList
+      where
+        f _ [] = 0
+        f _ xs = maximum $ map (^.npSignal) xs
+getPeakEnrichment _ = undefined
+
+{-
 -- | Subsampling bed files.
 subSampleClusterBed :: SCATACSeqConfig config
                  => (SCATACSeq S [(B.ByteString, File '[Gzip] 'Bed, Int)])
@@ -179,3 +210,4 @@ peakCor peaks refPeak = MU.toLists $ MU.generate (n, n) $ \(i,j) ->
         f _ _ = True
     jaccardIndex x y = fromIntegral (U.length $ U.filter id $ U.zipWith (&&) x y) /
         fromIntegral (U.length $ U.filter id $ U.zipWith (||) x y)
+-}

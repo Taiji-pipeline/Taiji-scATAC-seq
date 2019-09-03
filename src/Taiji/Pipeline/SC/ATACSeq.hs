@@ -20,8 +20,7 @@ basicAnalysis :: Builder ()
 basicAnalysis = do
     node "Read_Input" 'readInput $
         doc .= "Read ATAC-seq data information from input file."
-    node "Download_Data" 'downloadData $
-        doc .= "Download data."
+    node "Download_Data" 'download $ doc .= "Download data."
     node "Get_Fastq" [| return . getFastq |] $ return ()
     node "Make_Index" 'mkIndices $ doc .= "Generate the BWA index."
     path ["Read_Input", "Download_Data", "Get_Fastq", "Make_Index"]
@@ -269,11 +268,10 @@ builder = do
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
-    {-
-    nodePar "Temp_Call_Peaks" [| findPeaks "/temp/Peak/" |] $ return ()
-    node "Temp_Merge_Peaks" [| mergePeaks "/temp/Peak/" |] $ return ()
-    path ["Merge_Tags", "Temp_Call_Peaks", "Temp_Merge_Peaks"]
-    -}
+    node "Get_Peak_Enrichment" 'getPeakEnrichment $ return ()
+    ["Call_Peaks", "Merge_Peaks"] ~> "Get_Peak_Enrichment"
+    --node "RPKM_Diff_Peak" 'rpkmDiffPeak $ return () 
+    --["Diff_Peak", "Merge_Peaks", "RPKM_Peak"] ~> "RPKM_Diff_Peak"
 
     node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
@@ -347,15 +345,6 @@ builder = do
     node "Subcluster_Diff_Gene_Viz" [| plotDiffGene "diff_gene_subcluster.html" |] $ return ()
     ["Pre_Get_Genes", "Subcluster_Gene_Mat", "Make_Ref_Gene_Mat"] ~> "Subcluster_Diff_Gene_Prep"
     path ["Subcluster_Diff_Gene_Prep", "Subcluster_Diff_Gene", "Subcluster_Diff_Gene_Viz"]
-
-    {-
-    node "RPKM_Peak_Prep" [| \(x, y) -> return $ zip x $ repeat y |] $ return ()
-    nodePar "RPKM_Peak" 'rpkmPeak $ return ()
-    ["Merge_Tags", "Merge_Peaks"] ~> "RPKM_Peak_Prep"
-    path ["RPKM_Peak_Prep", "RPKM_Peak"]
-    node "RPKM_Diff_Peak" 'rpkmDiffPeak $ return () 
-    ["Diff_Peak", "Merge_Peaks", "RPKM_Peak"] ~> "RPKM_Diff_Peak"
-    -}
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions

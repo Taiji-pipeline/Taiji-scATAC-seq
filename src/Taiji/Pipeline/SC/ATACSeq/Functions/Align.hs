@@ -22,6 +22,7 @@ import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import Shelly hiding (FilePath)
 import qualified Data.HashSet as S
+import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString.Char8 as B
 import System.IO
 import           Bio.Seq.IO (mkIndex, withGenome, getChrSizes)
@@ -187,22 +188,25 @@ mkBigWig output input = do
         let tmp1 = dir ++ "/tmp1"
             tmp2 = dir ++ "/tmp2"
             tmpChr = dir ++ "/chr"
-        extendBed tmp1 $ input^.location
-        shelly $ escaping False $ run_ "sort"
-            ["-k", "1,1", "-k2,2n", T.pack tmp1, ">", T.pack tmp2]
-        mkBedGraph tmp1 tmp2
         chrSize <- withGenome seqIndex $ return . getChrSizes
         B.writeFile tmpChr $ B.unlines $
             map (\(a,b) -> a <> "\t" <> B.pack (show b)) chrSize
+        extendBed tmp1 chrSize $ input^.location
+        shelly $ escaping False $ run_ "sort"
+            ["-k", "1,1", "-k2,2n", T.pack tmp1, ">", T.pack tmp2]
+        mkBedGraph tmp1 tmp2
         shelly $ run_ "bedGraphToBigWig" [T.pack tmp1, T.pack tmpChr, T.pack output]
   where
-    extendBed out fl = runResourceT $ runConduit $
+    extendBed out chr fl = runResourceT $ runConduit $
         streamBedGzip fl .| mapC f .| sinkFileBed out
       where
         f :: BED -> BED3
         f bed = case bed^.strand of
             Just False -> BED3 (bed^.chrom) (max 0 $ bed^.chromEnd - 100) (bed^.chromEnd)
-            _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 100)
+            _ -> BED3 (bed^.chrom) (bed^.chromStart) (min n $ bed^.chromStart + 100)
+          where
+            n = M.lookupDefault (error "chr not found") (bed^.chrom) chrSize
+        chrSize = M.fromList chr
 
 mkBedGraph :: FilePath  -- ^ Output
            -> FilePath  -- ^ Coordinate sorted bed files
