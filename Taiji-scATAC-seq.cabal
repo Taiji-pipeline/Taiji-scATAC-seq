@@ -33,7 +33,6 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.DR
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
                        Taiji.Pipeline.SC.ATACSeq.Functions.Diff
-                       Taiji.Pipeline.SC.ATACSeq.Functions.Cicero
                        Taiji.Pipeline.SC.ATACSeq.Functions.Utils
                        Taiji.Pipeline.SC.ATACSeq.Types
 
@@ -57,7 +56,6 @@ library
                      , filepath
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
-                     , inline-r
                      , jmacro
                      , mtl
                      , matrices

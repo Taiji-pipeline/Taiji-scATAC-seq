@@ -350,11 +350,6 @@ builder = do
 -- Call CRE interactions
 --------------------------------------------------------------------------------
 
-    {-
-    node "Cicero" 'cicero $ return ()
-    ["Merge_Peaks", "Merge_Peak_Mat"] ~> "Cicero"
-    -}
-
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
     node "Make_Expr_Table" [| mkExprTable "expression_profile.tsv" |] $ return ()
