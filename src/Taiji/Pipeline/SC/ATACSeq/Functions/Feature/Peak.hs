@@ -11,27 +11,25 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
     , mergePeaks
     , getPeakEnrichment
     , mkCellClusterBed
+    , computePeakRAS
     ) where
 
 import           Bio.Pipeline
 import qualified Data.HashSet as S
-import Control.Monad.ST (runST)
 import Bio.Data.Bed
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import Data.Singletons.Prelude (Elem, SingI)
 import Shelly hiding (FilePath)
-import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector as V
-import qualified Data.Matrix.Unboxed as MU
+
+import Statistics.Distribution (quantile)
+import Statistics.Distribution.ChiSquared (chiSquared)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import qualified Taiji.Utils.DataFrame as DF
-import Taiji.Utils.Plot
-import Taiji.Utils.Plot.ECharts
 
 -- | Make the read count matrix.
 mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
@@ -119,33 +117,36 @@ mkCellClusterBed input = do
 
 -- | Get signal enrichment for each peak
 getPeakEnrichment :: SCATACSeqConfig config
-                  => ( [(B.ByteString, File '[] 'NarrowPeak)]
+                  => ( [(B.ByteString, File '[Gzip] 'NarrowPeak)]
                      , Maybe (File '[Gzip] 'NarrowPeak) )
-                  -> ReaderT config IO (File '[] 'Tsv)
+                  -> ReaderT config IO (File '[] 'Tsv, File '[] 'Tsv)
 getPeakEnrichment (peaks, Just refPeak) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/")
-    let output = dir <> "peak_enrichment.tsv"
+    let output1 = dir <> "peak_signal.tsv"
+        output2 = dir <> "peak_pvalue.tsv"
     liftIO $ do
         list <- runResourceT $ runConduit $
             streamBedGzip (refPeak^.location) .| sinkList
         let col = map toString list
         (row, val) <- fmap unzip $ forM peaks $ \(nm, p) -> do
-            peak <- readBed $ p^.location
+            peak <- runResourceT $ runConduit $ streamBedGzip (p^.location) .| sinkList
             return (T.pack $ B.unpack nm, getValue peak list)
-        DF.writeTable output (T.pack . show) $ DF.transpose $
-            DF.mkDataFrame row col val
-        return $ location .~ output $ emptyFile
+        let (signal, pval) = DF.unzip $ DF.transpose $ DF.mkDataFrame row col val
+        DF.writeTable output1 (T.pack . show) signal
+        DF.writeTable output2 (T.pack . show) pval
+        return (location .~ output1 $ emptyFile, location .~ output2 $ emptyFile)
   where
     toString x = T.pack (B.unpack $ x^.chrom) <> ":" <>
         T.pack (show $ x^.chromStart) <> "-" <> T.pack (show $ x^.chromEnd)
     getValue :: [NarrowPeak]  -- ^ query
             -> [BED3]  -- ^ Peak list
-            -> [Double]
+            -> [(Double, Double)]
     getValue query peakList = runIdentity $ runConduit $
         yieldMany peakList .| intersectBedWith f query .| sinkList
       where
-        f _ [] = 0
-        f _ xs = maximum $ map (^.npSignal) xs
+        f _ [] = (0, 0)
+        f _ [x] = (x^.npSignal, quantile (chiSquared 1) $ 10**(negate $ fromJust $ x^.npPvalue))
+        f _ _ = undefined
 getPeakEnrichment _ = undefined
 
 {-
@@ -211,3 +212,24 @@ peakCor peaks refPeak = MU.toLists $ MU.generate (n, n) $ \(i,j) ->
     jaccardIndex x y = fromIntegral (U.length $ U.filter id $ U.zipWith (&&) x y) /
         fromIntegral (U.length $ U.filter id $ U.zipWith (||) x y)
 -}
+
+-- | Compute the relative accessibility score.
+computePeakRAS :: SCATACSeqConfig config
+               => ( Maybe (File '[Gzip] 'NarrowPeak)
+                  , [SCATACSeq S (File '[Gzip] 'Other)] )
+               -> ReaderT config IO (FilePath, FilePath)
+computePeakRAS (peakFl, inputs) = do
+    dir <- asks ((<> "/Feature/Peak/") . _scatacseq_output_dir) >>= getPath
+    let output1 = dir <> "relative_accessbility_scores.tsv"
+        output2 = dir <> "cell_specificity_score.tsv"
+    liftIO $ do
+        peaks <- runResourceT $ runConduit $
+            streamBedGzip (fromJust peakFl^.location) .| sinkList
+        mats <- forM inputs $ \input -> do
+            mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
+            return (input^.eid, mat)
+        df <- computeRAS peaks mats
+        DF.writeTable output1 (T.pack . show) df
+        DF.writeTable output2 (T.pack . show) $ computeSS df
+        return (output1, output2)
+

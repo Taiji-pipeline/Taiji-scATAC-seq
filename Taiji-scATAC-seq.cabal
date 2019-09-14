@@ -70,6 +70,7 @@ library
                      , shelly
                      , statistics >= 0.15.0.0
                      , vector
+                     , vector-algorithms
                      , unordered-containers
                      , Taiji-utils
   default-language:    Haskell2010

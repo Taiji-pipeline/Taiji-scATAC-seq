@@ -259,12 +259,13 @@ detectDoublet input = do
         savePlots outputPlot [ mkHist ds th <> title (printf "doublet percentage: %.1f%%" rate)
             , mkHist ds_sim th ] []
 
-        statMap <- fmap (M.fromList . map (\x -> (_barcode x, x))) $ readStats $ stat^.location
         mat <- mkSpMatrix id $ fl^.location
         bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
-        B.writeFile (stat^.location) $ B.unlines $ flip map (zip bcs dProbs) $ \(bc, val) -> 
-            let s = M.findWithDefault undefined bc statMap
-            in showStat s{_doublet_score = val}
+        let doubletScore = M.fromList $ zip bcs dProbs
+        stats <- readStats $ stat^.location
+        B.writeFile (stat^.location) $ B.unlines $ flip map stats $ \s ->
+            let v = M.findWithDefault 0 (_barcode s) doubletScore
+            in showStat s{_doublet_score = v}
         return stat
         )
   where

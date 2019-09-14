@@ -127,8 +127,9 @@ preClustering = do
             |] $ return ()
         ["Make_Gene_Mat", "Cluster"] ~> "Extract_Cluster_Gene_Matrix"
 
-        node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $
-            zip3 (repeat genes) input $ repeat ref
+        node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
+            Nothing -> []
+            Just ref' -> zip3 (repeat genes) input $ repeat ref'
             |] $ return ()
         nodePar "Diff_Gene" [| diffGenes "/temp/Pre/Diff/" Nothing |] $ return ()
         ["Get_Genes", "Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
@@ -244,7 +245,13 @@ builder = do
     extractTags "/Bed/Cluster/"
     ["Pre_Remove_Doublets", "Merged_Cluster"] ~> "Extract_Tags_Prep"
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
-    
+
+    nodePar "Call_Peaks_Cluster" [| \x -> do
+        opts <- asks _scatacseq_callpeak_opts
+        findPeaks "/Feature/Peak/Cluster/" opts x
+        |] $ return ()
+    path ["Merge_Tags", "Call_Peaks_Cluster"]
+
     -- Extract tags for subclusters
     node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat y |] $ return ()
     namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
@@ -263,13 +270,11 @@ builder = do
 --------------------------------------------------------------------------------
     nodePar "Call_Peaks" [| \x -> do
         opts <- asks _scatacseq_callpeak_opts
-        findPeaks "/Feature/Peak/" opts x
+        findPeaks "/Feature/Peak/Subcluster/" opts x
         |] $ return ()
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
-    node "Get_Peak_Enrichment" 'getPeakEnrichment $ return ()
-    ["Call_Peaks", "Merge_Peaks"] ~> "Get_Peak_Enrichment"
     --node "RPKM_Diff_Peak" 'rpkmDiffPeak $ return () 
     --["Diff_Peak", "Merge_Peaks", "RPKM_Peak"] ~> "RPKM_Diff_Peak"
 
@@ -292,27 +297,49 @@ builder = do
         |] $ return ()
     ["Get_Ref_Cells", "Make_Peak_Mat"] ~> "Make_Ref_Peak_Mat"
 
+    {-
     node "Cluster_Peak_Mat" [| \(mats, cls) ->
         subMatrix "/Feature/Peak/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Make_Peak_Mat", "Merged_Cluster"] ~> "Cluster_Peak_Mat"
-    node "Cluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $
-        zip3 (repeat $ fromJust pk) x $ repeat ref
+    node "Cluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $ case ref of
+        Nothing -> []
+        Just ref' -> zip3 (repeat $ fromJust pk) x $ repeat ref'
         |] $ return ()
     ["Merge_Peaks", "Cluster_Peak_Mat", "Make_Ref_Peak_Mat"] ~> "Cluster_Diff_Peak_Prep"
     nodePar "Cluster_Diff_Peak" [| diffPeaks "/Diff/Peak/Cluster/" |] $ return ()
     path ["Cluster_Diff_Peak_Prep", "Cluster_Diff_Peak"]
 
+    node "Diff_Peak_Enrichment" [| \(inputs, pk) -> 
+        let inputs' = map (\x -> (B.pack $ T.unpack $ x^.eid, x^.replicates._2.files)) inputs
+        in getPeakEnrichment (inputs', pk)
+        |] $ return ()
+    ["Cluster_Diff_Peak", "Merge_Peaks"] ~> "Diff_Peak_Enrichment"
+    -}
+
     node "Subcluster_Peak_Mat" [| \(mats, cls) ->
         subMatrix "/Feature/Peak/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Make_Peak_Mat", "Combine_Clusters"] ~> "Subcluster_Peak_Mat"
-    node "Subcluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $
-        zip3 (repeat $ fromJust pk) x $ repeat ref
+
+    node "Compute_Peak_RAS" 'computePeakRAS $ return ()
+    ["Merge_Peaks", "Subcluster_Peak_Mat"] ~> "Compute_Peak_RAS"
+    --node "Subcluster_Diff_Peak" 'specificPeaks $ return ()
+    --["Accessible_Proportion"] ~> "Subcluster_Diff_Peak"
+
+    {-
+    node "Subcluster_Diff_Peak_Prep" [| \(pkList, xs, peaks, ref) -> return $ case ref of
+        Nothing -> []
+        Just ref' -> 
+            let input = flip map xs $ \x ->
+                    let pk = fromJust $ lookup (B.pack $ T.unpack $ x^.eid) peaks
+                    in x & replicates.traverse.files %~ (\f -> (f, pk))
+            in zip3 (repeat $ fromJust pkList) input $ repeat ref'
         |] $ return ()
-    ["Merge_Peaks", "Subcluster_Peak_Mat", "Make_Ref_Peak_Mat"] ~> "Subcluster_Diff_Peak_Prep"
+    ["Merge_Peaks", "Subcluster_Peak_Mat", "Call_Peaks", "Make_Ref_Peak_Mat"] ~> "Subcluster_Diff_Peak_Prep"
     nodePar "Subcluster_Diff_Peak" [| diffPeaks "/Diff/Peak/Subcluster/" |] $ return ()
     path ["Subcluster_Diff_Peak_Prep", "Subcluster_Diff_Peak"]
+    -}
 
 --------------------------------------------------------------------------------
 -- Differential genes
@@ -326,8 +353,9 @@ builder = do
         subMatrix "/Feature/Gene/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
-    node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $
-        zip3 (repeat genes) input $ repeat ref
+    node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
+        Nothing -> []
+        Just ref' -> zip3 (repeat genes) input $ repeat ref'
         |] $ return ()
     nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
     node "Diff_Gene_Viz" [| plotDiffGene "diff_gene.html" |] $ return ()
@@ -338,8 +366,9 @@ builder = do
         subMatrix "/Feature/Gene/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Gene_Mat", "Combine_Clusters"] ~> "Subcluster_Gene_Mat"
-    node "Subcluster_Diff_Gene_Prep" [| \(genes, input, ref) -> return $
-        zip3 (repeat genes) input $ repeat ref
+    node "Subcluster_Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
+        Nothing -> []
+        Just ref' -> zip3 (repeat genes) input $ repeat ref'
         |] $ return ()
     nodePar "Subcluster_Diff_Gene" [| diffGenes "/Diff/Gene/Subcluster/" Nothing |] $ return ()
     node "Subcluster_Diff_Gene_Viz" [| plotDiffGene "diff_gene_subcluster.html" |] $ return ()
@@ -353,7 +382,7 @@ builder = do
     -- Estimate gene expression
     nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
     node "Make_Expr_Table" [| mkExprTable "expression_profile.tsv" |] $ return ()
-    path ["Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
+    path ["Subcluster_Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
 
     -- Motif finding
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()

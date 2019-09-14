@@ -31,6 +31,9 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , mkFeatMat
     , groupCells
     , mergeMatrix
+
+    , computeSS
+    , computeRAS
     ) where
 
 import Bio.Data.Bed
@@ -48,6 +51,7 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as VM
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
 import Data.Conduit.Zlib (multiple, ungzip, gzip)
@@ -56,6 +60,7 @@ import Data.Singletons.Prelude (Elem)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
+import qualified Data.Matrix as Mat
 import           Data.List.Ordered       (nubSort)
 import           Bio.Seq.IO
 import           System.FilePath               (takeDirectory)
@@ -63,9 +68,11 @@ import           Shelly                        (fromText, mkdir_p, shelly,
                                                 test_f)
 import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
+import Statistics.Quantile (medianUnbiased, median)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
+import qualified Taiji.Utils.DataFrame as DF
 
 -------------------------------------------------------------------------------
 -- BASIC
@@ -369,3 +376,39 @@ mergeMatrix inputs idxOut = do
     getIndices idxFls = fmap S.toList $ runResourceT $ runConduit $
         mapM_ (streamBedGzip . (^.location)) idxFls .|
         foldlC (flip S.insert) S.empty
+
+computeRAS :: [BED3] -> [(T.Text, SpMatrix Int)] -> IO (DF.DataFrame Double)
+computeRAS peaks mats = do
+    (names, ras) <- fmap unzip $ forM mats $ \(nm, mat) -> do
+        v <- VM.replicate (_num_col mat) (0 :: Int)
+        let f xs = do
+                mapM_ (VM.unsafeModify v (+1) . fst) xs
+                return $ fromIntegral $ foldl' (+) 0 $ map snd xs
+        depth <- median medianUnbiased <$>
+            (runResourceT $ runConduit $ streamRows mat .| mapMC (f . snd) .| sinkVector :: IO (U.Vector Double))
+        ras <- accScore depth . V.map (\x -> fromIntegral x / fromIntegral (_num_row mat)) <$> V.unsafeFreeze v
+        return (nm, ras)
+    return $ DF.fromMatrix (map mkName peaks) names $ Mat.fromColumns ras
+  where
+    mkName p = T.pack $ B.unpack (p^.chrom) <> ":" <> show (p^.chromStart) <>
+        "-" <> show (p^.chromEnd)
+    accScore k xs = V.map (/s) xs'
+      where
+        xs' = V.map adjust xs
+        s = V.sum xs'
+        adjust p = 1 - (1-p)**(1/k)
+
+
+-- | Compute Specificity Score (SS).
+computeSS :: DF.DataFrame Double -> DF.DataFrame Double
+computeSS df = df{ DF._dataframe_data = mat}
+  where
+    mat = Mat.fromRows $ map (snd . entropy) $ Mat.toRows $ DF._dataframe_data df
+    entropy xs = (e, V.map (\x -> e - logBase 2 x) xs')
+      where
+        e = negate $ V.sum $ V.map f xs'
+        xs' = V.map (/s) xs
+        f p | p == 0 = 0
+            | otherwise = p * logBase 2 p
+        s = V.sum xs
+

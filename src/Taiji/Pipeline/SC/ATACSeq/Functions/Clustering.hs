@@ -200,8 +200,8 @@ getBedCluster (input, clFl) = do
     getClusterBarcodes :: B.ByteString    -- ^ experiment id
                     -> SCATACSeq S (File '[] 'Other)   -- ^ Cluster files
                     -> IO (M.HashMap B.ByteString B.ByteString)  -- ^ Barcode to cluster map
-    getClusterBarcodes exp_id clFl = do
-        clusters <- decodeFile $ clFl^.replicates._2.files.location :: IO [CellCluster]
+    getClusterBarcodes exp_id cl = do
+        clusters <- decodeFile $ cl^.replicates._2.files.location :: IO [CellCluster]
         return $ M.fromListWith (error "same barcode") $
             flip concatMap clusters $ \CellCluster{..} ->
                 zip (mapMaybe getBarcode _cluster_member) $ repeat _cluster_name
@@ -350,6 +350,7 @@ tissueComposition = stackBar . DF.map round' . DF.mapCols normalize .
     DF.transpose . DF.mapCols normalize . DF.map fromIntegral
   where
     round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
+    normalize :: V.Vector Double -> V.Vector Double
     normalize xs | V.all (==0) xs = xs
                  | otherwise = V.map (/V.sum xs) xs
 
@@ -359,6 +360,7 @@ clusterComposition = stackBar . DF.map round' . DF.mapCols normalize .
     DF.map fromIntegral
   where
     round' x = fromIntegral (round $ x * 1000 :: Int) / 1000
+    normalize :: V.Vector Double -> V.Vector Double
     normalize xs | V.all (==0) xs = xs
                  | otherwise = V.map (/V.sum xs) xs
 
