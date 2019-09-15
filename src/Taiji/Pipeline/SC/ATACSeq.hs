@@ -41,9 +41,12 @@ basicAnalysis = do
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
     nodePar "Filter_Cell" 'filterCell $ return ()
     path ["Get_Bam", "Remove_Duplicates", "Filter_Cell"]
-    node "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |] $ return ()
+    node "Get_Bed" [| \(input, x) -> do
+        let output = getSortedBed input ++ x
+        unless (null output) $ getGenomeIndex >> return ()
+        return output
+        |] $ return ()
     [ "Download_Data", "Filter_Cell"] ~> "Get_Bed"
-
 
 -- PreClustering and doublet detection
 preClustering :: Builder ()
@@ -353,6 +356,10 @@ builder = do
         subMatrix "/Feature/Gene/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
+    
+    node "Compute_Gene_RAS" 'computeGeneRAS $ return ()
+    ["Pre_Get_Genes", "Cluster_Gene_Mat"] ~> "Compute_Gene_RAS"
+
     node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
         Nothing -> []
         Just ref' -> zip3 (repeat genes) input $ repeat ref'

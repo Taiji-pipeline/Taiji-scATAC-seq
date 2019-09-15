@@ -7,6 +7,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     , mkExprTable
     , getGeneNames
     , mkCellByGene 
+    , computeGeneRAS
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -29,6 +30,7 @@ import           Data.List.Ordered                    (nubSort)
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
+import qualified Taiji.Utils.DataFrame as DF
 
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
@@ -95,6 +97,25 @@ estimateExpr (nm, fl) = do
         B.writeFile output $ B.unlines $
             map (\(n, c) -> n <> "\t" <> toShortest c) counts
         return (nm, location .~ output $ emptyFile)
+
+-- | Compute the relative accessibility score.
+computeGeneRAS :: SCATACSeqConfig config
+               => ( FilePath   -- ^ genes
+                  , [SCATACSeq S (File '[Gzip] 'Other)] )
+               -> ReaderT config IO (FilePath, FilePath)
+computeGeneRAS (genes, inputs) = do
+    dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
+    let output1 = dir <> "relative_accessbility_scores.tsv"
+        output2 = dir <> "cell_specificity_score.tsv"
+    liftIO $ do
+        names <- map (T.pack . B.unpack . fst) <$> readTSS genes
+        mats <- forM inputs $ \input -> do
+            mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
+            return (input^.eid, mat)
+        df <- computeRAS names mats
+        DF.writeTable output1 (T.pack . show) df
+        DF.writeTable output2 (T.pack . show) $ computeSS df
+        return (output1, output2)
 
 -- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6385419/
 -- | Count the tags in promoter regions (RPKM).

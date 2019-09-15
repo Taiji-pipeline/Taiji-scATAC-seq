@@ -223,7 +223,7 @@ computePeakRAS (peakFl, inputs) = do
     let output1 = dir <> "relative_accessbility_scores.tsv"
         output2 = dir <> "cell_specificity_score.tsv"
     liftIO $ do
-        peaks <- runResourceT $ runConduit $
+        peaks <- fmap (map mkName) $ runResourceT $ runConduit $
             streamBedGzip (fromJust peakFl^.location) .| sinkList
         mats <- forM inputs $ \input -> do
             mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
@@ -232,4 +232,7 @@ computePeakRAS (peakFl, inputs) = do
         DF.writeTable output1 (T.pack . show) df
         DF.writeTable output2 (T.pack . show) $ computeSS df
         return (output1, output2)
-
+  where
+    mkName :: BED3 -> T.Text
+    mkName p = T.pack $ B.unpack (p^.chrom) <> ":" <> show (p^.chromStart) <>
+        "-" <> show (p^.chromEnd)

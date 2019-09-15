@@ -10,12 +10,18 @@ module Taiji.Pipeline.SC.ATACSeq.Types
     , SCATACSeqConfig(..)
     , qcDir
     , figDir
+    , getGenomeIndex
     ) where
 
 import           Data.Binary (Binary(..))
 import Bio.Data.Experiment.Types
 import Bio.Data.Experiment.Replicate
 import GHC.Generics (Generic)
+import qualified Data.Text as T
+import           Bio.Seq.IO
+import           System.FilePath               (takeDirectory)
+import           Shelly                        (fromText, mkdir_p, shelly,
+                                                test_f)
 
 import Taiji.Prelude
 
@@ -46,3 +52,18 @@ qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")
 
 figDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 figDir = asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")
+
+getGenomeIndex :: SCATACSeqConfig config => ReaderT config IO FilePath
+getGenomeIndex = do
+    seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
+        _scatacseq_genome_index )
+    genome <- asks ( fromMaybe (error "Genome fasta file was not specified!") .
+        _scatacseq_genome_fasta )
+    shelly $ do
+        fileExist <- test_f $ fromText $ T.pack seqIndex
+        unless fileExist $ do
+            mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
+            liftIO $ mkIndex [genome] seqIndex
+    return seqIndex
+{-# INLINE getGenomeIndex #-}
+

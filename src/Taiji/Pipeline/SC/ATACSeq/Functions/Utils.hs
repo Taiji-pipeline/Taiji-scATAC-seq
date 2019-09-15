@@ -7,7 +7,6 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     ( extractBarcode
     , readPromoters
-    , getGenomeIndex
     , CutSite(..)
     , CutSiteIndex
     , withCutSiteIndex
@@ -62,16 +61,11 @@ import Control.DeepSeq (force)
 import Control.Exception (bracket)
 import qualified Data.Matrix as Mat
 import           Data.List.Ordered       (nubSort)
-import           Bio.Seq.IO
-import           System.FilePath               (takeDirectory)
-import           Shelly                        (fromText, mkdir_p, shelly,
-                                                test_f)
 import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
 import Statistics.Quantile (medianUnbiased, median)
 
 import Taiji.Prelude hiding (groupBy)
-import Taiji.Pipeline.SC.ATACSeq.Types
 import qualified Taiji.Utils.DataFrame as DF
 
 -------------------------------------------------------------------------------
@@ -95,20 +89,6 @@ readPromoters = fmap (bedToTree (++) . concatMap fn) . readGenes
         tss | geneStrand = geneLeft : map fst geneTranscripts
             | otherwise = geneRight : map snd geneTranscripts
 {-# INLINE readPromoters #-}
-
-getGenomeIndex :: SCATACSeqConfig config => ReaderT config IO FilePath
-getGenomeIndex = do
-    seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
-        _scatacseq_genome_index )
-    genome <- asks ( fromMaybe (error "Genome fasta file was not specified!") .
-        _scatacseq_genome_fasta )
-    shelly $ do
-        fileExist <- test_f $ fromText $ T.pack seqIndex
-        unless fileExist $ do
-            mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
-            liftIO $ mkIndex [genome] seqIndex
-    return seqIndex
-{-# INLINE getGenomeIndex #-}
 
 -------------------------------------------------------------------------------
 -- CutSiteIndex
@@ -377,8 +357,8 @@ mergeMatrix inputs idxOut = do
         mapM_ (streamBedGzip . (^.location)) idxFls .|
         foldlC (flip S.insert) S.empty
 
-computeRAS :: [BED3] -> [(T.Text, SpMatrix Int)] -> IO (DF.DataFrame Double)
-computeRAS peaks mats = do
+computeRAS :: [T.Text] -> [(T.Text, SpMatrix Int)] -> IO (DF.DataFrame Double)
+computeRAS rownames mats = do
     (names, ras) <- fmap unzip $ forM mats $ \(nm, mat) -> do
         v <- VM.replicate (_num_col mat) (0 :: Int)
         let f xs = do
@@ -388,27 +368,25 @@ computeRAS peaks mats = do
             (runResourceT $ runConduit $ streamRows mat .| mapMC (f . snd) .| sinkVector :: IO (U.Vector Double))
         ras <- accScore depth . V.map (\x -> fromIntegral x / fromIntegral (_num_row mat)) <$> V.unsafeFreeze v
         return (nm, ras)
-    return $ DF.fromMatrix (map mkName peaks) names $ Mat.fromColumns ras
+    return $ DF.fromMatrix rownames names $ Mat.fromColumns ras
   where
-    mkName p = T.pack $ B.unpack (p^.chrom) <> ":" <> show (p^.chromStart) <>
-        "-" <> show (p^.chromEnd)
-    accScore k xs = V.map (/s) xs'
+    accScore k xs = V.map (\x -> x * 1000000 / s) xs'
       where
         xs' = V.map adjust xs
         s = V.sum xs'
         adjust p = 1 - (1-p)**(1/k)
 
-
 -- | Compute Specificity Score (SS).
 computeSS :: DF.DataFrame Double -> DF.DataFrame Double
 computeSS df = df{ DF._dataframe_data = mat}
   where
-    mat = Mat.fromRows $ map (snd . entropy) $ Mat.toRows $ DF._dataframe_data df
-    entropy xs = (e, V.map (\x -> e - logBase 2 x) xs')
+    mat = Mat.fromRows $ map (q_t . normalize) $ Mat.toRows $
+        DF._dataframe_data df
+    q_t xs = V.map (\x -> e - logBase 2 x) xs
       where
-        e = negate $ V.sum $ V.map f xs'
-        xs' = V.map (/s) xs
-        f p | p == 0 = 0
-            | otherwise = p * logBase 2 p
-        s = V.sum xs
-
+        e = negate $ V.sum $ V.map (\p -> p * logBase 2 p) xs
+    normalize xs = V.map (/s) xs'
+      where
+        s = V.sum xs'
+        xs' = V.map (+pseudoCount) xs
+        pseudoCount = 1
