@@ -23,6 +23,7 @@ import Data.Double.Conversion.ByteString (toShortest)
 import Bio.Utils.Misc (readDouble, readInt)
 import           Data.CaseInsensitive  (mk, original, CI)
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector as V
 import           Bio.Pipeline.Utils
 import Control.Arrow (second)
 import           Data.List.Ordered                    (nubSort)
@@ -100,22 +101,33 @@ estimateExpr (nm, fl) = do
 
 -- | Compute the relative accessibility score.
 computeGeneRAS :: SCATACSeqConfig config
-               => ( FilePath   -- ^ genes
+               => FilePath
+               -> ( FilePath   -- ^ genes
                   , [SCATACSeq S (File '[Gzip] 'Other)] )
-               -> ReaderT config IO (FilePath, FilePath)
-computeGeneRAS (genes, inputs) = do
-    dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
-    let output1 = dir <> "relative_accessbility_scores.tsv"
-        output2 = dir <> "cell_specificity_score.tsv"
+               -> ReaderT config IO (FilePath, FilePath, FilePath)
+computeGeneRAS prefix (genes, inputs) = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    let output1 = dir <> "/relative_accessbility_scores.tsv"
+        output2 = dir <> "/cell_specificity_score.tsv"
+        output3 = dir <> "/cell_specificity_pvalue.tsv"
     liftIO $ do
         names <- map (T.pack . B.unpack . fst) <$> readTSS genes
         mats <- forM inputs $ \input -> do
             mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
             return (input^.eid, mat)
-        df <- computeRAS names mats
-        DF.writeTable output1 (T.pack . show) df
-        DF.writeTable output2 (T.pack . show) $ computeSS df
-        return (output1, output2)
+        ras <- computeRAS names mats
+        let ss = computeSS ras
+        DF.writeTable output1 (T.pack . show) ras
+        DF.writeTable output2 (T.pack . show) ss
+        cdf <- computeCDF ras
+        DF.writeTable output3 (T.pack . show) $ DF.map (lookupP cdf) ss
+        return (output1, output2, output3)
+  where
+    lookupP (vec, res, n) x | p == 0 = 1 / n
+                            | otherwise = p
+      where
+        p = vec V.! i
+        i = min (V.length vec - 1) $ truncate $ x / res 
 
 -- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6385419/
 -- | Count the tags in promoter regions (RPKM).

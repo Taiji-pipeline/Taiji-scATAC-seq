@@ -153,6 +153,7 @@ rmAbnoramlFragment = return . filter f
 
 -- | Remove duplicates for reads originated from a single cell.
 rmDup :: [BAM] -> State Stat [BAM]
+rmDup [] = return []
 rmDup input = do
     modify' $ \x -> x{_dup_rate = dupRate}
     return output
@@ -174,6 +175,7 @@ rmDup input = do
 
 -- | Remove chrM reads.
 rmChrM :: BAMHeader -> [BAM] -> State Stat ([BAM], [BAM])
+rmChrM _ [] = return ([], [])
 rmChrM header input = do
     modify' $ \x -> x{_mito_rate = chrMRate}
     return output
@@ -244,12 +246,12 @@ detectDoublet :: SCATACSeqConfig config
 detectDoublet input = do
     dir <- qcDir
     let output = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
-            show (input^.replicates._1) <> ".txt"
+            show (input^.replicates._1) <> ".tsv"
         outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
-    input & replicates.traverse.files %%~ liftIO . (\(fl, (_,_,stat)) -> do
-        shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack output]
-        [probs, threshold, sc, sim_sc] <- B.lines <$> B.readFile output
+    input & replicates.traverse.files %%~ liftIO . (\(fl, (_,_,stat)) -> withTemp Nothing $ \tmp -> do
+        shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack tmp]
+        [probs, threshold, sc, sim_sc] <- B.lines <$> B.readFile tmp
         let th = readDouble threshold
             dProbs = map readDouble $ B.words probs
             ds = map readDouble $ B.words sc
@@ -263,10 +265,10 @@ detectDoublet input = do
         bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
         let doubletScore = M.fromList $ zip bcs dProbs
         stats <- readStats $ stat^.location
-        B.writeFile (stat^.location) $ B.unlines $ flip map stats $ \s ->
+        B.writeFile output $ B.unlines $ flip map stats $ \s ->
             let v = M.findWithDefault 0 (_barcode s) doubletScore
             in showStat s{_doublet_score = v}
-        return stat
+        return $ location .~ output $ emptyFile
         )
   where
     mkHist xs ref = plt <> rule

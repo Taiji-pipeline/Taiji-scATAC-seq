@@ -25,7 +25,6 @@ import           Data.Default (def)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 findMotifsPre :: SCATACSeqConfig config
               => Double   -- ^ Motif finding cutoff

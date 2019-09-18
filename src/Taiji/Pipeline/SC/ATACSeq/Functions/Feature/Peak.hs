@@ -22,6 +22,7 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import Data.Singletons.Prelude (Elem, SingI)
 import Shelly hiding (FilePath)
+import qualified Data.Vector as V
 
 import Statistics.Distribution (quantile)
 import Statistics.Distribution.ChiSquared (chiSquared)
@@ -215,24 +216,34 @@ peakCor peaks refPeak = MU.toLists $ MU.generate (n, n) $ \(i,j) ->
 
 -- | Compute the relative accessibility score.
 computePeakRAS :: SCATACSeqConfig config
-               => ( Maybe (File '[Gzip] 'NarrowPeak)
+               => FilePath
+               -> ( Maybe (File '[Gzip] 'NarrowPeak)
                   , [SCATACSeq S (File '[Gzip] 'Other)] )
-               -> ReaderT config IO (FilePath, FilePath)
-computePeakRAS (peakFl, inputs) = do
-    dir <- asks ((<> "/Feature/Peak/") . _scatacseq_output_dir) >>= getPath
+               -> ReaderT config IO (FilePath, FilePath, FilePath)
+computePeakRAS prefix (peakFl, inputs) = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output1 = dir <> "relative_accessbility_scores.tsv"
         output2 = dir <> "cell_specificity_score.tsv"
+        output3 = dir <> "/cell_specificity_pvalue.tsv"
     liftIO $ do
         peaks <- fmap (map mkName) $ runResourceT $ runConduit $
             streamBedGzip (fromJust peakFl^.location) .| sinkList
         mats <- forM inputs $ \input -> do
             mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
             return (input^.eid, mat)
-        df <- computeRAS peaks mats
-        DF.writeTable output1 (T.pack . show) df
-        DF.writeTable output2 (T.pack . show) $ computeSS df
-        return (output1, output2)
+        ras <- computeRAS peaks mats
+        let ss = computeSS ras
+        DF.writeTable output1 (T.pack . show) ras
+        DF.writeTable output2 (T.pack . show) ss
+        cdf <- computeCDF ras
+        DF.writeTable output3 (T.pack . show) $ DF.map (lookupP cdf) ss
+        return (output1, output2, output3)
   where
     mkName :: BED3 -> T.Text
     mkName p = T.pack $ B.unpack (p^.chrom) <> ":" <> show (p^.chromStart) <>
         "-" <> show (p^.chromEnd)
+    lookupP (vec, res, n) x | p == 0 = 1 / n
+                            | otherwise = p
+      where
+        p = vec V.! i
+        i = min (V.length vec - 1) $ truncate $ x / res 

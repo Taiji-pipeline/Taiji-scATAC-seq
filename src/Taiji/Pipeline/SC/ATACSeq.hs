@@ -115,29 +115,6 @@ preClustering = do
         ["Get_Windows", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
         path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
-        -- Differetial genes
-        nodePar "Get_Ref_Cells" [| liftIO . sampleCells 20 |] $ return ()
-        ["Cluster"] ~> "Get_Ref_Cells"
-        node "Make_Ref_Gene_Mat" [| \(refs, mats) ->
-            let bcs = flip concatMap refs $ \ref ->
-                    map (\x -> B.pack (T.unpack $ ref^.eid) <> "+" <> x) $
-                        concat $ ref^.replicates._2.files
-            in mkRefMat "/temp/Pre/" bcs mats
-            |] $ return ()
-        ["Get_Ref_Cells", "Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
-        node "Extract_Cluster_Gene_Matrix" [| \(mat, cl) -> fmap concat $
-            mapM (extractSubMatrix "/temp/Pre/Cluster/") $ zipExp mat cl
-            |] $ return ()
-        ["Make_Gene_Mat", "Cluster"] ~> "Extract_Cluster_Gene_Matrix"
-
-        node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
-            Nothing -> []
-            Just ref' -> zip3 (repeat genes) input $ repeat ref'
-            |] $ return ()
-        nodePar "Diff_Gene" [| diffGenes "/temp/Pre/Diff/" Nothing |] $ return ()
-        ["Get_Genes", "Extract_Cluster_Gene_Matrix", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
-        path ["Diff_Gene_Prep", "Diff_Gene"]
-
         -- Doublet detection
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
         nodePar "Detect_Doublet" 'detectDoublet $ return ()
@@ -164,6 +141,7 @@ preClustering = do
             |] $ return ()
         path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
 
+        {-
         node "Cluster_QC_Prep" [| \(genes, x1, x2, x3, diff) -> do
             let diff' = concatMap split $ mergeExp $ flip map diff $ \x ->
                     let (i, cl) = T.breakOn "+" $ x^.eid
@@ -175,6 +153,7 @@ preClustering = do
         ["Get_Genes", "Detect_Doublet", "Cluster", "Make_Gene_Mat", "Diff_Gene"]
             ~> "Cluster_QC_Prep"
         ["Cluster_QC_Prep"] ~> "Cluster_QC"
+        -}
 
 builder :: Builder ()
 builder = do
@@ -278,9 +257,6 @@ builder = do
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
-    --node "RPKM_Diff_Peak" 'rpkmDiffPeak $ return () 
-    --["Diff_Peak", "Merge_Peaks", "RPKM_Peak"] ~> "RPKM_Diff_Peak"
-
     node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
             x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
@@ -295,40 +271,26 @@ builder = do
 --------------------------------------------------------------------------------
 -- Differential Peak analysis
 --------------------------------------------------------------------------------
-    node "Make_Ref_Peak_Mat" [| \(ref, mats) ->
-        mkRefMat "/Feature/Peak/" (concat $ ref^.replicates._2.files) mats
-        |] $ return ()
-    ["Get_Ref_Cells", "Make_Peak_Mat"] ~> "Make_Ref_Peak_Mat"
-
-    {-
     node "Cluster_Peak_Mat" [| \(mats, cls) ->
         subMatrix "/Feature/Peak/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Make_Peak_Mat", "Merged_Cluster"] ~> "Cluster_Peak_Mat"
-    node "Cluster_Diff_Peak_Prep" [| \(pk, x, ref) -> return $ case ref of
-        Nothing -> []
-        Just ref' -> zip3 (repeat $ fromJust pk) x $ repeat ref'
-        |] $ return ()
-    ["Merge_Peaks", "Cluster_Peak_Mat", "Make_Ref_Peak_Mat"] ~> "Cluster_Diff_Peak_Prep"
-    nodePar "Cluster_Diff_Peak" [| diffPeaks "/Diff/Peak/Cluster/" |] $ return ()
-    path ["Cluster_Diff_Peak_Prep", "Cluster_Diff_Peak"]
 
-    node "Diff_Peak_Enrichment" [| \(inputs, pk) -> 
-        let inputs' = map (\x -> (B.pack $ T.unpack $ x^.eid, x^.replicates._2.files)) inputs
-        in getPeakEnrichment (inputs', pk)
-        |] $ return ()
-    ["Cluster_Diff_Peak", "Merge_Peaks"] ~> "Diff_Peak_Enrichment"
-    -}
+    node "Compute_Cluster_Peak_RAS" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
+    ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Compute_Cluster_Peak_RAS"
+    node "Cluster_Diff_Peak" [| specificPeaks "/Diff/Peak/Cluster/" |] $ return ()
+    ["Call_Peaks_Cluster", "Compute_Cluster_Peak_RAS"] ~> "Cluster_Diff_Peak"
+
 
     node "Subcluster_Peak_Mat" [| \(mats, cls) ->
         subMatrix "/Feature/Peak/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Make_Peak_Mat", "Combine_Clusters"] ~> "Subcluster_Peak_Mat"
 
-    node "Compute_Peak_RAS" 'computePeakRAS $ return ()
+    node "Compute_Peak_RAS" [| computePeakRAS "/Feature/Peak/Subcluster/" |] $ return ()
     ["Merge_Peaks", "Subcluster_Peak_Mat"] ~> "Compute_Peak_RAS"
-    --node "Subcluster_Diff_Peak" 'specificPeaks $ return ()
-    --["Accessible_Proportion"] ~> "Subcluster_Diff_Peak"
+    node "Subcluster_Diff_Peak" [| specificPeaks "/Diff/Peak/Subcluster/" |] $ return ()
+    ["Call_Peaks", "Compute_Peak_RAS"] ~> "Subcluster_Diff_Peak"
 
     {-
     node "Subcluster_Diff_Peak_Prep" [| \(pkList, xs, peaks, ref) -> return $ case ref of
@@ -345,42 +307,22 @@ builder = do
     -}
 
 --------------------------------------------------------------------------------
--- Differential genes
+-- Make gene matrix
 --------------------------------------------------------------------------------
-    node "Make_Ref_Gene_Mat" [| \(ref, mat) ->
-        mkRefMat "/Feature/Gene/" (concat $ ref^.replicates._2.files) mat
-        |] $ return ()
-    ["Get_Ref_Cells", "Pre_Make_Gene_Mat"] ~> "Make_Ref_Gene_Mat"
-
     node "Cluster_Gene_Mat" [| \(mats, cls) -> 
         subMatrix "/Feature/Gene/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
-    
-    node "Compute_Gene_RAS" 'computeGeneRAS $ return ()
+    node "Compute_Gene_RAS" [| computeGeneRAS "/Feature/Gene/Cluster/" |] $ return ()
     ["Pre_Get_Genes", "Cluster_Gene_Mat"] ~> "Compute_Gene_RAS"
-
-    node "Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
-        Nothing -> []
-        Just ref' -> zip3 (repeat genes) input $ repeat ref'
-        |] $ return ()
-    nodePar "Diff_Gene" [| diffGenes "/Diff/Gene/" Nothing |] $ return ()
-    node "Diff_Gene_Viz" [| plotDiffGene "diff_gene.html" |] $ return ()
-    ["Pre_Get_Genes", "Cluster_Gene_Mat", "Make_Ref_Gene_Mat"] ~> "Diff_Gene_Prep"
-    path ["Diff_Gene_Prep", "Diff_Gene", "Diff_Gene_Viz"]
 
     node "Subcluster_Gene_Mat" [| \(mats, cls) -> 
         subMatrix "/Feature/Gene/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Gene_Mat", "Combine_Clusters"] ~> "Subcluster_Gene_Mat"
-    node "Subcluster_Diff_Gene_Prep" [| \(genes, input, ref) -> return $ case ref of
-        Nothing -> []
-        Just ref' -> zip3 (repeat genes) input $ repeat ref'
-        |] $ return ()
-    nodePar "Subcluster_Diff_Gene" [| diffGenes "/Diff/Gene/Subcluster/" Nothing |] $ return ()
-    node "Subcluster_Diff_Gene_Viz" [| plotDiffGene "diff_gene_subcluster.html" |] $ return ()
-    ["Pre_Get_Genes", "Subcluster_Gene_Mat", "Make_Ref_Gene_Mat"] ~> "Subcluster_Diff_Gene_Prep"
-    path ["Subcluster_Diff_Gene_Prep", "Subcluster_Diff_Gene", "Subcluster_Diff_Gene_Viz"]
+    node "Compute_Subcluster_Gene_RAS" [| computeGeneRAS "/Feature/Gene/Subcluster/" |] $ return ()
+    ["Pre_Get_Genes", "Subcluster_Gene_Mat"] ~> "Compute_Subcluster_Gene_RAS"
+
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
