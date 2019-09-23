@@ -222,7 +222,7 @@ computePeakRAS :: SCATACSeqConfig config
                -> ReaderT config IO (FilePath, FilePath, FilePath)
 computePeakRAS prefix (peakFl, inputs) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output1 = dir <> "relative_accessbility_scores.tsv"
+    let output1 = dir <> "relative_accessibility_scores.tsv"
         output2 = dir <> "cell_specificity_score.tsv"
         output3 = dir <> "/cell_specificity_pvalue.tsv"
     liftIO $ do

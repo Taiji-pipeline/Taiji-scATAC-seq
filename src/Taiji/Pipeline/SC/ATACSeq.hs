@@ -7,6 +7,7 @@ module Taiji.Pipeline.SC.ATACSeq (builder) where
 import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
+import           Bio.Seq.IO (withGenome, getChrSizes)
 import Data.Binary
 import System.Random.MWC (uniformR, create)
 
@@ -242,8 +243,11 @@ builder = do
 
     nodePar "Subcluster_Make_BigWig" [| \(nm, fl) -> do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Subcluster/")
+        seqIndex <- getGenomeIndex
         let output = dir <> B.unpack nm <> ".bw"
-        mkBigWig output fl
+        liftIO $ do
+            chrSize <- withGenome seqIndex $ return . getChrSizes
+            bedToBigWig output chrSize fl
         |] $ return ()
     ["Subcluster_Merge_Tags"] ~> "Subcluster_Make_BigWig"
 

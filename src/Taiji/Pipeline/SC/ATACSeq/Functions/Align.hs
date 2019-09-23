@@ -9,11 +9,10 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     , filterBamSort
     , deDuplicates
     , filterCell
-    , mkBigWig
     ) where
 
 import Bio.Data.Bed
-import Bio.Data.Bed.Types (BED(..), BED3(..))
+import Bio.Data.Bed.Types (BED(..))
 import Bio.Data.Bam
 import           Bio.HTS
 import Data.Conduit.Internal (zipSinks)
@@ -22,10 +21,8 @@ import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import Shelly hiding (FilePath)
 import qualified Data.HashSet as S
-import qualified Data.HashMap.Strict as M
-import qualified Data.ByteString.Char8 as B
 import System.IO
-import           Bio.Seq.IO (mkIndex, withGenome, getChrSizes)
+import           Bio.Seq.IO (mkIndex)
 import           System.FilePath               (takeDirectory)
 
 import Taiji.Prelude hiding (groupBy)
@@ -178,43 +175,3 @@ filterCell input = do
         str = Just $ not $ isRev bam
         sc = Just $ fromIntegral $ mapq bam
 {-# INLINE filterCell #-}
-
-mkBigWig :: SCATACSeqConfig config
-         => FilePath   -- output
-         -> File tags 'Bed
-         -> ReaderT config IO ()
-mkBigWig output input = do
-    seqIndex <- getGenomeIndex
-    liftIO $ withTempDir (Just "./") $ \dir -> do
-        let tmp1 = dir ++ "/tmp1"
-            tmp2 = dir ++ "/tmp2"
-            tmpChr = dir ++ "/chr"
-        chrSize <- withGenome seqIndex $ return . getChrSizes
-        B.writeFile tmpChr $ B.unlines $
-            map (\(a,b) -> a <> "\t" <> B.pack (show b)) chrSize
-        extendBed tmp1 chrSize $ input^.location
-        shelly $ escaping False $ run_ "sort"
-            ["-k", "1,1", "-k2,2n", T.pack tmp1, ">", T.pack tmp2]
-        mkBedGraph tmp1 tmp2
-        shelly $ run_ "bedGraphToBigWig" [T.pack tmp1, T.pack tmpChr, T.pack output]
-  where
-    extendBed out chr fl = runResourceT $ runConduit $
-        streamBedGzip fl .| mapC f .| sinkFileBed out
-      where
-        f :: BED -> BED3
-        f bed = case bed^.strand of
-            Just False -> BED3 (bed^.chrom) (max 0 $ bed^.chromEnd - 100) (bed^.chromEnd)
-            _ -> BED3 (bed^.chrom) (bed^.chromStart) (min n $ bed^.chromStart + 100)
-          where
-            n = M.lookupDefault (error "chr not found") (bed^.chrom) chrSize
-        chrSize = M.fromList chr
-
-mkBedGraph :: FilePath  -- ^ Output
-           -> FilePath  -- ^ Coordinate sorted bed files
-           -> IO ()
-mkBedGraph output input = runResourceT $ runConduit $ streamBed input .|
-    mergeSortedBedWith (splitOverlapped length :: [BED3] -> [(BED3, Int)]) .|
-    concatC .| mapC f .| unlinesAsciiC .| sinkFile output
-  where
-    f (bed, x) = toLine bed <> "\t" <> B.pack (show x)
-{-# INLINE mkBedGraph #-}
