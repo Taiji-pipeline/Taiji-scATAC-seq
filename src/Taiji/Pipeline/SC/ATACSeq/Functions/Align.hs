@@ -154,11 +154,12 @@ filterCell :: SCATACSeqConfig config
            -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
 filterCell input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
+    teCutoff <- asks _scatacseq_te_cutoff
     let output = printf "%s/%s_rep%d_srt_filt.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bamFl, _, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter passedQC stats
+        let cells = S.fromList $ map _barcode $ filter (passedQC teCutoff) stats
         header <- getBamHeader $ bamFl^.location
         runResourceT $ runConduit $ streamBam (bamFl^.location) .|
             mapC (toBed header) .| groupBy ((==) `on` (^.name)) .|

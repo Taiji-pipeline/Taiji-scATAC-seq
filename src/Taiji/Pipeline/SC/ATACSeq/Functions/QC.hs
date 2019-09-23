@@ -19,7 +19,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , readTSS
     , detectDoublet
     , removeDoublet
-    , plotClusterQC
     , plotNumReads
     , plotDupRate
     , plotMitoRate
@@ -31,13 +30,10 @@ import           Bio.HTS
 import Control.Monad.State.Strict
 import Language.Javascript.JMacro
 import Bio.Utils.Functions (slideAverage)
-import Data.Binary (decodeFile)
 import           Bio.Data.Bed
 import Bio.RealWorld.GENCODE
 import           Bio.Data.Bed.Types
-import Bio.Utils.Functions (scale)
 import Bio.Utils.Misc (readInt, readDouble)
-import Control.Arrow (second)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap.Strict as I
@@ -45,7 +41,6 @@ import qualified Data.HashSet as S
 import Data.Conduit.List (groupBy)
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
 import qualified Data.Vector.Unboxed as U
@@ -58,7 +53,6 @@ import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
 import qualified Taiji.Utils.Plot.ECharts as E
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (mkSpMatrix, streamRows)
-import qualified Taiji.Utils.DataFrame as DF
 
 data Stat = Stat
     { _barcode :: B.ByteString
@@ -69,21 +63,22 @@ data Stat = Stat
     , _doublet_score :: Double }
 
 -- | Whether the given cell passes the QC.
-passedQC :: Stat -> Bool
-passedQC x = _te x >= 7 && _uniq_reads x >= 1000 && _doublet_score x <= 0.5
+passedQC :: Double -> Stat -> Bool
+passedQC cutoff x = _te x >= cutoff && _uniq_reads x >= 1000 && _doublet_score x <= 0.5
 
 plotStat :: SCATACSeqConfig config
          => [SCATACSeq S (File '[] 'Tsv)]
          -> ReaderT config IO FilePath
 plotStat inputs = do
     dir <- qcDir
+    teCutoff <- asks _scatacseq_te_cutoff
     let output = dir <> "/qc.html"
         outputStat = dir <> "/qc_stats.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
             stats <- readStats $ input^.replicates._2.files.location
-            let stats' = filter passedQC stats
-                cellQC = plotCells stats <> title
+            let stats' = filter (passedQC teCutoff) stats
+                cellQC = plotCells teCutoff stats <> title
                     (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
             return (cellQC, (input^.eid, stats'))
         savePlots output cellQCs 
@@ -219,8 +214,8 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenes
     fn Gene{..} = map g $ nubSort tss
       where
         g x = (BED3 geneChrom (x - 2000) (x + 2000), (x, geneStrand))
-        tss | geneStrand = geneLeft : map fst geneTranscripts
-            | otherwise = geneRight : map snd geneTranscripts
+        tss | geneStrand = geneLeft : map transLeft geneTranscripts
+            | otherwise = geneRight : map transRight geneTranscripts
 
 removeDoublet :: SCATACSeqConfig config
               => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
@@ -228,11 +223,12 @@ removeDoublet :: SCATACSeqConfig config
               -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, Int))
 removeDoublet input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
+    teCutoff <- asks _scatacseq_te_cutoff
     let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bedFl, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter passedQC stats
+        let cells = S.fromList $ map _barcode $ filter (passedQC teCutoff) stats
             f :: [BED] -> Bool
             f = (`S.member` cells) . fromJust . (^.name) . head
             sink = zipSinks lengthC $ concatC .| sinkFileBedGzip output
@@ -333,8 +329,8 @@ plotTE stats = plt <> E.option [jmacroE| {
     plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
         (nm, map _te stat)
 
-plotCells :: [Stat] -> Vega
-plotCells input = plt <> axes <> vline <> hline <> scales
+plotCells :: Double -> [Stat] -> Vega
+plotCells teCutoff input = plt <> axes <> vline <> hline <> scales
   where
     plt = contour $ zip (map (fromIntegral . _uniq_reads) stats) $ map _te stats
     stats = filter ((>=100) . _uniq_reads) input
@@ -369,7 +365,7 @@ plotCells input = plt <> axes <> vline <> hline <> scales
             encode: {
                 enter: {
                     x2: {signal: "width"},
-                    y: {value: 7, scale: "y"},
+                    y: {value: `teCutoff`, scale: "y"},
                     strokeDash: {value: [4,4]}
                 }
             }
@@ -392,6 +388,7 @@ plotCells input = plt <> axes <> vline <> hline <> scales
 -- Cluster level QC
 --------------------------------------------------------------------------------
 
+{-
 plotClusterQC :: SCATACSeqConfig config
               => ( FilePath
                  , SCATACSeq S
@@ -485,3 +482,4 @@ plotDiffGene inputs = do
       where
         f (a:b:_) = (b, [T.toUpper a])
         f _ = undefined
+-}

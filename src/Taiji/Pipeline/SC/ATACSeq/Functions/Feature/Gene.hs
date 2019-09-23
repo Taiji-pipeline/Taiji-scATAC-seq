@@ -18,7 +18,7 @@ import Bio.Data.Bed
 import Data.Singletons.Prelude (Elem)
 import qualified Data.Text as T
 import Bio.Data.Bed.Utils (rpkmBed)
-import Bio.RealWorld.GENCODE (readGenes, Gene(..))
+import Bio.RealWorld.GENCODE (readGenes, Gene(..), Transcript(..))
 import Data.Double.Conversion.ByteString (toShortest)
 import Bio.Utils.Misc (readDouble, readInt)
 import           Data.CaseInsensitive  (mk, original, CI)
@@ -81,8 +81,8 @@ getTSS fl = do
     fn Gene{..} = map g $ nubSort tss
       where
         g x = (geneName, [BED3 geneChrom (max 0 $ x - 1000) (x + 1000)])
-        tss | geneStrand = geneLeft : map fst geneTranscripts
-            | otherwise = geneRight : map snd geneTranscripts
+        tss | geneStrand = geneLeft : map transLeft geneTranscripts
+            | otherwise = geneRight : map transRight geneTranscripts
 
 -- | Estimate the gene expression level using atac-seq counts.
 estimateExpr :: SCATACSeqConfig config

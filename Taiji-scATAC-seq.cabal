@@ -43,7 +43,7 @@ library
                      , bytestring
                      , bytestring-lexing
                      , bio-experiments
-                     , bioinformatics-toolkit >= 0.8.0
+                     , bioinformatics-toolkit >= 0.9.0
                      , conduit-extra
                      , clustering
                      , case-insensitive
