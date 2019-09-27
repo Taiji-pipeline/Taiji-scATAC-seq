@@ -20,6 +20,7 @@ import Bio.Data.Bed
 import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Matrix as Mat
 import Data.Singletons.Prelude (Elem, SingI)
 import Shelly hiding (FilePath)
 import qualified Data.Vector as V
@@ -228,11 +229,14 @@ computePeakRAS prefix (peakFl, inputs) = do
     liftIO $ do
         peaks <- fmap (map mkName) $ runResourceT $ runConduit $
             streamBedGzip (fromJust peakFl^.location) .| sinkList
-        mats <- forM inputs $ \input -> do
-            mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
-            return (input^.eid, mat)
-        ras <- computeRAS peaks mats
-        let ss = computeSS ras
+
+        (names, cols) <- fmap unzip $ forM inputs $ \input -> do
+            vec <- mkSpMatrix readInt (input^.replicates._2.files.location) >>=
+                computeRAS
+            return (input^.eid, vec)
+
+        let ras = DF.fromMatrix peaks names $ Mat.fromColumns cols
+            ss = computeSS ras
         DF.writeTable output1 (T.pack . show) ras
         DF.writeTable output2 (T.pack . show) ss
         cdf <- computeCDF ras

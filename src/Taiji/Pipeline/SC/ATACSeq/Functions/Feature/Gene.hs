@@ -3,185 +3,101 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
-    ( estimateExpr
-    , mkExprTable
-    , getGeneNames
+    ( mkExprTable
+    , writePromoters
     , mkCellByGene 
     , computeGeneRAS
     ) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.HashMap.Strict                  as M
-import Data.ByteString.Lex.Integral (packDecimal)
+import qualified Data.Matrix as Mat
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
 import Data.Singletons.Prelude (Elem)
 import qualified Data.Text as T
-import Bio.Data.Bed.Utils (rpkmBed)
 import Bio.RealWorld.GENCODE (readGenes, Gene(..), Transcript(..))
-import Data.Double.Conversion.ByteString (toShortest)
-import Bio.Utils.Misc (readDouble, readInt)
-import           Data.CaseInsensitive  (mk, original, CI)
-import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector as V
+import Bio.Utils.Misc (readInt)
+import           Data.CaseInsensitive  (original)
 import           Bio.Pipeline.Utils
-import Control.Arrow (second)
-import           Data.List.Ordered                    (nubSort)
+import qualified Data.Vector as V
+import Data.Binary (decodeFile, encodeFile)
 
-import Taiji.Prelude hiding (groupBy)
+import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 import qualified Taiji.Utils.DataFrame as DF
 
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
-             -> (SCATACSeq S (File tags 'Bed, Int), FilePath)
+             -> (SCATACSeq S (File tags 'Bed, Int), File '[Gzip] 'Bed)
              -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
-mkCellByGene prefix (input, genes) = do
+mkCellByGene prefix (input, promoters) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_cell_by_gene.mat.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_cell_by_transcript.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . ( \(fl, nCell) -> do
-        regions <- map snd <$> readTSS genes
+        regions <- fmap (map return) $ runResourceT $ runConduit $
+            streamBedGzip (promoters^.location) .| sinkList
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
             groupCells .| mkFeatMat nCell regions .| sinkFile output
         return $ emptyFile & location .~ output )
 
-getGeneNames :: SCATACSeqConfig config
-             => ReaderT config IO FilePath
-getGeneNames = do
+writePromoters :: SCATACSeqConfig config 
+               => ReaderT config IO (File '[Gzip] 'Bed)
+writePromoters = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
-    let output = dir <> "gene_name_idx.tsv"
-    tss <- asks _scatacseq_annotation >>= liftIO . getTSS . fromJust
-    liftIO $ writeTSS output tss
-    return output
-
-writeTSS :: FilePath -> [(B.ByteString, [BED3])] -> IO ()
-writeTSS output xs = B.writeFile output $ B.unlines $ flip map xs $
-    \(nm, regions) -> nm <> "\t" <> B.intercalate "," (map f regions)
-  where
-    f b = b^.chrom <> ":" <> (fromJust $ packDecimal $ b^.chromStart) <> "-" <>
-        (fromJust $ packDecimal $ b^.chromEnd) 
-
-readTSS :: FilePath -> IO [(B.ByteString, [BED3])]
-readTSS input = map f . B.lines <$> B.readFile input
-  where
-    f x = let [nm, regions] = B.split '\t' x
-          in (nm, map g $ B.split ',' regions)
-    g x = let [chr, y] = B.split ':' x
-              [s,e] = B.split '-' y
-          in asBed chr (readInt s) $ readInt e
-
-getTSS :: FilePath -> IO [(B.ByteString, [BED3])]
-getTSS fl = do
-    genes <- nubSort . concatMap fn <$> readGenes fl
-    return $ flip map (M.toList $ M.fromListWith (++) genes) $ \(gene, regions) ->
-        (original gene, runIdentity $ runConduit $ mergeBed regions .| sinkList)
-  where
-    fn Gene{..} = map g $ nubSort tss
-      where
-        g x = (geneName, [BED3 geneChrom (max 0 $ x - 1000) (x + 1000)])
-        tss | geneStrand = geneLeft : map transLeft geneTranscripts
-            | otherwise = geneRight : map transRight geneTranscripts
-
--- | Estimate the gene expression level using atac-seq counts.
-estimateExpr :: SCATACSeqConfig config
-             => (B.ByteString, File '[Gzip] 'Bed)
-             -> ReaderT config IO (B.ByteString, File '[GeneQuant] 'Tsv)
-estimateExpr (nm, fl) = do
+    let output = dir <> "promoters.bed.gz"
     genes <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Gene/")
-    let output = dir ++ "/" ++ B.unpack nm ++ ".tsv" 
-    liftIO $ do
-        counts <- runResourceT $ runConduit $
-            streamBedGzip (fl^.location) .| mkGeneCount genes
-        B.writeFile output $ B.unlines $
-            map (\(n, c) -> n <> "\t" <> toShortest c) counts
-        return (nm, location .~ output $ emptyFile)
+    liftIO $ runResourceT $ runConduit $
+        yieldMany (concatMap getPromoter genes) .| sinkFileBedGzip output
+    return $ location .~ output $ emptyFile
+  where
+    getPromoter gene = map f $ geneTranscripts gene
+      where
+        f Transcript{..}
+            | transStrand = BED (geneChrom gene) (max 0 $ transLeft - 1000)
+                (transLeft + 1000) (Just transId) Nothing (Just transStrand)
+            | otherwise = BED (geneChrom gene) (max 0 $ transRight - 1000)
+                (transRight + 1000) (Just transId) Nothing (Just transStrand)
 
 -- | Compute the relative accessibility score.
 computeGeneRAS :: SCATACSeqConfig config
                => FilePath
-               -> ( FilePath   -- ^ genes
-                  , [SCATACSeq S (File '[Gzip] 'Other)] )
-               -> ReaderT config IO (FilePath, FilePath, FilePath)
-computeGeneRAS prefix (genes, inputs) = do
+               -> SCATACSeq S (File '[Gzip] 'Other)
+               -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
+computeGeneRAS prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output1 = dir <> "/relative_accessibility_scores.tsv"
-        output2 = dir <> "/cell_specificity_score.tsv"
-        output3 = dir <> "/cell_specificity_pvalue.tsv"
-    liftIO $ do
-        names <- map (T.pack . B.unpack . fst) <$> readTSS genes
-        mats <- forM inputs $ \input -> do
-            mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
-            return (input^.eid, mat)
-        ras <- computeRAS names mats
-        let ss = computeSS ras
-        DF.writeTable output1 (T.pack . show) ras
-        DF.writeTable output2 (T.pack . show) ss
-        cdf <- computeCDF ras
-        DF.writeTable output3 (T.pack . show) $ DF.map (lookupP cdf) ss
-        return (output1, output2, output3)
-  where
-    lookupP (vec, res, n) x | p == 0 = 1 / n
-                            | otherwise = p
-      where
-        p = vec V.! i
-        i = min (V.length vec - 1) $ truncate $ x / res 
-
--- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6385419/
--- | Count the tags in promoter regions (RPKM).
-mkGeneCount :: PrimMonad m
-            => [Gene]
-            -> ConduitT BED o m [(B.ByteString, Double)]
-mkGeneCount genes = zip (map (original . geneName) genes) . U.toList <$>
-    rpkmBed (map getTss genes)
-  where
-    getTss Gene{..} | geneStrand = BED3 geneChrom (geneLeft - 1000) (geneLeft + 1000)
-                    | otherwise = BED3 geneChrom (geneRight - 1000) (geneRight + 1000)
-{-# INLINE mkGeneCount #-}
+    let output = dir <> T.unpack (input^.eid) <> "_ras.bin"
+    input & replicates.traverse.files %%~ ( \fl -> liftIO $ do
+        mkSpMatrix readInt (fl^.location) >>= computeRAS >>= encodeFile output
+        return $ location .~ output $ emptyFile )
 
 -- | Combine expression data into a table and output
 mkExprTable :: SCATACSeqConfig config
             => FilePath
-            -> [(B.ByteString, File '[GeneQuant] 'Tsv)]
+            -> ( File '[Gzip] 'Bed -- ^ genes
+               , [SCATACSeq S (File '[] 'Other)] )
             -> ReaderT config IO (Maybe (File '[GeneQuant] 'Tsv))
-mkExprTable _ [] = return Nothing
-mkExprTable nm input = do
-    results <- liftIO $ readExpr input
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Gene/")
-    let output = dir ++ nm
-        (expNames, values) = unzip $ M.toList $
-            fmap (map (second average) . combine) $ M.fromListWith (++) $ results
-    liftIO $ B.writeFile output $ B.unlines $
-        B.intercalate "\t" ("Name" : expNames) :
-        map (\(x,xs) -> B.intercalate "\t" $ original x : map toShortest xs)
-            (combine values)
-    return $ Just $ location .~ output $ emptyFile
-
---------------------------------------------------------------------------------
--- Auxiliary functions
---------------------------------------------------------------------------------
-
-readExpr :: [(B.ByteString, File '[GeneQuant] 'Tsv)]
-         -> IO [(B.ByteString, [[(CI B.ByteString, Double)]])]
-readExpr input = forM input $ \(nm, fl) -> do
-    c <- B.readFile $ fl^.location
-    let result = map (\xs ->
-            let fs = B.split '\t' xs in (mk $ head fs, readDouble $ fs!!1)) $
-            tail $ B.lines c
-    return (nm, [result])
-{-# INLINE readExpr #-}
-
-combine :: [[(CI B.ByteString, Double)]] -> [(CI B.ByteString, [Double])]
-combine xs = flip map names $ \nm -> (nm, map (M.lookupDefault 0.01 nm) xs')
+mkExprTable prefix (fl, inputs) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
+    idToGene <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust >>=
+        return . M.fromList . concatMap f
+    liftIO $ do
+        promoters <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .| sinkList :: IO [BED]
+        let geneNames = map (\x -> M.lookupDefault undefined (fromJust $ x^.name) idToGene) promoters
+            output = dir ++ "/gene_accessibility.tsv"
+        
+        mat <- fmap transpose $ forM inputs $ \input -> fmap V.toList $ decodeFile $
+            input^.replicates._2.files.location :: IO [[Double]]
+        let (genes, vals) = unzip $ map combine $ groupBy ((==) `on` fst) $
+                sortBy (comparing fst) $ zip geneNames mat
+        DF.writeTable output (T.pack . show) $
+            DF.mkDataFrame (map (T.pack . B.unpack) genes) (map (^.eid) inputs) vals
+        return $ Just $ location .~ output $ emptyFile
   where
-    names = nubSort $ concatMap (fst . unzip) xs
-    xs' = map (fmap average . M.fromListWith (++) . map (second return)) xs
-{-# INLINE combine #-}
-
-average :: [Double] -> Double
-average [a,b]   = (a + b) / 2
-average [a,b,c] = (a + b + c) / 3
-average xs      = foldl1' (+) xs / fromIntegral (length xs)
-{-# INLINE average #-}
+    f Gene{..} = zip (map transId geneTranscripts) $
+        repeat $ original geneName
+    combine xs = (head gene, foldl1' (zipWith max) vals)
+      where
+        (gene, vals) = unzip xs

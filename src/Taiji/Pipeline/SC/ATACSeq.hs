@@ -107,14 +107,15 @@ preClustering = do
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
         -- Make cell by gene matrix
-        node "Get_Genes" [| \_ -> getGeneNames |] $ return ()
-        node "Make_Gene_Mat_Prep" [| \(xs, genes) -> 
+        node "Get_Promoters" [| \_ -> writePromoters |] $
+            doc .= "Get the list of promoters from the annotation file."
+        node "Make_Transcript_Mat_Prep" [| \(xs, genes) -> 
             let xs' = map (\x -> x & replicates.traverse.files %~ (\(a,_,c) -> (a,c))) xs
             in return $ zip xs' $ repeat genes |] $ return ()
-        nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
-            doc .= "Create cell by gene matrix for each sample."
-        ["Get_Windows", "Get_Genes"] ~> "Make_Gene_Mat_Prep"
-        path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
+        nodePar "Make_Transcript_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
+            doc .= "Create cell by transcript matrix for each sample."
+        ["Get_Windows", "Get_Promoters"] ~> "Make_Transcript_Mat_Prep"
+        path ["Make_Transcript_Mat_Prep", "Make_Transcript_Mat"]
 
         -- Doublet detection
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
@@ -313,30 +314,28 @@ builder = do
 --------------------------------------------------------------------------------
 -- Make gene matrix
 --------------------------------------------------------------------------------
-    node "Cluster_Gene_Mat" [| \(mats, cls) -> 
+    node "Cluster_Transcript_Mat" [| \(mats, cls) -> 
         subMatrix "/Feature/Gene/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
-    ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
-    node "Compute_Gene_RAS" [| computeGeneRAS "/Feature/Gene/Cluster/" |] $ return ()
-    ["Pre_Get_Genes", "Cluster_Gene_Mat"] ~> "Compute_Gene_RAS"
+    ["Pre_Make_Transcript_Mat", "Merged_Cluster"] ~> "Cluster_Transcript_Mat"
+    nodePar "Compute_Transcript_RAS" [| computeGeneRAS "/Feature/Gene/Cluster/" |] $ return ()
+    ["Cluster_Transcript_Mat"] ~> "Compute_Transcript_RAS"
+    node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
+    ["Pre_Get_Promoters", "Compute_Transcript_RAS"] ~> "Gene_Acc"
 
-    node "Subcluster_Gene_Mat" [| \(mats, cls) -> 
+    node "Subcluster_Transcript_Mat" [| \(mats, cls) -> 
         subMatrix "/Feature/Gene/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
-    ["Pre_Make_Gene_Mat", "Combine_Clusters"] ~> "Subcluster_Gene_Mat"
-    node "Compute_Subcluster_Gene_RAS" [| computeGeneRAS "/Feature/Gene/Subcluster/" |] $ return ()
-    ["Pre_Get_Genes", "Subcluster_Gene_Mat"] ~> "Compute_Subcluster_Gene_RAS"
+    ["Pre_Make_Transcript_Mat", "Combine_Clusters"] ~> "Subcluster_Transcript_Mat"
+    nodePar "Compute_Subcluster_Transcript_RAS" [| computeGeneRAS "/Feature/Gene/Subcluster/" |] $ return ()
+    ["Subcluster_Transcript_Mat"] ~> "Compute_Subcluster_Transcript_RAS"
+    node "Subcluster_Gene_Acc" [| mkExprTable "/Feature/Gene/Subcluster/" |] $ return ()
+    ["Pre_Get_Promoters", "Compute_Subcluster_Transcript_RAS"] ~> "Subcluster_Gene_Acc"
 
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
 --------------------------------------------------------------------------------
-
-    -- Estimate gene expression
-    nodePar "Estimate_Gene_Expr" 'estimateExpr $ return ()
-    node "Make_Expr_Table" [| mkExprTable "expression_profile.tsv" |] $ return ()
-    path ["Subcluster_Merge_Tags", "Estimate_Gene_Expr", "Make_Expr_Table"]
-
     -- Motif finding
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
     nodePar "Find_TFBS" 'findMotifs $ return ()

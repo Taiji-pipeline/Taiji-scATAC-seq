@@ -219,7 +219,11 @@ mkSpMatrix f input = do
         Just x -> do
             let [n, m] = map (read . T.unpack . T.strip) $ T.splitOn "x" $
                     last $ T.splitOn ":" $ T.pack $ B.unpack x
-            return $ SpMatrix n m input $ decodeSpMatrix f
+            return $ SpMatrix n m input decodeSpMatrix
+  where
+    decodeSpMatrix x = sourceFile x .| multiple ungzip .|
+        linesUnboundedAsciiC .| (headC >> mapC (decodeRowWith f))
+{-# NOINLINE mkSpMatrix #-}
 
 streamRows :: SpMatrix a -> ConduitT () (Row a) (ResourceT IO) ()
 streamRows sp = (_decoder sp) (_filepath sp)
@@ -236,11 +240,6 @@ sinkRows n m encoder output = do
     header = B.pack $ printf "Sparse matrix: %d x %d" n m
     sink = unlinesAsciiC .| gzip .| sinkFile output
 
-decodeSpMatrix :: (B.ByteString -> a)
-               -> FilePath -> ConduitT () (Row a) (ResourceT IO) ()
-decodeSpMatrix f input = sourceFile input .| multiple ungzip .|
-    linesUnboundedAsciiC .| (headC >> mapC (decodeRowWith f))
-{-# INLINE decodeSpMatrix #-}
 
 decodeRowWith :: (B.ByteString -> a) -> B.ByteString -> Row a
 decodeRowWith decoder x = (nm, map f values)
@@ -320,7 +319,6 @@ mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
             query = case bed^.strand of
                 Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
                 _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
-{-# INLINE mkFeatMat #-}
 
 groupCells :: Monad m => ConduitT BED (B.ByteString, [BED]) m ()
 groupCells = groupBy ((==) `on` (^.name)) .|
@@ -362,25 +360,23 @@ mergeMatrix inputs idxOut = do
         mapM_ (streamBedGzip . (^.location)) idxFls .|
         foldlC (flip S.insert) S.empty
 
-computeRAS :: [T.Text] -> [(T.Text, SpMatrix Int)] -> IO (DF.DataFrame Double)
-computeRAS rownames mats = do
-    (names, ras) <- fmap unzip $ forM mats $ \(nm, mat) -> do
-        v <- VM.replicate (_num_col mat) (0 :: Int)
-        let f xs = do
-                mapM_ (VM.unsafeModify v (+1) . fst) xs
-                return $ fromIntegral $ foldl' (+) 0 $ map snd xs
-        depth <- median medianUnbiased <$>
-            (runResourceT $ runConduit $ streamRows mat .| mapMC (f . snd) .| sinkVector :: IO (U.Vector Double))
-        ras <- accScore depth . V.map (\x -> fromIntegral x / fromIntegral (_num_row mat)) <$> V.unsafeFreeze v
-        return (nm, ras)
-    return $ DF.fromMatrix rownames names $ Mat.fromColumns ras
+computeRAS :: SpMatrix Int -> IO (V.Vector Double)
+computeRAS mat = do
+    v <- VM.replicate (_num_col mat) (0 :: Int)
+    let f xs = do
+            mapM_ (VM.unsafeModify v (+1) . fst) xs
+            return $ fromIntegral $ foldl' (+) 0 $ map snd xs
+    depth <- median medianUnbiased <$>
+        (runResourceT $ runConduit $ streamRows mat .| mapMC (f . snd) .| sinkVector :: IO (U.Vector Double))
+    accScore depth . V.map (\x -> fromIntegral x / fromIntegral (_num_row mat)) <$>
+        V.unsafeFreeze v
   where
     accScore k xs = V.map (\x -> x * 1000000 / s) xs'
       where
         xs' = V.map adjust xs
         s = V.sum xs'
         adjust p = 1 - (1-p)**(1/k)
-{-# INLINE computeRAS #-}
+{-# NOINLINE computeRAS #-}
 
 -- | Compute Specificity Score (SS).
 computeSS :: DF.DataFrame Double -> DF.DataFrame Double
