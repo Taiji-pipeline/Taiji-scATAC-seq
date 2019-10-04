@@ -335,7 +335,7 @@ plotClusters dir (qc, input) = do
         statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
 
 visualizeCluster :: [CellCluster] -> [EChart]
-visualizeCluster cs = [scatter' dat2D <> toolbox, scatter' dat2D' <> toolbox] 
+visualizeCluster cs = [addAttr toolbox $ scatter' dat2D, addAttr toolbox $ scatter' dat2D'] 
   where
     dat2D = flip map cs $ \(CellCluster nm cells) ->
         (B.unpack nm, map _cell_2d cells)

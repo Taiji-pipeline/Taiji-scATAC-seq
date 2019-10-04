@@ -362,20 +362,14 @@ mergeMatrix inputs idxOut = do
 
 computeRAS :: SpMatrix Int -> IO (V.Vector Double)
 computeRAS mat = do
-    v <- VM.replicate (_num_col mat) (0 :: Int)
-    let f xs = do
-            mapM_ (VM.unsafeModify v (+1) . fst) xs
-            return $ fromIntegral $ foldl' (+) 0 $ map snd xs
-    depth <- median medianUnbiased <$>
-        (runResourceT $ runConduit $ streamRows mat .| mapMC (f . snd) .| sinkVector :: IO (U.Vector Double))
-    accScore depth . V.map (\x -> fromIntegral x / fromIntegral (_num_row mat)) <$>
-        V.unsafeFreeze v
+    v <- VM.replicate (_num_col mat) 0
+    runResourceT $ runConduit $ streamRows mat .|
+        mapM_C (mapM_ (VM.unsafeModify v (+1) . fst) . snd)
+    accScore <$> V.unsafeFreeze v
   where
-    accScore k xs = V.map (\x -> x * 1000000 / s) xs'
+    accScore xs = V.map (\x -> x * 1000000 / s) xs
       where
-        xs' = V.map adjust xs
-        s = V.sum xs'
-        adjust p = 1 - (1-p)**(1/k)
+        s = V.sum xs
 {-# NOINLINE computeRAS #-}
 
 -- | Compute Specificity Score (SS).
