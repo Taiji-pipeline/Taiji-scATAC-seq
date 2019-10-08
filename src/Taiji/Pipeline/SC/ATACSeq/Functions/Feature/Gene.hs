@@ -70,7 +70,7 @@ computeGeneRAS prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = dir <> T.unpack (input^.eid) <> "_ras.bin"
     input & replicates.traverse.files %%~ ( \fl -> liftIO $ do
-        mkSpMatrix readInt (fl^.location) >>= computeRAS >>= encodeFile output
+        computeRAS (fl^.location) >>= encodeFile output
         return $ location .~ output $ emptyFile )
 
 -- | Combine expression data into a table and output

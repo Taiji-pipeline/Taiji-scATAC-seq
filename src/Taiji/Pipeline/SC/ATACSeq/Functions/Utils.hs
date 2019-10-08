@@ -67,7 +67,6 @@ import qualified Data.Matrix as Mat
 import           Data.List.Ordered       (nubSort)
 import Data.CaseInsensitive (CI)
 import qualified Data.Text as T
-import Statistics.Quantile (medianUnbiased, median)
 import Statistics.Sample (varianceUnbiased, mean)
 
 import Taiji.Prelude hiding (groupBy)
@@ -360,17 +359,20 @@ mergeMatrix inputs idxOut = do
         mapM_ (streamBedGzip . (^.location)) idxFls .|
         foldlC (flip S.insert) S.empty
 
-computeRAS :: SpMatrix Int -> IO (V.Vector Double)
-computeRAS mat = do
-    v <- VM.replicate (_num_col mat) 0
-    runResourceT $ runConduit $ streamRows mat .|
-        mapM_C (mapM_ (VM.unsafeModify v (+1) . fst) . snd)
-    accScore <$> V.unsafeFreeze v
+computeRAS :: FilePath -> IO (V.Vector Double)
+computeRAS fl = do
+    mat <- mkSpMatrix readInt fl
+    fmap accScore $ runResourceT $ runConduit $
+        streamRows mat .| sink (_num_col mat)
   where
+    sink n = do
+        v <- lift $ VM.replicate n 0.1
+        mapM_C $ \(_, xs) -> forM_ xs $ \(i, x) ->
+            VM.unsafeModify v (+fromIntegral x) i
+        lift $ V.unsafeFreeze v
     accScore xs = V.map (\x -> x * 1000000 / s) xs
       where
         s = V.sum xs
-{-# NOINLINE computeRAS #-}
 
 -- | Compute Specificity Score (SS).
 computeSS :: DF.DataFrame Double -> DF.DataFrame Double

@@ -281,35 +281,20 @@ builder = do
         |] $ return ()
     ["Make_Peak_Mat", "Merged_Cluster"] ~> "Cluster_Peak_Mat"
 
-    node "Compute_Cluster_Peak_RAS" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
-    ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Compute_Cluster_Peak_RAS"
+    node "Cluster_Peak_Acc" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
+    ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Cluster_Peak_Acc"
     node "Cluster_Diff_Peak" [| specificPeaks "/Diff/Peak/Cluster/" |] $ return ()
-    ["Call_Peaks_Cluster", "Compute_Cluster_Peak_RAS"] ~> "Cluster_Diff_Peak"
-
+    ["Call_Peaks_Cluster", "Cluster_Peak_Acc"] ~> "Cluster_Diff_Peak"
 
     node "Subcluster_Peak_Mat" [| \(mats, cls) ->
         subMatrix "/Feature/Peak/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Make_Peak_Mat", "Combine_Clusters"] ~> "Subcluster_Peak_Mat"
 
-    node "Compute_Peak_RAS" [| computePeakRAS "/Feature/Peak/Subcluster/" |] $ return ()
-    ["Merge_Peaks", "Subcluster_Peak_Mat"] ~> "Compute_Peak_RAS"
+    node "Subcluster_Peak_Acc" [| computePeakRAS "/Feature/Peak/Subcluster/" |] $ return ()
+    ["Merge_Peaks", "Subcluster_Peak_Mat"] ~> "Subcluster_Peak_Acc"
     node "Subcluster_Diff_Peak" [| specificPeaks "/Diff/Peak/Subcluster/" |] $ return ()
-    ["Call_Peaks", "Compute_Peak_RAS"] ~> "Subcluster_Diff_Peak"
-
-    {-
-    node "Subcluster_Diff_Peak_Prep" [| \(pkList, xs, peaks, ref) -> return $ case ref of
-        Nothing -> []
-        Just ref' -> 
-            let input = flip map xs $ \x ->
-                    let pk = fromJust $ lookup (B.pack $ T.unpack $ x^.eid) peaks
-                    in x & replicates.traverse.files %~ (\f -> (f, pk))
-            in zip3 (repeat $ fromJust pkList) input $ repeat ref'
-        |] $ return ()
-    ["Merge_Peaks", "Subcluster_Peak_Mat", "Call_Peaks", "Make_Ref_Peak_Mat"] ~> "Subcluster_Diff_Peak_Prep"
-    nodePar "Subcluster_Diff_Peak" [| diffPeaks "/Diff/Peak/Subcluster/" |] $ return ()
-    path ["Subcluster_Diff_Peak_Prep", "Subcluster_Diff_Peak"]
-    -}
+    ["Call_Peaks", "Subcluster_Peak_Acc"] ~> "Subcluster_Diff_Peak"
 
 --------------------------------------------------------------------------------
 -- Make gene matrix

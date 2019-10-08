@@ -231,8 +231,7 @@ computePeakRAS prefix (peakFl, inputs) = do
             streamBedGzip (fromJust peakFl^.location) .| sinkList
 
         (names, cols) <- fmap unzip $ forM inputs $ \input -> do
-            vec <- mkSpMatrix readInt (input^.replicates._2.files.location) >>=
-                computeRAS
+            vec <- computeRAS (input^.replicates._2.files.location)
             return (input^.eid, vec)
 
         let ras = DF.fromMatrix peaks names $ Mat.fromColumns cols
