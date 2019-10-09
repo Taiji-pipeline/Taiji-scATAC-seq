@@ -21,6 +21,7 @@ import Bio.Utils.Misc (readInt)
 import           Data.CaseInsensitive  (original)
 import           Bio.Pipeline.Utils
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Data.Binary (decodeFile, encodeFile)
 
 import Taiji.Prelude
@@ -88,8 +89,8 @@ mkExprTable prefix (fl, inputs) = do
         let geneNames = map (\x -> M.lookupDefault undefined (fromJust $ x^.name) idToGene) promoters
             output = dir ++ "/gene_accessibility.tsv"
         
-        mat <- fmap transpose $ forM inputs $ \input -> fmap V.toList $
-            (decodeFile $ input^.replicates._2.files.location :: IO (V.Vector Double))
+        mat <- fmap transpose $ forM inputs $ \input -> fmap U.toList $
+            (decodeFile $ input^.replicates._2.files.location :: IO (U.Vector Double))
         let (genes, vals) = unzip $ map combine $ groupBy ((==) `on` fst) $
                 sortBy (comparing fst) $ zip geneNames mat
         DF.writeTable output (T.pack . show) $

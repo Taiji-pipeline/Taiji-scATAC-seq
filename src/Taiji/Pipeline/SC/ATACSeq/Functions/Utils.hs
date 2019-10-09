@@ -51,6 +51,7 @@ import qualified Data.Set as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed.Mutable as UM
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
 import Data.ByteString.Lex.Integral (packDecimal)
@@ -359,20 +360,20 @@ mergeMatrix inputs idxOut = do
         mapM_ (streamBedGzip . (^.location)) idxFls .|
         foldlC (flip S.insert) S.empty
 
-computeRAS :: FilePath -> IO (V.Vector Double)
+computeRAS :: FilePath -> IO (U.Vector Double)
 computeRAS fl = do
     mat <- mkSpMatrix readInt fl
     fmap accScore $ runResourceT $ runConduit $
         streamRows mat .| sink (_num_col mat)
   where
     sink n = do
-        v <- lift $ VM.replicate n 0.1
+        v <- lift $ UM.replicate n 0.1
         mapM_C $ \(_, xs) -> forM_ xs $ \(i, x) ->
-            VM.unsafeModify v (+fromIntegral x) i
-        lift $ V.unsafeFreeze v
-    accScore xs = V.map (\x -> x * 1000000 / s) xs
+            UM.unsafeModify v (+fromIntegral x) i
+        lift $ U.unsafeFreeze v
+    accScore xs = U.map (\x -> x * 1000000 / s) xs
       where
-        s = V.sum xs
+        s = U.sum xs
 
 -- | Compute Specificity Score (SS).
 computeSS :: DF.DataFrame Double -> DF.DataFrame Double

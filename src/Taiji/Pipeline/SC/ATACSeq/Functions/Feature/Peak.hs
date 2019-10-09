@@ -17,7 +17,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 import           Bio.Pipeline
 import qualified Data.HashSet as S
 import Bio.Data.Bed
-import Data.Conduit.Internal (zipSinks)
+import Data.Conduit.Internal (zipSinks, zipSources)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Matrix as Mat
@@ -83,8 +83,10 @@ mergePeaks prefix input = do
         shelly $ escaping False $ bashPipeFail bash_ "cat" $
             map (T.pack . (^._2.location)) input ++
             [ "|", "sort", "-k1,1", "-k2,2n", "-k3,3n", ">", T.pack tmp ]
-        runResourceT $ runConduit $ streamBed tmp .| 
-            mergeSortedBedWith getBestPeak .| mapC resize .| sinkFileBedGzip output
+        let source = streamBed tmp .| mergeSortedBedWith getBestPeak .| mapC resize 
+        runResourceT $ runConduit $ zipSources (iterateC succ (0 :: Int)) source .|
+            mapC (\(i, p) -> name .~ Just ("p" <> B.pack (show i)) $ p) .|
+            sinkFileBedGzip output
     return $ Just $ location .~ output $ emptyFile
   where
     getBestPeak = maximumBy $ comparing (fromJust . (^.npPvalue))
@@ -232,7 +234,7 @@ computePeakRAS prefix (peakFl, inputs) = do
 
         (names, cols) <- fmap unzip $ forM inputs $ \input -> do
             vec <- computeRAS (input^.replicates._2.files.location)
-            return (input^.eid, vec)
+            return (input^.eid, V.convert vec)
 
         let ras = DF.fromMatrix peaks names $ Mat.fromColumns cols
             ss = computeSS ras
