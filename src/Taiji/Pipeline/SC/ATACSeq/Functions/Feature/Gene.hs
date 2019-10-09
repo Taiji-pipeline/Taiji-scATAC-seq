@@ -6,23 +6,18 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     ( mkExprTable
     , writePromoters
     , mkCellByGene 
-    , computeGeneRAS
     ) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.HashMap.Strict                  as M
-import qualified Data.Matrix as Mat
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
 import Data.Singletons.Prelude (Elem)
 import qualified Data.Text as T
 import Bio.RealWorld.GENCODE (readGenes, Gene(..), Transcript(..))
-import Bio.Utils.Misc (readInt)
 import           Data.CaseInsensitive  (original)
 import           Bio.Pipeline.Utils
-import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
-import Data.Binary (decodeFile, encodeFile)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
@@ -62,23 +57,11 @@ writePromoters = do
             | otherwise = BED (geneChrom gene) (max 0 $ transRight - 1000)
                 (transRight + 1000) (Just transId) Nothing (Just transStrand)
 
--- | Compute the relative accessibility score.
-computeGeneRAS :: SCATACSeqConfig config
-               => FilePath
-               -> SCATACSeq S (File '[Gzip] 'Other)
-               -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
-computeGeneRAS prefix input = do
-    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    let output = dir <> T.unpack (input^.eid) <> "_ras.bin"
-    input & replicates.traverse.files %%~ ( \fl -> liftIO $ do
-        computeRAS (fl^.location) >>= encodeFile output
-        return $ location .~ output $ emptyFile )
-
 -- | Combine expression data into a table and output
 mkExprTable :: SCATACSeqConfig config
             => FilePath
             -> ( File '[Gzip] 'Bed -- ^ genes
-               , [SCATACSeq S (File '[] 'Other)] )
+               , [SCATACSeq S (File '[Gzip] 'Other)] )
             -> ReaderT config IO (Maybe (File '[GeneQuant] 'Tsv))
 mkExprTable prefix (fl, inputs) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
@@ -88,9 +71,9 @@ mkExprTable prefix (fl, inputs) = do
         promoters <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .| sinkList :: IO [BED]
         let geneNames = map (\x -> M.lookupDefault undefined (fromJust $ x^.name) idToGene) promoters
             output = dir ++ "/gene_accessibility.tsv"
-        
+
         mat <- fmap transpose $ forM inputs $ \input -> fmap U.toList $
-            (decodeFile $ input^.replicates._2.files.location :: IO (U.Vector Double))
+            computeRAS $ input^.replicates._2.files.location 
         let (genes, vals) = unzip $ map combine $ groupBy ((==) `on` fst) $
                 sortBy (comparing fst) $ zip geneNames mat
         DF.writeTable output (T.pack . show) $

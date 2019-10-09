@@ -303,19 +303,15 @@ builder = do
         subMatrix "/Feature/Gene/Cluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Transcript_Mat", "Merged_Cluster"] ~> "Cluster_Transcript_Mat"
-    nodePar "Compute_Transcript_RAS" [| computeGeneRAS "/Feature/Gene/Cluster/" |] $ return ()
-    ["Cluster_Transcript_Mat"] ~> "Compute_Transcript_RAS"
     node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
-    ["Pre_Get_Promoters", "Compute_Transcript_RAS"] ~> "Gene_Acc"
+    ["Pre_Get_Promoters", "Cluster_Transcript_Mat"] ~> "Gene_Acc"
 
     node "Subcluster_Transcript_Mat" [| \(mats, cls) -> 
         subMatrix "/Feature/Gene/Subcluster/" mats $ cls^.replicates._2.files
         |] $ return ()
     ["Pre_Make_Transcript_Mat", "Combine_Clusters"] ~> "Subcluster_Transcript_Mat"
-    nodePar "Compute_Subcluster_Transcript_RAS" [| computeGeneRAS "/Feature/Gene/Subcluster/" |] $ return ()
-    ["Subcluster_Transcript_Mat"] ~> "Compute_Subcluster_Transcript_RAS"
     node "Subcluster_Gene_Acc" [| mkExprTable "/Feature/Gene/Subcluster/" |] $ return ()
-    ["Pre_Get_Promoters", "Compute_Subcluster_Transcript_RAS"] ~> "Subcluster_Gene_Acc"
+    ["Pre_Get_Promoters", "Subcluster_Transcript_Mat"] ~> "Subcluster_Gene_Acc"
 
 
 --------------------------------------------------------------------------------
