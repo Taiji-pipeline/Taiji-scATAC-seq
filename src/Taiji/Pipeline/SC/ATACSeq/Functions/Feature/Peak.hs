@@ -222,7 +222,8 @@ computePeakRAS :: SCATACSeqConfig config
                => FilePath
                -> ( Maybe (File '[Gzip] 'NarrowPeak)
                   , [SCATACSeq S (File '[Gzip] 'Other)] )
-               -> ReaderT config IO (FilePath, FilePath, FilePath)
+               -> ReaderT config IO (Maybe (FilePath, FilePath, FilePath))
+computePeakRAS _ (Nothing, _) = return Nothing
 computePeakRAS prefix (peakFl, inputs) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output1 = dir <> "relative_accessibility_scores.tsv"
@@ -242,7 +243,7 @@ computePeakRAS prefix (peakFl, inputs) = do
         DF.writeTable output2 (T.pack . show) ss
         cdf <- computeCDF ras
         DF.writeTable output3 (T.pack . show) $ DF.map (lookupP cdf) ss
-        return (output1, output2, output3)
+        return $ Just (output1, output2, output3)
   where
     mkName :: BED3 -> T.Text
     mkName p = T.pack $ B.unpack (p^.chrom) <> ":" <> show (p^.chromStart) <>

@@ -60,10 +60,10 @@ writePromoters = do
 -- | Combine expression data into a table and output
 mkExprTable :: SCATACSeqConfig config
             => FilePath
-            -> ( File '[Gzip] 'Bed -- ^ genes
+            -> ( Maybe (File '[Gzip] 'Bed) -- ^ genes
                , [SCATACSeq S (File '[Gzip] 'Other)] )
             -> ReaderT config IO (Maybe (File '[GeneQuant] 'Tsv))
-mkExprTable prefix (fl, inputs) = do
+mkExprTable prefix (Just fl, inputs) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     idToGene <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust >>=
         return . M.fromList . concatMap f
@@ -85,3 +85,4 @@ mkExprTable prefix (fl, inputs) = do
     combine xs = (head gene, foldl1' (zipWith max) vals)
       where
         (gene, vals) = unzip xs
+mkExprTable _ _ = return Nothing
