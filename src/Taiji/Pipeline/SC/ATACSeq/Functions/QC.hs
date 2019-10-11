@@ -52,7 +52,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
 import qualified Taiji.Utils.Plot.ECharts as E
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (mkSpMatrix, streamRows)
+import Taiji.Utils (mkSpMatrix, streamRows)
 
 data Stat = Stat
     { _barcode :: B.ByteString

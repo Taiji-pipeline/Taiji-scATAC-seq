@@ -21,8 +21,8 @@ import qualified Data.Text as T
 import Shelly (shelly, run_)
 
 import Taiji.Prelude
+import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
 filterMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath

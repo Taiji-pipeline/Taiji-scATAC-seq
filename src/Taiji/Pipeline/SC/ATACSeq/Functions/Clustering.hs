@@ -44,10 +44,10 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Pipeline.SC.ATACSeq.Functions.DR
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature (streamMatrices)
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot
+import Taiji.Utils
 import Taiji.Utils.Plot.ECharts
 
 -- | Perform spectral clustering.

@@ -25,6 +25,7 @@ import qualified Data.Text as T
 import Bio.Seq.IO (withGenome, getChrSizes)
 
 import Taiji.Prelude hiding (groupBy)
+import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window

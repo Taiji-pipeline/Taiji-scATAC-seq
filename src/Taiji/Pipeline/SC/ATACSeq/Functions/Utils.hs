@@ -15,18 +15,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , lookupIndex
     , createCutSiteIndex
 
-      -- * Sparse Matrix
-    , SpMatrix(..)
-    , Row
-    , mkSpMatrix
-    , streamRows
-    , sinkRows
-    , decodeRowWith
-    , encodeRowWith
-
-    , filterCols
-    , concatMatrix
-
       -- * Feature matrix
     , mkFeatMat
     , groupCells
@@ -56,7 +44,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
 import Data.ByteString.Lex.Integral (packDecimal)
 import Bio.Utils.Misc (readInt)
-import Data.Conduit.Zlib (multiple, ungzip, gzip)
+import Data.Conduit.Zlib (gzip)
 import Data.Binary (encode, decode)
 import Data.Singletons.Prelude (Elem)
 import System.IO.Temp (withTempFile)
@@ -67,11 +55,11 @@ import Control.Exception (bracket)
 import qualified Data.Matrix as Mat
 import           Data.List.Ordered       (nubSort)
 import Data.CaseInsensitive (CI)
-import qualified Data.Text as T
 import Statistics.Sample (varianceUnbiased, mean)
 
 import Taiji.Prelude hiding (groupBy)
 import qualified Taiji.Utils.DataFrame as DF
+import Taiji.Utils
 
 -------------------------------------------------------------------------------
 -- BASIC
@@ -196,170 +184,6 @@ decodeCutSite chrs = concatMap f . zip chrs . either error id . decode
     f (chr, xs) = map (\x -> CutSite chr x) xs
 {-# INLINE decodeCutSite #-}
 
--------------------------------------------------------------------------------
--- Sparse Matrix
--------------------------------------------------------------------------------
-
-data SpMatrix a = SpMatrix
-    { _num_row :: Int
-    , _num_col :: Int
-    , _filepath :: FilePath
-    , _decoder :: FilePath -> ConduitT () (Row a) (ResourceT IO) ()
-    }
-
-type Row a = (B.ByteString, [(Int, a)])
-
-mkSpMatrix :: (B.ByteString -> a)   -- ^ Element decoder
-           -> FilePath -> IO (SpMatrix a)
-mkSpMatrix f input = do
-    header <- runResourceT $ runConduit $ sourceFile input .| multiple ungzip .|
-        linesUnboundedAsciiC .| headC
-    case header of
-        Nothing -> error "empty file"
-        Just x -> do
-            let [n, m] = map (read . T.unpack . T.strip) $ T.splitOn "x" $
-                    last $ T.splitOn ":" $ T.pack $ B.unpack x
-            return $ SpMatrix n m input decodeSpMatrix
-  where
-    decodeSpMatrix x = sourceFile x .| multiple ungzip .|
-        linesUnboundedAsciiC .| (headC >> mapC (decodeRowWith f))
-{-# NOINLINE mkSpMatrix #-}
-
-streamRows :: SpMatrix a -> ConduitT () (Row a) (ResourceT IO) ()
-streamRows sp = (_decoder sp) (_filepath sp)
-
-sinkRows :: Int   -- ^ Number of rows
-         -> Int   -- ^ Number of cols
-         -> (a -> B.ByteString) 
-         -> FilePath
-         -> ConduitT (Row a) Void (ResourceT IO) ()
-sinkRows n m encoder output = do
-    (l, _) <- (yield header >> mapC (encodeRowWith encoder)) .| zipSinks lengthC sink
-    when (l /= n + 1) $ error "incorrect number of rows"
-  where
-    header = B.pack $ printf "Sparse matrix: %d x %d" n m
-    sink = unlinesAsciiC .| gzip .| sinkFile output
-
-
-decodeRowWith :: (B.ByteString -> a) -> B.ByteString -> Row a
-decodeRowWith decoder x = (nm, map f values)
-  where
-    (nm:values) = B.split '\t' x
-    f v = let [i, a] = B.split ',' v
-          in (readInt i, decoder a)
-{-# INLINE decodeRowWith #-}
-
-encodeRowWith :: (a -> B.ByteString) -> Row a -> B.ByteString
-encodeRowWith encoder (nm, xs) = B.intercalate "\t" $ nm : map f xs
-  where
-    f (i,v) = fromJust (packDecimal i) <> "," <> encoder v
-{-# INLINE encodeRowWith #-}
-
-filterCols :: FilePath   -- ^ New matrix
-           -> [Int]      -- ^ Columns to be removed
-           -> FilePath   -- ^ Old matrix
-           -> IO ()
-filterCols output idx input = do
-    mat <- mkSpMatrix id input
-    let header = B.pack $ printf "Sparse matrix: %d x %d" (_num_row mat) (_num_col mat - length idx)
-        newIdx = U.fromList $ zipWith (-) [0 .. _num_col mat - 1] $ go (-1,0) (sort idx)
-        f = map (first (newIdx U.!)) . filter (not . (`S.member` idx') . fst)
-        idx' = S.fromList idx
-    runResourceT $ runConduit $ streamRows mat .| mapC (second f) .|
-        (yield header >> mapC (encodeRowWith id)) .| unlinesAsciiC .|
-        gzip .| sinkFile output
-  where
-    go (prev, c) (i:x) = replicate (i-prev) c ++ go (i, c+1) x
-    go (_, c) [] = repeat c
-
--- | Combine rows of matrices. 
-concatMatrix :: FilePath   -- ^ Output merged matrix
-             -> [(Maybe B.ByteString, FilePath)] -- ^ A list of matrix
-             -> IO ()
-concatMatrix output inputs = do
-    mats <- forM inputs $ \(nm, fl) -> do
-        mat <- mkSpMatrix id fl
-        return (nm, mat)
-    runResourceT $ runConduit $ merge mats .| sinkFile output
-  where
-    merge mats
-        | any (/=nBin) (map (_num_col . snd) mats) = error "Column unmatched!"
-        | otherwise = source .| (yield header >> mapC (encodeRowWith id)) .|
-            unlinesAsciiC .| gzip
-      where
-        source = forM_ mats $ \(nm, mat) ->
-            let f x = case nm of
-                    Nothing -> x
-                    Just n -> n <> "+" <> x
-            in streamRows mat .| mapC (first f)
-        nCell = foldl' (+) 0 $ map (_num_row . snd) mats
-        nBin = _num_col $ snd $ head mats
-        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-
--- | Generating the cell by feature count matrix as a gzipped stream.
--- The input stream is raw tags grouped by cells.
-mkFeatMat :: (PrimMonad m, MonadThrow m)
-          => Int   -- ^ the number of cells
-          -> [[BED3]]    -- ^ a list of regions
-          -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
-mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
-  where
-    source = yield header >> mapC
-        (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
-    bedTree = bedToTree (++) $ concat $
-        zipWith (\xs i -> zip xs $ repeat [i]) regions [0::Int ..]
-    nBin = length regions
-    header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-    countEachCell :: BEDTree [Int] -> [BED] -> [(Int, Int)]
-    countEachCell beds = HM.toList . foldl' f HM.empty
-      where
-        f m bed = foldl' (\x k -> HM.insertWith (+) k (1::Int) x) m $
-            concat $ intersecting beds query
-          where
-            query = case bed^.strand of
-                Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
-                _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
-
-groupCells :: Monad m => ConduitT BED (B.ByteString, [BED]) m ()
-groupCells = groupBy ((==) `on` (^.name)) .|
-    mapC (\xs -> (fromJust $ head xs^.name, xs))
-{-# INLINE groupCells #-}
-
--- | Merge sparse matrix.
-mergeMatrix :: Elem 'Gzip tags1 ~ 'True
-            => [(B.ByteString, (File tags1 file, File tags2 'Other))]  -- ^ (regions, matrix)
-            -> FilePath   -- ^ Index file output
-            -> ConduitT () B.ByteString (ResourceT IO) ()
-mergeMatrix inputs idxOut = do
-    indices <- liftIO $ getIndices $ map (fst . snd) inputs
-    liftIO $ runResourceT $ runConduit $ yieldMany indices .| sinkFileBedGzip idxOut 
-    let idxMap = M.fromList $ zip indices [0..]
-    mats <- liftIO $ forM inputs $ \(nm, (idxFl, matFl)) -> do
-        idxVec <- fmap (V.map (flip (M.findWithDefault undefined) idxMap)) $
-            runResourceT $ runConduit $ streamBedGzip (idxFl^.location) .| sinkVector
-        mat <- mkSpMatrix readInt $ matFl^.location
-        return ( nm, mat
-            { _decoder = \x -> _decoder mat x .|
-                mapC (second (map (first (idxVec V.!))))
-            , _num_col = M.size idxMap } )
-    merge mats
-  where
-    merge ms
-        | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"
-        | otherwise = source .|
-            (yield header >> mapC (encodeRowWith (fromJust . packDecimal))) .|
-            unlinesAsciiC .| gzip
-      where
-        source = forM_ ms $ \(sample, m) -> streamRows m .| 
-            mapC (first (\x -> sample <> "+" <> x))
-        nCell = foldl' (+) 0 $ map (_num_row . snd) ms
-        nBin = _num_col $ snd $ head ms
-        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-    getIndices :: [File tags file] -> IO [BED3]
-    getIndices idxFls = fmap S.toList $ runResourceT $ runConduit $
-        mapM_ (streamBedGzip . (^.location)) idxFls .|
-        foldlC (flip S.insert) S.empty
-
 computeRAS :: FilePath -> IO (U.Vector Double)
 computeRAS fl = do
     mat <- mkSpMatrix readInt fl
@@ -445,3 +269,67 @@ computeCDF df = do
       where
         e = negate $ V.sum $ V.map (\p -> p * logBase 2 p) xs
 {-# INLINE computeCDF #-}
+
+-- | Generating the cell by feature count matrix as a gzipped stream.
+-- The input stream is raw tags grouped by cells.
+mkFeatMat :: (PrimMonad m, MonadThrow m)
+          => Int   -- ^ the number of cells
+          -> [[BED3]]    -- ^ a list of regions
+          -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
+mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
+  where
+    source = yield header >> mapC
+        (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
+    bedTree = bedToTree (++) $ concat $
+        zipWith (\xs i -> zip xs $ repeat [i]) regions [0::Int ..]
+    nBin = length regions
+    header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+    countEachCell :: BEDTree [Int] -> [BED] -> [(Int, Int)]
+    countEachCell beds = HM.toList . foldl' f HM.empty
+      where
+        f m bed = foldl' (\x k -> HM.insertWith (+) k (1::Int) x) m $
+            concat $ intersecting beds query
+          where
+            query = case bed^.strand of
+                Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
+                _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
+
+groupCells :: Monad m => ConduitT BED (B.ByteString, [BED]) m ()
+groupCells = groupBy ((==) `on` (^.name)) .|
+    mapC (\xs -> (fromJust $ head xs^.name, xs))
+{-# INLINE groupCells #-}
+
+-- | Merge sparse matrix.
+mergeMatrix :: Elem 'Gzip tags1 ~ 'True
+            => [(B.ByteString, (File tags1 file, File tags2 'Other))]  -- ^ (regions, matrix)
+            -> FilePath   -- ^ Index file output
+            -> ConduitT () B.ByteString (ResourceT IO) ()
+mergeMatrix inputs idxOut = do
+    indices <- liftIO $ getIndices $ map (fst . snd) inputs
+    liftIO $ runResourceT $ runConduit $ yieldMany indices .| sinkFileBedGzip idxOut 
+    let idxMap = M.fromList $ zip indices [0..]
+    mats <- liftIO $ forM inputs $ \(nm, (idxFl, matFl)) -> do
+        idxVec <- fmap (V.map (flip (M.findWithDefault undefined) idxMap)) $
+            runResourceT $ runConduit $ streamBedGzip (idxFl^.location) .| sinkVector
+        mat <- mkSpMatrix readInt $ matFl^.location
+        return ( nm, mat
+            { _decoder = \x -> _decoder mat x .|
+                mapC (second (map (first (idxVec V.!))))
+            , _num_col = M.size idxMap } )
+    merge mats
+  where
+    merge ms
+        | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"
+        | otherwise = source .|
+            (yield header >> mapC (encodeRowWith (fromJust . packDecimal))) .|
+            unlinesAsciiC .| gzip
+      where
+        source = forM_ ms $ \(sample, m) -> streamRows m .| 
+            mapC (first (\x -> sample <> "+" <> x))
+        nCell = foldl' (+) 0 $ map (_num_row . snd) ms
+        nBin = _num_col $ snd $ head ms
+        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+    getIndices :: [File tags file] -> IO [BED3]
+    getIndices idxFls = fmap S.toList $ runResourceT $ runConduit $
+        mapM_ (streamBedGzip . (^.location)) idxFls .|
+        foldlC (flip S.insert) S.empty

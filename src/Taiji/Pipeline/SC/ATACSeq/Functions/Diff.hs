@@ -24,8 +24,8 @@ import qualified Data.HashMap.Strict as M
 import Shelly hiding (FilePath)
 
 import Taiji.Prelude
+import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature (streamMatrices)
 

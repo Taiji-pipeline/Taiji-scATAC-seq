@@ -13,7 +13,7 @@ import System.Random.MWC (uniformR, create)
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
-import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (concatMatrix)
+import Taiji.Utils (concatMatrix)
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 -- | The basic analysis.
