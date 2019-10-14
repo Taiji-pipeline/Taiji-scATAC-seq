@@ -69,6 +69,7 @@ passedQC cutoff x = _te x >= cutoff && _uniq_reads x >= 1000 && _doublet_score x
 plotStat :: SCATACSeqConfig config
          => [SCATACSeq S (File '[] 'Tsv)]
          -> ReaderT config IO FilePath
+plotStat [] = return ""
 plotStat inputs = do
     dir <- qcDir
     teCutoff <- asks _scatacseq_te_cutoff

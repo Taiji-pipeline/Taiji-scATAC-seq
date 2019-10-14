@@ -213,9 +213,11 @@ builder = do
     namespace "Merged_Iterative" $
         spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.5}
     path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
-    node "Merged_Iterative_Cluster_Viz" [| \(qc, xs) -> do
-        dir <- figDir
-        liftIO $ mapM_ (\x -> plotClusters dir (qc, x)) xs
+    node "Merged_Iterative_Cluster_Viz" [| \(qc, xs) -> if null xs
+        then return ()
+        else do
+            dir <- figDir
+            liftIO $ mapM_ (\x -> plotClusters dir (qc, x)) xs
         |] $ return ()
     ["QC", "Merged_Iterative_Cluster"] ~> "Merged_Iterative_Cluster_Viz"
 
