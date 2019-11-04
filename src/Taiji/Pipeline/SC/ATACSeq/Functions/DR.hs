@@ -80,7 +80,7 @@ lsi :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
     -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, [File '[Gzip] 'Tsv]))
 lsi prefix input = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
-    tmp <- asks _scatacseq_temp_dir
+    tmp <- asks _scatacseq_tmp_dir
     let output = printf "%s/%s_rep%d_lsa.tsv.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
         rownames = printf "%s/%s_rep%d_lsa.rownames.txt" dir

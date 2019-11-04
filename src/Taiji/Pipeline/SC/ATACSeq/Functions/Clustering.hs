@@ -128,7 +128,7 @@ clustering :: SCATACSeqConfig config
            -> SCATACSeq S [(File '[] 'Tsv, File '[Gzip] 'Tsv)]
            -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 clustering prefix opt input = do
-    tmp <- asks _scatacseq_temp_dir
+    tmp <- asks _scatacseq_tmp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)

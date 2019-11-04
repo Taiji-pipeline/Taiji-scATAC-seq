@@ -4,12 +4,16 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
     , SCATACSeqConfig(..)
     , qcDir
     , figDir
+    , getGenomeFasta
+    , getAnnotation
+    , getMotif
     , getGenomeIndex
     ) where
 
@@ -36,13 +40,14 @@ instance Binary (container (Replicate file)) =>
 class SCATACSeqConfig config where
     _scatacseq_output_dir :: config -> Directory
     _scatacseq_input :: config -> FilePath
+    _scatacseq_assembly :: config -> Maybe String
     _scatacseq_bwa_index :: config -> Maybe FilePath
     _scatacseq_genome_fasta :: config -> Maybe FilePath
     _scatacseq_genome_index :: config -> Maybe FilePath
     _scatacseq_motif_file :: config -> Maybe FilePath
     _scatacseq_callpeak_opts :: config -> CallPeakOpts
     _scatacseq_annotation :: config -> Maybe FilePath
-    _scatacseq_temp_dir :: config -> Maybe FilePath
+    _scatacseq_tmp_dir :: config -> Maybe FilePath
     _scatacseq_cluster_resolution :: config -> Maybe Double
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double
@@ -53,17 +58,53 @@ qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")
 figDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 figDir = asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")
 
+getGenomeFasta :: SCATACSeqConfig config => ReaderT config IO FilePath
+getGenomeFasta = asks _scatacseq_genome_fasta >>= \case
+    Nothing -> error "genome fasta is missing"
+    Just fasta -> do
+       exist <- liftIO $ shelly $ test_f $ fromText $ T.pack fasta 
+       if exist
+           then return fasta
+           else asks _scatacseq_assembly >>= \case
+               Nothing -> error "genome fasta is missing"
+               Just assembly -> do
+                   liftIO $ fetchGenome fasta assembly
+                   return fasta
+
+getAnnotation :: SCATACSeqConfig config => ReaderT config IO FilePath
+getAnnotation = asks _scatacseq_annotation >>= \case
+    Nothing -> error "annotation is missing"
+    Just anno -> do
+       exist <- liftIO $ shelly $ test_f $ fromText $ T.pack anno
+       if exist
+           then return anno
+           else asks _scatacseq_assembly >>= \case
+               Nothing -> error "annotation is missing"
+               Just assembly -> do
+                   liftIO $ fetchAnnotation anno assembly
+                   return anno
+
+getMotif :: SCATACSeqConfig config => ReaderT config IO FilePath
+getMotif = asks _scatacseq_motif_file >>= \case
+    Nothing -> error "motif file is missing"
+    Just motif -> do
+       exist <- liftIO $ shelly $ test_f $ fromText $ T.pack motif
+       if exist
+           then return motif
+           else asks _scatacseq_assembly >>= \case
+               Nothing -> error "motif file is missing"
+               Just assembly -> do
+                   liftIO $ fetchMotif motif assembly
+                   return motif
+
 getGenomeIndex :: SCATACSeqConfig config => ReaderT config IO FilePath
 getGenomeIndex = do
     seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
         _scatacseq_genome_index )
-    genome <- asks ( fromMaybe (error "Genome fasta file was not specified!") .
-        _scatacseq_genome_fasta )
-    shelly $ do
-        fileExist <- test_f $ fromText $ T.pack seqIndex
-        unless fileExist $ do
-            mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
-            liftIO $ mkIndex [genome] seqIndex
+    fileExist <- shelly $ test_f $ fromText $ T.pack seqIndex
+    unless fileExist $ do
+        genome <- getGenomeFasta
+        shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
+        liftIO $ mkIndex [genome] seqIndex
     return seqIndex
 {-# INLINE getGenomeIndex #-}
-

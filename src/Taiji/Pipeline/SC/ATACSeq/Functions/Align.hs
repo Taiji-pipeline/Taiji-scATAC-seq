@@ -6,7 +6,7 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
     , mkIndices
-    , filterBamSort
+    , filterNameSortBam
     , deDuplicates
     , filterCell
     ) where
@@ -19,11 +19,7 @@ import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
-import Shelly hiding (FilePath)
 import qualified Data.HashSet as S
-import System.IO
-import           Bio.Seq.IO (mkIndex)
-import           System.FilePath               (takeDirectory)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -34,23 +30,14 @@ mkIndices :: SCATACSeqConfig config => [a] -> ReaderT config IO ()
 mkIndices input
     | null input = return ()
     | otherwise = do
-        genome <- asks $ fromJust . _scatacseq_genome_fasta
+        genome <- getGenomeFasta
 
         -- Generate BWA index
         dir <- asks (fromJust . _scatacseq_bwa_index)
         _ <- liftIO $ bwaMkIndex genome dir
 
         -- Generate genome index
-        seqIndex <- asks $ fromMaybe
-            (error "Genome index file was not specified!") .
-            _scatacseq_genome_index
-        fileExist <- liftIO $ shelly $ test_f $ fromText $ T.pack seqIndex
-        liftIO $ if fileExist
-            then hPutStrLn stderr "Sequence index exists. Skipped."
-            else do
-                shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory seqIndex
-                hPutStrLn stderr "Generating sequence index"
-                mkIndex [genome] seqIndex
+        _ <- getGenomeIndex
         return ()
 
 tagAlign :: SCATACSeqConfig config
@@ -74,20 +61,20 @@ tagAlign input = do
                 defaultBWAOpts & bwaCores .~ 4
         )
 
-filterBamSort :: SCATACSeqConfig config
-              => SCATACSeq S (Either (File '[] 'Bam) (File '[PairedEnd] 'Bam))
-              -> ReaderT config IO ( SCATACSeq S ( Either
-                  (File '[NameSorted] 'Bam)
-                  (File '[NameSorted, PairedEnd] 'Bam) ))
-filterBamSort input = do
+filterNameSortBam :: SCATACSeqConfig config
+                  => SCATACSeq S (Either (File '[] 'Bam) (File '[PairedEnd] 'Bam))
+                  -> ReaderT config IO ( SCATACSeq S ( Either
+                      (File '[NameSorted] 'Bam)
+                      (File '[NameSorted, PairedEnd] 'Bam) ))
+filterNameSortBam input = do
     dir <- asks ((<> "/Bam") . _scatacseq_output_dir) >>= getPath
+    tmp <- fromMaybe "./" <$> asks _scatacseq_tmp_dir
     let output = printf "%s/%s_rep%d_srt.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
+        fun x = withTemp (Just tmp) $ \f ->
+            filterBam tmp f x >>= sortBamByName tmp output
     input & replicates.traverse.files %%~ liftIO . either
-        (fmap Left . fun output) (fmap Right . filterBam "./" output)
-  where
-    fun output x = withTemp (Just "./") $ \f ->
-        filterBam "./" f x >>= sortBamByName "./" output
+        (fmap Left . fun) (fmap Right . filterBam tmp output)
 
 deDuplicates :: SCATACSeqConfig config
              => SCATACSeq S ( Either
