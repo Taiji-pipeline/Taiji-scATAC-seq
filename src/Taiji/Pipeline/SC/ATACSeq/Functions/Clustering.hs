@@ -31,8 +31,6 @@ import Data.Singletons.Prelude (Elem)
 import Bio.Data.Bed
 import Control.Arrow (first)
 import qualified Data.Vector as V
-import System.Random.MWC.Distributions
-import System.Random.MWC
 import System.IO
 import Data.List.Ordered (nubSort)
 import Bio.Utils.Misc (readDouble, readInt)
@@ -336,16 +334,6 @@ plotClusters dir (qc, input) = do
         f x = M.lookupDefault undefined (_cell_barcode x) statMap
         statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
 
-visualizeCluster :: [CellCluster] -> [EChart]
-visualizeCluster cs = [addAttr toolbox $ scatter' dat2D, addAttr toolbox $ scatter' dat2D'] 
-  where
-    dat2D = flip map cs $ \(CellCluster nm cells) ->
-        (B.unpack nm, map _cell_2d cells)
-    dat2D' = map (first head . unzip) $ groupBy ((==) `on` fst) $ sortBy (comparing fst) $ concatMap
-        (map (\x -> (getName $ _cell_barcode x, _cell_2d x)) . _cluster_member) cs
-    getName x = let prefix = fst $ B.breakEnd (=='+') x
-                in if B.null prefix then "" else B.unpack $ B.init prefix
-
 -- | Compute the normalized tissue composition for each cluster.
 tissueComposition :: DF.DataFrame Int -> EChart
 tissueComposition = stackBar . DF.map round' . DF.mapCols normalize .
@@ -378,19 +366,3 @@ composition clusters = DF.mkDataFrame rownames colnames $
     getName Cell{..} =
         let prefix = fst $ B.breakEnd (=='+') _cell_barcode
         in if B.null prefix then "" else T.pack $ B.unpack $ B.init prefix
-
--- | Random sample 30,000 cells.
-sampleCells :: [CellCluster] -> IO [CellCluster]
-sampleCells clusters
-    | ratio >= 1 = return clusters
-    | otherwise = do
-        gen <- create
-        forM clusters $ \c -> do
-            s <- sampling gen ratio $ V.fromList $ _cluster_member c
-            return $ c {_cluster_member = V.toList s}
-  where
-    n = foldl1' (+) $ map (length . _cluster_member) clusters
-    ratio = 1 / (fromIntegral n / 30000) :: Double
-    sampling gen frac v = V.take n' <$> uniformShuffle v gen
-      where
-        n' = max 200 $ truncate $ frac * fromIntegral (V.length v)
