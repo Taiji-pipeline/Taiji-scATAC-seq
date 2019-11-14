@@ -247,7 +247,7 @@ detectDoublet input = do
         outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
     input & replicates.traverse.files %%~ liftIO . (\(fl, (_,_,stat)) -> withTemp Nothing $ \tmp -> do
-        shelly $ run_ "sc_utils" ["doublet", T.pack $ fl^.location, T.pack tmp]
+        shelly $ run_ "taiji-utils" ["doublet", T.pack $ fl^.location, T.pack tmp]
         [probs, threshold, sc, sim_sc] <- B.lines <$> B.readFile tmp
         let th = readDouble threshold
             dProbs = map readDouble $ B.words probs

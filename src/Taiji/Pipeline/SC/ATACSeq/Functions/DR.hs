@@ -64,7 +64,7 @@ spectral prefix seed input = do
     let output = printf "%s/%s_rep%d_spectral.tsv.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(rownames, fl) -> do
-        shelly $ run_ "sc_utils" $ ["reduce", "--method", "spectral"
+        shelly $ run_ "taiji-utils" $ ["reduce", "--method", "spectral"
             , T.pack $ fl^.location, T.pack output] ++ maybe []
             (\x -> ["--seed", T.pack $ show x]) seed
         return (rownames, location .~ output $ emptyFile)
@@ -103,7 +103,7 @@ lsi' :: Elem 'Gzip tags ~ 'True
     -> IO ()
 lsi' dir lsaNpy input = withTemp dir $ \tmp -> do
       tfidf (input^.location) tmp
-      shelly $ run_ "sc_utils" ["reduce", "--method", "svd", T.pack tmp, T.pack lsaNpy]
+      shelly $ run_ "taiji-utils" ["reduce", "--method", "svd", T.pack tmp, T.pack lsaNpy]
 {-# INLINE lsi' #-}
 
 tfidf :: FilePath -> FilePath -> IO ()

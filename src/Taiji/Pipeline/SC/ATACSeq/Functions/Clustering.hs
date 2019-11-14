@@ -145,7 +145,7 @@ clustering' opt dir fls = withTempDir dir $ \tmpD -> do
               ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
                 mapC (map readDouble . B.split '\t') )
           input = T.pack $ intercalate "," $ map (^.location) mats
-      shelly $ run_ "sc_utils" $ [ "clust", input, T.pack tmpD <> "/clust",
+      shelly $ run_ "taiji-utils" $ [ "clust", input, T.pack tmpD <> "/clust",
           "--embed", T.pack tmpD <> "/embed" ] ++ toParams opt
       cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
       clusters <- readClusters $ tmpD <> "/clust"
