@@ -77,12 +77,6 @@ spectralClust prefix opt = do
         |] $ return ()
     path ["Filter_Mat", "Reduce_Dims", "Cluster_Config", "Cluster"]
 
--- | Embedding method
-data Embedding = UMAP
-               | TSNE
-               | NoEmbedding
-               deriving (Lift)
-
 -- | Normalization method
 data Normalization = Drop1st
                    | UnitBall
@@ -92,23 +86,18 @@ data Normalization = Drop1st
 -- | Clustering options
 data ClustOpt = ClustOpt
     { _normalization :: Normalization
-    , _embedding_method :: Embedding
     , _dim :: Maybe Int  -- ^ How many dimensions to be used
     , _neighbors :: Int
     , _resolution :: Maybe Double
     } deriving (Lift)
 
 defClustOpt :: ClustOpt
-defClustOpt = ClustOpt None UMAP Nothing 50 Nothing
+defClustOpt = ClustOpt None Nothing 50 Nothing
 
 toParams :: ClustOpt -> [T.Text]
-toParams ClustOpt{..} = embed ++ normalize ++ dim ++ res ++
+toParams ClustOpt{..} = normalize ++ dim ++ res ++
     ["-k", T.pack $ show _neighbors]
   where
-    embed = case _embedding_method of
-        UMAP -> ["--embed-method", "umap"]
-        TSNE -> ["--embed-method", "tsne"]
-        NoEmbedding -> ["--embed-method", "none"]
     normalize = case _normalization of
         Drop1st -> ["--discard"]
         UnitBall -> ["--scale"]

@@ -181,10 +181,17 @@ builder = do
         Just input -> Just <$> filterMatrix "/Cluster/" input |] $ return ()
     node "Merged_Reduce_Dims_Prep" [| \case
         Nothing -> return []
-        Just x -> liftIO $ do
-            g <- create
-            seeds <- replicateM 5 $ uniformR (1::Int, 100000) g
-            return $ zip seeds $ repeat x
+        Just mat -> liftIO $ do
+            nCell <- _num_row <$> mkSpMatrix mat
+            let sampleSize = 20000
+                ratio = nCell `div` sampleSize
+            if ratio == 0
+                then return [(0, mat)]
+                else do
+                    g <- create
+                    seeds <- replicateM (min 5 ratio) $
+                        uniformR (1::Int, 100000) g
+                    return $ zip seeds $ repeat mat
         |] $ return ()
     nodePar "Merged_Reduce_Dims" [| \(s,x) ->
         spectral ("/Cluster/" ++ show s ++ "/") (Just s) x
