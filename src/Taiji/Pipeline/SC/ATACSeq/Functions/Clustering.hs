@@ -4,6 +4,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE StandaloneDeriving #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( plotClusters
     , spectralClust
@@ -12,10 +13,10 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , subMatrix
     , getBedCluster
     , extractBedByBarcode 
-    , Embedding(..)
-    , Normalization(..)
     , ClustOpt(..)
+    , toParams
     , defClustOpt
+    , mkKNNGraph
     , clustering
     , combineClusters
     ) where
@@ -54,102 +55,101 @@ spectralClust :: FilePath   -- ^ Directory to save the results
 spectralClust prefix opt = do
     nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
     nodePar "Reduce_Dims" [| spectral prefix Nothing |] $ return ()
+    nodePar "Make_KNN" [| \x -> mkKNNGraph prefix $
+        x & replicates.traverse.files %~ return
+        |] $ return ()
     node "Cluster_Config" [| \xs -> if null xs
         then return []
         else do
             dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
-            r <- case _resolution opt of
-                Nothing -> return Nothing
-                Just r -> liftIO $ do
-                    let output = dir ++ "/parameters.txt"
-                    writeFile output $ unlines $ map
-                        (\x -> T.unpack (x^.eid) ++ "\t" ++ show r) xs
-                    return $ Just output
-            return $ zip (repeat r) xs
+            let output = dir ++ "/parameters.txt"
+            liftIO $ writeFile output $ unlines $ map
+                (\x -> T.unpack (x^.eid) ++ "\t" ++ show (_resolution opt)) xs
+            return $ zip (repeat output) xs
         |] $ return ()
-    nodePar "Cluster" [| \(para, x) -> case para of
-        Nothing -> clustering prefix opt $ x & replicates.traverse.files %~ return
-        Just fl -> do
-            let f [a,b] = (T.pack a, read b)
-            ps <- liftIO $ map (f . words) . lines <$> readFile fl
-            clustering prefix opt{_resolution = lookup (x^.eid) ps} $
-                x & replicates.traverse.files %~ return
+    nodePar "Cluster" [| \(fl, x) -> do
+        let f [a,b] = (T.pack a, read b)
+        ps <- liftIO $ map (f . words) . lines <$> readFile fl
+        clustering prefix opt{_resolution = fromJust $ lookup (x^.eid) ps} x 
         |] $ return ()
-    path ["Filter_Mat", "Reduce_Dims", "Cluster_Config", "Cluster"]
-
--- | Normalization method
-data Normalization = Drop1st
-                   | UnitBall
-                   | None
-                   deriving (Lift)
+    path ["Filter_Mat", "Reduce_Dims", "Make_KNN", "Cluster_Config", "Cluster"]
 
 -- | Clustering options
 data ClustOpt = ClustOpt
-    { _normalization :: Normalization
-    , _dim :: Maybe Int  -- ^ How many dimensions to be used
-    , _neighbors :: Int
-    , _resolution :: Maybe Double
+    { _optimizer :: Optimizer 
+    , _resolution :: Double
     } deriving (Lift)
 
+deriving instance Lift Optimizer
+
 defClustOpt :: ClustOpt
-defClustOpt = ClustOpt None Nothing 50 Nothing
+defClustOpt = ClustOpt RBConfiguration 1 
 
 toParams :: ClustOpt -> [T.Text]
-toParams ClustOpt{..} = normalize ++ dim ++ res ++
-    ["-k", T.pack $ show _neighbors]
-  where
-    normalize = case _normalization of
-        Drop1st -> ["--discard"]
-        UnitBall -> ["--scale"]
-        None -> []
-    dim = case _dim of
-        Nothing -> []
-        Just d -> ["--dim", T.pack $ show d]
-    res = case _resolution of
-        Nothing -> []
-        Just r -> ["--res", T.pack $ show r]
- 
+toParams ClustOpt{..} = 
+    [ "--res"
+    , T.pack $ show _resolution
+    , "--optimizer"
+    , case _optimizer of
+        RBConfiguration -> "RB"
+        CPM -> "CPM"
+    ]
+
+mkKNNGraph :: SCATACSeqConfig config
+           => FilePath
+           -> SCATACSeq S [(File '[] 'Tsv, File '[Gzip] 'Tsv)]
+           -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
+mkKNNGraph prefix input = do
+    dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+    let output_knn = printf "%s/%s_rep%d_knn.npz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        output_umap = printf "%s/%s_rep%d_umap.txt" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \fls -> do
+        shelly $ run_ "taiji-utils" $
+            [ "knn"
+            , T.pack $ intercalate "," $ map (^.location) $ snd $ unzip fls
+            , T.pack output_knn
+            , "-k", "50"
+            , "--embed", T.pack output_umap ]
+        return ( head $ fst $ unzip fls
+               , location .~ output_knn $ emptyFile
+               , location .~ output_umap $ emptyFile )
+        )
+
 clustering :: SCATACSeqConfig config
            => FilePath
            -> ClustOpt
-           -> SCATACSeq S [(File '[] 'Tsv, File '[Gzip] 'Tsv)]
+           -> SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 clustering prefix opt input = do
     tmp <- asks _scatacseq_tmp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fl -> do
-        clustering' opt tmp fl >>= encodeFile output
-        return $ location .~ output $ emptyFile )
+    input & replicates.traversed.files %%~ liftIO . ( \(idx, knn, umap) -> withTemp tmp $ \tmpFl -> do
+        shelly $ run_ "taiji-utils" $
+            ["clust", T.pack $ knn^.location, T.pack tmpFl] ++
+            toParams opt
 
-clustering' :: ClustOpt
-            -> Maybe FilePath      -- ^ temp dir
-            -> [(File '[] 'Tsv, File '[Gzip] 'Tsv)]   -- ^ lsa input matrix
-            -> IO [CellCluster]
-clustering' opt dir fls = withTempDir dir $ \tmpD -> do
-      let sourceCells = getZipSource $ (,,) <$>
-              ZipSource (iterateC succ 0) <*>
-              ZipSource seqDepthC <*>
-              ZipSource ( sourceFile (tmpD <> "/embed") .| linesUnboundedAsciiC .|
-                mapC (map readDouble . B.split '\t') )
-          input = T.pack $ intercalate "," $ map (^.location) mats
-      shelly $ run_ "taiji-utils" $ [ "clust", input, T.pack tmpD <> "/clust",
-          "--embed", T.pack tmpD <> "/embed" ] ++ toParams opt
-      cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
-      clusters <- readClusters $ tmpD <> "/clust"
-      return $ zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
-          map (map (cells V.!)) clusters
+        let sourceCells = getZipSource $ (,,) <$>
+                ZipSource (iterateC succ 0) <*>
+                ZipSource ( sourceFile (idx^.location) .|
+                    linesUnboundedAsciiC .|
+                    mapC ((\[a,b] -> (a,b)) . B.split '\t') ) <*>
+                ZipSource ( sourceFile (umap^.location) .|
+                    linesUnboundedAsciiC .|
+                    mapC (map readDouble . B.split '\t') )
+        cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
+        clusters <- map (map readInt . B.split ',') . B.lines <$>
+            B.readFile tmpFl
+        let cellCluster = zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
+                map (map (cells V.!)) clusters
+        encodeFile output cellCluster
+        return $ location .~ output $ emptyFile )
   where
-    coverage = head $ fst $ unzip fls
-    mats = snd $ unzip fls
-    readClusters fl = map (map readInt . B.split ',') . B.lines <$>
-        B.readFile fl
-    seqDepthC = sourceFile (coverage^.location) .| linesUnboundedAsciiC .|
-        mapC ((\[a,b] -> (a,b)) . B.split '\t')
     f (i, (bc, dep), [d1,d2,d3,d4,d5]) = Cell i (d1,d2) (d3,d4,d5) bc $ readInt dep
     f _ = error "formatting error"
-{-# INLINE clustering' #-}
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results

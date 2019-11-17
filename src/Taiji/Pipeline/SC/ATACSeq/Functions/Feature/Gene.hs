@@ -71,13 +71,17 @@ mkExprTable prefix (Just fl, inputs) = do
         promoters <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .| sinkList :: IO [BED]
         let geneNames = map (\x -> M.lookupDefault undefined (fromJust $ x^.name) idToGene) promoters
             output = dir ++ "/gene_accessibility.tsv"
+            output2 = dir ++ "/gene_specificity.tsv"
 
         mat <- fmap transpose $ forM inputs $ \input -> fmap U.toList $
             computeRAS $ input^.replicates._2.files.location 
         let (genes, vals) = unzip $ map combine $ groupBy ((==) `on` fst) $
                 sortBy (comparing fst) $ zip geneNames mat
-        DF.writeTable output (T.pack . show) $
-            DF.mkDataFrame (map (T.pack . B.unpack) genes) (map (^.eid) inputs) vals
+            ras = DF.mkDataFrame (map (T.pack . B.unpack) genes)
+                (map (^.eid) inputs) vals
+            ss = computeSS ras
+        DF.writeTable output (T.pack . show) ras
+        DF.writeTable output2 (T.pack . show) ss
         return $ Just $ location .~ output $ emptyFile
   where
     f Gene{..} = zip (map transId geneTranscripts) $

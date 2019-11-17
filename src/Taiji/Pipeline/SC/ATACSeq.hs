@@ -13,7 +13,7 @@ import System.Random.MWC (uniformR, create)
 
 import           Taiji.Prelude
 import           Taiji.Pipeline.SC.ATACSeq.Functions
-import Taiji.Utils (concatMatrix)
+import Taiji.Utils (concatMatrix, mkSpMatrix, SpMatrix(..))
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 -- | The basic analysis.
@@ -176,13 +176,15 @@ builder = do
 --------------------------------------------------------------------------------
 -- Clustering
 --------------------------------------------------------------------------------
-    node "Merged_Filter_Mat" [| \case 
+    node "Merged_Filter_Mat" [| \case
         Nothing -> return Nothing
-        Just input -> Just <$> filterMatrix "/Cluster/" input |] $ return ()
+        Just input -> Just <$> filterMatrix "/Cluster/" input
+        |] $ return ()
     node "Merged_Reduce_Dims_Prep" [| \case
         Nothing -> return []
         Just mat -> liftIO $ do
-            nCell <- _num_row <$> mkSpMatrix mat
+            nCell <- _num_row <$>
+                mkSpMatrix id (mat^.replicates._2.files._2.location)
             let sampleSize = 20000
                 ratio = nCell `div` sampleSize
             if ratio == 0
@@ -190,19 +192,26 @@ builder = do
                 else do
                     g <- create
                     seeds <- replicateM (min 5 ratio) $
-                        uniformR (1::Int, 100000) g
+                        uniformR (1, 100000) g
                     return $ zip seeds $ repeat mat
         |] $ return ()
     nodePar "Merged_Reduce_Dims" [| \(s,x) ->
         spectral ("/Cluster/" ++ show s ++ "/") (Just s) x
         |] $ return ()
-    node "Merged_Cluster" [| \input -> if null input
+    node "Merged_Make_KNN" [| \input -> if null input
         then return Nothing
         else let [x] = concatMap split $ mergeExp input
-             in Just <$> clustering "/Cluster/" defClustOpt x
+             in Just <$> mkKNNGraph "/Cluster/" x
         |] $ return ()
-    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep", "Merged_Reduce_Dims",
-        "Merged_Cluster"]
+    node "Merged_Cluster" [| \case
+        Nothing -> return Nothing
+        Just input -> do
+            optimizer <- asks _scatacseq_cluster_optimizer
+            resolution <- asks _scatacseq_cluster_resolution
+            Just <$> clustering "/Cluster/" (ClustOpt optimizer resolution) input
+        |] $ return ()
+    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep"
+        , "Merged_Reduce_Dims", "Merged_Make_KNN", "Merged_Cluster"]
     node "Merged_Cluster_Viz" [| \(qc, input) -> case input of
         Nothing -> return ()
         Just x -> do
@@ -218,7 +227,7 @@ builder = do
         |] $ return ()
     ["Pre_Make_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
     namespace "Merged_Iterative" $
-        spectralClust "/Subcluster/" defClustOpt{_resolution=Just 0.5}
+        spectralClust "/Subcluster/" defClustOpt{_resolution=0.5}
     path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
     node "Merged_Iterative_Cluster_Viz" [| \(qc, xs) -> if null xs
         then return ()
