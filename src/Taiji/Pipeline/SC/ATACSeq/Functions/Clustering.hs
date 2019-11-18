@@ -177,13 +177,15 @@ getBedCluster (input, clFl) = do
         clusters <- getClusterBarcodes (B.pack $ T.unpack $ input^.eid) clFl
         let outputs = M.fromList $
                 map (\x -> (x, dir ++ "/" ++ B.unpack x ++ ".bed")) $
-                S.toList $ S.fromList $ M.elems clusters
-        fileHandles <- mapM (\x -> openFile x WriteMode) outputs
-        let f x = let h = M.lookupDefault undefined bc fileHandles
-                      bc = M.lookupDefault (error $ show nm) nm clusters
-                      nm = fromJust ((x::BED)^.name) 
-                  in liftIO $ B.hPutStrLn h $ toLine x 
-        runResourceT $ runConduit $ streamBedGzip (bed^.location) .| mapM_C f
+                nubSort $ M.elems clusters
+        fileHandles <- mapM (flip openFile WriteMode) outputs
+        runResourceT $ runConduit $ streamBedGzip (bed^.location) .|
+            mapM_C ( \x -> case M.lookup (fromJust $ x^.name) clusters of
+                Nothing -> return ()
+                Just bc -> liftIO $
+                    B.hPutStrLn (M.lookupDefault undefined bc fileHandles) $
+                    toLine (x :: BED)
+            )
         return $ M.toList $ fmap (\x -> location .~ x $ emptyFile) outputs )
   where
     getClusterBarcodes :: B.ByteString    -- ^ experiment id
@@ -316,6 +318,7 @@ plotClusters dir (qc, input) = do
     clusterQC stats cls =
         [ plotNumReads res
         , plotTE res
+        , plotDoubletScore res
         , plotDupRate res ]
       where
         res = flip map cls $ \x ->

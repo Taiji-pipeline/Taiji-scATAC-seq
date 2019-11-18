@@ -23,6 +23,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , plotDupRate
     , plotMitoRate
     , plotTE
+    , plotDoubletScore
     ) where
 
 import           Bio.Data.Bam
@@ -329,6 +330,18 @@ plotTE stats = E.addAttr [jmacroE| {
   where
     plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
         (nm, map _te stat)
+
+plotDoubletScore :: [(T.Text, [Stat])] -> E.EChart
+plotDoubletScore stats = E.addAttr [jmacroE| {
+    yAxis: {
+        name: "probability of doublet",
+        nameLocation: "middle",
+        nameGap: 50
+    }
+    }|] plt
+  where
+    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
+        (nm, map _doublet_score stat)
 
 plotCells :: Double -> [Stat] -> Vega
 plotCells teCutoff input = plt <> axes <> vline <> hline <> scales
