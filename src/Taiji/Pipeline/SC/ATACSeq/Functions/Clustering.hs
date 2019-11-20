@@ -111,7 +111,8 @@ mkKNNGraph prefix input = do
             , T.pack $ intercalate "," $ map (^.location) $ snd $ unzip fls
             , T.pack output_knn
             , "-k", "50"
-            , "--embed", T.pack output_umap ]
+            , "--embed", T.pack output_umap
+            , "--thread", "4" ]
         return ( head $ fst $ unzip fls
                , location .~ output_knn $ emptyFile
                , location .~ output_umap $ emptyFile )

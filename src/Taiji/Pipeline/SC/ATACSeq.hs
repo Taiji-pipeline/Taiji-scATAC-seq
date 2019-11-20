@@ -202,7 +202,7 @@ builder = do
         then return Nothing
         else let [x] = concatMap split $ mergeExp input
              in Just <$> mkKNNGraph "/Cluster/" x
-        |] $ return ()
+        |] $ nCore .= 4
     node "Merged_Cluster" [| \case
         Nothing -> return Nothing
         Just input -> do
