@@ -29,7 +29,7 @@ basicAnalysis = do
     node "Align_Prep" [| return . fst |] $ return ()
     ["Get_Fastq", "Make_Index"] ~> "Align_Prep"
     nodePar "Align" 'tagAlign $ do
-        nCore .= 4
+        nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterNameSortBam $ do

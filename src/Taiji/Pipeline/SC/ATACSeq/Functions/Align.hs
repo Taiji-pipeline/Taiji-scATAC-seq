@@ -53,12 +53,12 @@ tagAlign input = do
     input & replicates.traverse.files %%~ liftIO . ( \fl -> case fl of
         Left f ->
             let f' = fromSomeTags f :: File '[] 'Fastq
-            in bwaAlign output idx (Left f') $ defaultBWAOpts & bwaCores .~ 4
+            in bwaAlign output idx (Left f') $ defaultBWAOpts & bwaCores .~ 8
         Right (f1,f2) ->
             let f1' = fromSomeTags f1 :: File '[] 'Fastq
                 f2' = fromSomeTags f2 :: File '[] 'Fastq
             in bwaAlign output idx (Right (f1', f2')) $
-                defaultBWAOpts & bwaCores .~ 4
+                defaultBWAOpts & bwaCores .~ 8
         )
 
 filterNameSortBam :: SCATACSeqConfig config
