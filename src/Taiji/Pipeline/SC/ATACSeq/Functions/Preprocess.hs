@@ -4,6 +4,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     ( readInput
     , download
     , getFastq
+    , getBamUnsorted
     , getBam
     , getSortedBed
     ) where
@@ -43,6 +44,17 @@ getFastq input = concatMap split $ concatMap split $
       where
         g (x,y) = getFileType x == Fastq && getFileType y == Fastq
 
+getBamUnsorted :: [RAWInput]
+               -> [ SCATACSeq S ( Either
+               (File '[] 'Bam) (File '[PairedEnd] 'Bam) )]
+getBamUnsorted input = concatMap split $ concatMap split $
+    input & mapped.replicates.mapped.files %~ mapMaybe f . lefts
+  where
+    f fl | getFileType fl == Bam && not (fl `hasTag` NameSorted) &&
+              fl `hasTag` PairedEnd = Just $ Right $ fromSomeFile fl
+         | getFileType fl == Bam && not (fl `hasTag` NameSorted) = Just $ Left $ fromSomeFile fl
+         | otherwise = Nothing
+ 
 getBam :: [RAWInput]
        -> [ SCATACSeq S ( Either
           (File '[NameSorted] 'Bam) (File '[NameSorted, PairedEnd] 'Bam) )]
@@ -53,7 +65,7 @@ getBam input = concatMap split $ concatMap split $
               fl `hasTag` PairedEnd = Just $ Right $ fromSomeFile fl
          | getFileType fl == Bam && fl `hasTag` NameSorted = Just $ Left $ fromSomeFile fl
          | otherwise = Nothing
-      
+     
 getSortedBed :: [RAWInput]
              -> [ SCATACSeq S (File '[NameSorted, Gzip] 'Bed) ]
 getSortedBed input = concatMap split $ concatMap split $

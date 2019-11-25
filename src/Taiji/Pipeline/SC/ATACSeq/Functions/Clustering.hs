@@ -3,8 +3,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveLift #-}
-{-# LANGUAGE StandaloneDeriving #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     ( plotClusters
     , spectralClust
@@ -13,9 +11,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , subMatrix
     , getBedCluster
     , extractBedByBarcode 
-    , ClustOpt(..)
-    , toParams
-    , defClustOpt
     , mkKNNGraph
     , clustering
     , combineClusters
@@ -23,7 +18,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
 
 import qualified Data.ByteString.Char8 as B
 import Data.Binary (encodeFile, decodeFile)
-import Language.Haskell.TH.Syntax (Lift)
 import qualified Data.Conduit.List as CL
 import qualified Data.Text as T
 import qualified Data.HashSet as S
@@ -51,8 +45,8 @@ import Taiji.Utils.Plot.ECharts
 
 -- | Perform spectral clustering.
 spectralClust :: FilePath   -- ^ Directory to save the results
-              -> ClustOpt -> Builder ()
-spectralClust prefix opt = do
+              -> Double -> Builder ()
+spectralClust prefix resolution = do
     nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
     nodePar "Reduce_Dims" [| spectral prefix Nothing |] $ return ()
     nodePar "Make_KNN" [| \x -> mkKNNGraph prefix $
@@ -64,36 +58,16 @@ spectralClust prefix opt = do
             dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
             let output = dir ++ "/parameters.txt"
             liftIO $ writeFile output $ unlines $ map
-                (\x -> T.unpack (x^.eid) ++ "\t" ++ show (_resolution opt)) xs
+                (\x -> T.unpack (x^.eid) ++ "\t" ++ show resolution) xs
             return $ zip (repeat output) xs
         |] $ return ()
     nodePar "Cluster" [| \(fl, x) -> do
         let f [a,b] = (T.pack a, read b)
+        optimizer <- asks _scatacseq_cluster_optimizer
         ps <- liftIO $ map (f . words) . lines <$> readFile fl
-        clustering prefix opt{_resolution = fromJust $ lookup (x^.eid) ps} x 
+        clustering prefix (fromJust $ lookup (x^.eid) ps) optimizer x 
         |] $ return ()
     path ["Filter_Mat", "Reduce_Dims", "Make_KNN", "Cluster_Config", "Cluster"]
-
--- | Clustering options
-data ClustOpt = ClustOpt
-    { _optimizer :: Optimizer 
-    , _resolution :: Double
-    } deriving (Lift)
-
-deriving instance Lift Optimizer
-
-defClustOpt :: ClustOpt
-defClustOpt = ClustOpt RBConfiguration 1 
-
-toParams :: ClustOpt -> [T.Text]
-toParams ClustOpt{..} = 
-    [ "--res"
-    , T.pack $ show _resolution
-    , "--optimizer"
-    , case _optimizer of
-        RBConfiguration -> "RB"
-        CPM -> "CPM"
-    ]
 
 mkKNNGraph :: SCATACSeqConfig config
            => FilePath
@@ -118,21 +92,27 @@ mkKNNGraph prefix input = do
                , location .~ output_umap $ emptyFile )
         )
 
+
 clustering :: SCATACSeqConfig config
            => FilePath
-           -> ClustOpt
+           -> Double
+           -> Optimizer
            -> SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
-clustering prefix opt input = do
+clustering prefix resolution optimizer input = do
     tmp <- asks _scatacseq_tmp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(idx, knn, umap) -> withTemp tmp $ \tmpFl -> do
         shelly $ run_ "taiji-utils" $
-            ["clust", T.pack $ knn^.location, T.pack tmpFl] ++
-            toParams opt
-
+            [ "clust", T.pack $ knn^.location, T.pack tmpFl
+            , "--res", T.pack $ show resolution
+            , "--optimizer"
+            , case optimizer of
+                RBConfiguration -> "RB"
+                CPM -> "CPM"
+            ]
         let sourceCells = getZipSource $ (,,) <$>
                 ZipSource (iterateC succ 0) <*>
                 ZipSource ( sourceFile (idx^.location) .|

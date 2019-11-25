@@ -9,17 +9,22 @@
 module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
     , SCATACSeqConfig(..)
+    , Stat(..)
     , qcDir
     , figDir
     , getGenomeFasta
     , getAnnotation
     , getMotif
     , getGenomeIndex
+    , getCallPeakOpt
+    , getQCFunction
     ) where
 
 import           Data.Binary (Binary(..))
 import Bio.Data.Experiment.Types
+import qualified Data.ByteString.Char8 as B
 import Bio.Data.Experiment.Replicate
+import Bio.Pipeline.CallPeaks (CallPeakOpts)
 import GHC.Generics (Generic)
 import qualified Data.Text as T
 import           Bio.Seq.IO
@@ -52,6 +57,15 @@ class SCATACSeqConfig config where
     _scatacseq_cluster_optimizer :: config -> Optimizer
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double
+    _scatacseq_minimal_fragment :: config -> Int
+
+data Stat = Stat
+    { _barcode :: B.ByteString
+    , _dup_rate :: Double
+    , _mito_rate :: Double
+    , _te :: Double
+    , _uniq_reads :: Int
+    , _doublet_score :: Double }
 
 qcDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")
@@ -109,3 +123,23 @@ getGenomeIndex = do
         liftIO $ mkIndex [genome] seqIndex
     return seqIndex
 {-# INLINE getGenomeIndex #-}
+
+getCallPeakOpt :: SCATACSeqConfig config => ReaderT config IO CallPeakOpts
+getCallPeakOpt = do
+    opt <- asks _scatacseq_callpeak_opts 
+    s <- case opt^.gSize of
+        Nothing -> do
+            idx <- getGenomeIndex
+            s <- liftIO $ fmap fromIntegral $ withGenome idx $
+                return . foldl1' (+) . map snd . getChrSizes
+            return $ Just $ show (truncate $ 0.9 * (s :: Double) :: Int)
+        x -> return x
+    return $ gSize .~ s $ opt
+{-# INLINE getCallPeakOpt #-}
+
+getQCFunction :: SCATACSeqConfig config => ReaderT config IO (Stat -> Bool)
+getQCFunction = do
+    teCutoff <- asks _scatacseq_te_cutoff
+    fragmentCutoff <- asks _scatacseq_minimal_fragment
+    return $ \x -> _te x >= teCutoff && _uniq_reads x >= fragmentCutoff && _doublet_score x <= 0.5
+{-# INLINE getQCFunction #-}

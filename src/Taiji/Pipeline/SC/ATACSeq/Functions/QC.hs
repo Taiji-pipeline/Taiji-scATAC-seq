@@ -4,9 +4,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
-    ( Stat(..)
-    , passedQC
-    , plotStat
+    ( plotStat
     , readStats
     , showStat
     , decodeStat
@@ -55,31 +53,20 @@ import Taiji.Utils.Plot.Vega
 import qualified Taiji.Utils.Plot.ECharts as E
 import Taiji.Utils (mkSpMatrix, streamRows)
 
-data Stat = Stat
-    { _barcode :: B.ByteString
-    , _dup_rate :: Double
-    , _mito_rate :: Double
-    , _te :: Double
-    , _uniq_reads :: Int
-    , _doublet_score :: Double }
-
--- | Whether the given cell passes the QC.
-passedQC :: Double -> Stat -> Bool
-passedQC cutoff x = _te x >= cutoff && _uniq_reads x >= 1000 && _doublet_score x <= 0.5
-
 plotStat :: SCATACSeqConfig config
          => [SCATACSeq S (File '[] 'Tsv)]
          -> ReaderT config IO FilePath
 plotStat [] = return ""
 plotStat inputs = do
     dir <- qcDir
-    teCutoff <- asks _scatacseq_te_cutoff
+    passedQC <- getQCFunction
+    teCutoff <- asks _scatacseq_te_cutoff 
     let output = dir <> "/qc.html"
         outputStat = dir <> "/qc_stats.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
             stats <- readStats $ input^.replicates._2.files.location
-            let stats' = filter (passedQC teCutoff) stats
+            let stats' = filter passedQC stats
                 cellQC = plotCells teCutoff stats <> title
                     (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
             return (cellQC, (input^.eid, stats'))
@@ -225,12 +212,12 @@ removeDoublet :: SCATACSeqConfig config
               -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, Int))
 removeDoublet input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
-    teCutoff <- asks _scatacseq_te_cutoff
+    passedQC <- getQCFunction
     let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bedFl, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter (passedQC teCutoff) stats
+        let cells = S.fromList $ map _barcode $ filter passedQC stats
             f :: [BED] -> Bool
             f = (`S.member` cells) . fromJust . (^.name) . head
             sink = zipSinks lengthC $ concatC .| sinkFileBedGzip output

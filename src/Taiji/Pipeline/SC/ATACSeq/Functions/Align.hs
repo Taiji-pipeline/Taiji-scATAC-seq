@@ -86,7 +86,7 @@ deDuplicates :: SCATACSeqConfig config
                               , File '[] 'Tsv ))               -- ^ Stat
 deDuplicates input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bam"))
-    tss <- asks _scatacseq_annotation >>= liftIO . readTSS . fromJust
+    tss <- getAnnotation >>= liftIO . readTSS
     let outputBam = printf "%s/%s_rep%d_srt_filt.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         outputStat = printf "%s/%s_rep%d_stat.txt" dir (T.unpack $ input^.eid)
@@ -138,12 +138,12 @@ filterCell :: SCATACSeqConfig config
            -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
 filterCell input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
-    teCutoff <- asks _scatacseq_te_cutoff
+    passedQC <- getQCFunction
     let output = printf "%s/%s_rep%d_srt_filt.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(bamFl, _, statFl) -> do
         stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter (passedQC teCutoff) stats
+        let cells = S.fromList $ map _barcode $ filter passedQC stats
         header <- getBamHeader $ bamFl^.location
         runResourceT $ runConduit $ streamBam (bamFl^.location) .|
             mapC (toBed header) .| groupBy ((==) `on` (^.name)) .|

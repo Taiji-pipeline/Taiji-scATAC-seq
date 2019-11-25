@@ -34,7 +34,11 @@ basicAnalysis = do
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterNameSortBam $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
-    path ["Align_Prep", "Align", "Filter_Bam"]
+    path ["Align_Prep", "Align"]
+
+    node "Filter_Bam_Prep" [| \(input, x) -> return $ getBamUnsorted input ++ x |] $ return ()
+    ["Download_Data", "Align"] ~> "Filter_Bam_Prep"
+    ["Filter_Bam_Prep"] ~> "Filter_Bam"
 
     node "Get_Bam" [| \(input, x) -> return $ getBam input ++ x |] $ return ()
     ["Download_Data", "Filter_Bam"] ~> "Get_Bam"
@@ -63,8 +67,13 @@ preClustering = do
         path ["Get_Windows", "Make_Window_Mat"]
 
         -- Clustering in each sample
-        spectralClust "/temp/Pre/Cluster/" defClustOpt
-        path ["Make_Window_Mat", "Filter_Mat"]
+        nodePar "Cluster" [| \input -> do
+            let prefix = "/temp/Pre/Cluster/"
+            filterMatrix prefix input >>= spectral prefix Nothing >>=
+                (\x -> mkKNNGraph prefix $ x & replicates.traverse.files %~ return)
+                >>= clustering prefix 1 RBConfiguration 
+            |] $ return ()
+        path ["Make_Window_Mat", "Cluster"]
 
         -- Extract tags for each cluster
         node "Extract_Tags_Prep"  [| return . uncurry zipExp |] $ return ()
@@ -208,7 +217,7 @@ builder = do
         Just input -> do
             optimizer <- asks _scatacseq_cluster_optimizer
             resolution <- asks _scatacseq_cluster_resolution
-            Just <$> clustering "/Cluster/" (ClustOpt optimizer resolution) input
+            Just <$> clustering "/Cluster/" resolution optimizer input
         |] $ return ()
     path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep"
         , "Merged_Reduce_Dims", "Merged_Make_KNN", "Merged_Cluster"]
@@ -220,6 +229,7 @@ builder = do
         |] $ return ()
     ["QC", "Merged_Cluster"] ~> "Merged_Cluster_Viz"
 
+    {-
     -- Subclustering
     node "Extract_Sub_Matrix" [| \(mats, cl) -> case cl of
         Nothing -> return []
@@ -227,7 +237,7 @@ builder = do
         |] $ return ()
     ["Pre_Make_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
     namespace "Merged_Iterative" $
-        spectralClust "/Subcluster/" defClustOpt{_resolution=0.5}
+        spectralClust "/Subcluster/" 0.5
     path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
     node "Merged_Iterative_Cluster_Viz" [| \(qc, xs) -> if null xs
         then return ()
@@ -253,6 +263,7 @@ builder = do
             return $ Just $ head inputs & eid .~ "Subcluster" & replicates._2.files.location .~ output
         |] $ return ()
     ["Merged_Iterative_Cluster"] ~> "Combine_Clusters"
+    -}
 
 --------------------------------------------------------------------------------
 -- Make Cluster BED and BigWig files
@@ -263,37 +274,33 @@ builder = do
     ["Pre_Remove_Doublets", "Merged_Cluster"] ~> "Extract_Tags_Prep"
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
 
-    nodePar "Call_Peaks_Cluster" [| \x -> do
-        opts <- asks _scatacseq_callpeak_opts
-        findPeaks "/Feature/Peak/Cluster/" opts x
-        |] $ return ()
-    path ["Merge_Tags", "Call_Peaks_Cluster"]
-
-    -- Extract tags for subclusters
-    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |] $ return ()
-    namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
-    ["Pre_Remove_Doublets", "Combine_Clusters"] ~> "Subcluster_Extract_Tags_Prep"
-    ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
-
-    nodePar "Subcluster_Make_BigWig" [| \(nm, fl) -> do
-        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Subcluster/")
+    nodePar "Make_BigWig" [| \(nm, fl) -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Cluster/")
         seqIndex <- getGenomeIndex
         let output = dir <> B.unpack nm <> ".bw"
         liftIO $ do
             chrSize <- withGenome seqIndex $ return . getChrSizes
             bedToBigWig output chrSize fl
         |] $ return ()
-    ["Subcluster_Merge_Tags"] ~> "Subcluster_Make_BigWig"
+    ["Merge_Tags"] ~> "Make_BigWig"
+
+    {-
+    -- Extract tags for subclusters
+    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |] $ return ()
+    namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
+    ["Pre_Remove_Doublets", "Combine_Clusters"] ~> "Subcluster_Extract_Tags_Prep"
+    ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
+    -}
 
  --------------------------------------------------------------------------------
 -- Make cell by peak matrix
 --------------------------------------------------------------------------------
     nodePar "Call_Peaks" [| \x -> do
-        opts <- asks _scatacseq_callpeak_opts
-        findPeaks "/Feature/Peak/Subcluster/" opts x
+        opts <- getCallPeakOpt
+        findPeaks "/Feature/Peak/Cluster/" opts x
         |] $ return ()
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
-    path ["Subcluster_Merge_Tags", "Call_Peaks", "Merge_Peaks"]
+    path ["Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
     node "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
@@ -312,25 +319,12 @@ builder = do
         |] $ return ()
     ["Make_Peak_Mat", "Merged_Cluster"] ~> "Cluster_Peak_Mat"
 
-    node "Cluster_Peak_Acc" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
-    ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Cluster_Peak_Acc"
-    node "Cluster_Diff_Peak" [| \(pk, x) -> case x of
+    node "Peak_Acc" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
+    ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Peak_Acc"
+    node "Diff_Peak" [| \(pk, x) -> case x of
         Nothing -> return []
         Just x' -> specificPeaks "/Diff/Peak/Cluster/" (pk,x') |] $ return ()
-    ["Call_Peaks_Cluster", "Cluster_Peak_Acc"] ~> "Cluster_Diff_Peak"
-
-    node "Subcluster_Peak_Mat" [| \(mats, cl) -> case cl of
-        Nothing -> return []
-        Just x -> subMatrix "/Feature/Peak/Subcluster/" mats $ x^.replicates._2.files
-        |] $ return ()
-    ["Make_Peak_Mat", "Combine_Clusters"] ~> "Subcluster_Peak_Mat"
-
-    node "Subcluster_Peak_Acc" [| computePeakRAS "/Feature/Peak/Subcluster/" |] $ return ()
-    ["Merge_Peaks", "Subcluster_Peak_Mat"] ~> "Subcluster_Peak_Acc"
-    node "Subcluster_Diff_Peak" [| \(pk, x) -> case x of
-        Nothing -> return []
-        Just x' -> specificPeaks "/Diff/Peak/Subcluster/" (pk,x') |] $ return ()
-    ["Call_Peaks", "Subcluster_Peak_Acc"] ~> "Subcluster_Diff_Peak"
+    ["Call_Peaks", "Peak_Acc"] ~> "Diff_Peak"
 
 --------------------------------------------------------------------------------
 -- Make gene matrix
@@ -342,15 +336,6 @@ builder = do
     ["Pre_Make_Transcript_Mat", "Merged_Cluster"] ~> "Cluster_Transcript_Mat"
     node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
     ["Pre_Get_Promoters", "Cluster_Transcript_Mat"] ~> "Gene_Acc"
-
-    node "Subcluster_Transcript_Mat" [| \(mats, cl) -> case cl of 
-        Nothing -> return []
-        Just x -> subMatrix "/Feature/Gene/Subcluster/" mats $ x^.replicates._2.files
-        |] $ return ()
-    ["Pre_Make_Transcript_Mat", "Combine_Clusters"] ~> "Subcluster_Transcript_Mat"
-    node "Subcluster_Gene_Acc" [| mkExprTable "/Feature/Gene/Subcluster/" |] $ return ()
-    ["Pre_Get_Promoters", "Subcluster_Transcript_Mat"] ~> "Subcluster_Gene_Acc"
-
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
