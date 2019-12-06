@@ -42,8 +42,6 @@ import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
-import Data.ByteString.Lex.Integral (packDecimal)
-import Bio.Utils.Misc (readInt)
 import Data.Conduit.Zlib (gzip)
 import Data.Binary (encode, decode)
 import Data.Singletons.Prelude (Elem)

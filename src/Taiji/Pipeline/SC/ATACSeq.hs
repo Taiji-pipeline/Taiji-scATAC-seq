@@ -121,13 +121,13 @@ preClustering = do
             else Just <$> writePromoters
             |] $ doc .= "Get the list of promoters from the annotation file."
         ["Get_Windows"] ~> "Get_Promoters"
-        node "Make_Transcript_Mat_Prep" [| \(xs, genes) -> 
+        node "Make_Gene_Mat_Prep" [| \(xs, genes) -> 
             let xs' = map (\x -> x & replicates.traverse.files %~ (\(a,_,c) -> (a,c))) xs
             in return $ zip xs' $ repeat $ fromJust genes |] $ return ()
-        nodePar "Make_Transcript_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
+        nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
             doc .= "Create cell by transcript matrix for each sample."
-        ["Get_Windows", "Get_Promoters"] ~> "Make_Transcript_Mat_Prep"
-        path ["Make_Transcript_Mat_Prep", "Make_Transcript_Mat"]
+        ["Get_Windows", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
+        path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
         -- Doublet detection
         node "Detect_Doublet_Prep" [| return . uncurry zipExp |] $ return ()
@@ -229,42 +229,6 @@ builder = do
         |] $ return ()
     ["QC", "Merged_Cluster"] ~> "Merged_Cluster_Viz"
 
-    {-
-    -- Subclustering
-    node "Extract_Sub_Matrix" [| \(mats, cl) -> case cl of
-        Nothing -> return []
-        Just x -> subMatrix "/temp/Feature/Cluster/" mats $ x^.replicates._2.files
-        |] $ return ()
-    ["Pre_Make_Feat_Mat", "Merged_Cluster"] ~> "Extract_Sub_Matrix"
-    namespace "Merged_Iterative" $
-        spectralClust "/Subcluster/" 0.5
-    path ["Extract_Sub_Matrix", "Merged_Iterative_Filter_Mat"]
-    node "Merged_Iterative_Cluster_Viz" [| \(qc, xs) -> if null xs
-        then return ()
-        else do
-            dir <- figDir
-            liftIO $ mapM_ (\x -> plotClusters dir (qc, x)) xs
-        |] $ return ()
-    ["QC", "Merged_Iterative_Cluster"] ~> "Merged_Iterative_Cluster_Viz"
-
-    -- combine subclusters into a single file
-    node "Combine_Clusters" [| \inputs -> if null inputs
-        then return Nothing
-        else do
-            dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
-            let output = dir <> "all_subclusters.bin"
-            clusters <- fmap concat $ forM inputs $ \input -> liftIO $ do
-                cls <- decodeFile $ input^.replicates._2.files.location
-                let nm = B.pack $ T.unpack $ input^.eid
-                return $ case cls of
-                    [cl] -> [cl{_cluster_name = nm}]
-                    xs -> map (\x -> x{_cluster_name = nm <> "." <> B.drop 1 (_cluster_name x)}) xs
-            liftIO $ encodeFile output clusters
-            return $ Just $ head inputs & eid .~ "Subcluster" & replicates._2.files.location .~ output
-        |] $ return ()
-    ["Merged_Iterative_Cluster"] ~> "Combine_Clusters"
-    -}
-
 --------------------------------------------------------------------------------
 -- Make Cluster BED and BigWig files
 --------------------------------------------------------------------------------
@@ -283,14 +247,6 @@ builder = do
             bedToBigWig output chrSize fl
         |] $ return ()
     ["Merge_Tags"] ~> "Make_BigWig"
-
-    {-
-    -- Extract tags for subclusters
-    node "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |] $ return ()
-    namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
-    ["Pre_Remove_Doublets", "Combine_Clusters"] ~> "Subcluster_Extract_Tags_Prep"
-    ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
-    -}
 
  --------------------------------------------------------------------------------
 -- Make cell by peak matrix
@@ -329,13 +285,13 @@ builder = do
 --------------------------------------------------------------------------------
 -- Make gene matrix
 --------------------------------------------------------------------------------
-    node "Cluster_Transcript_Mat" [| \(mats, cl) -> case cl of
+    node "Cluster_Gene_Mat" [| \(mats, cl) -> case cl of
         Nothing -> return []
         Just x -> subMatrix "/Feature/Gene/Cluster/" mats $ x^.replicates._2.files
         |] $ return ()
-    ["Pre_Make_Transcript_Mat", "Merged_Cluster"] ~> "Cluster_Transcript_Mat"
+    ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
     node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
-    ["Pre_Get_Promoters", "Cluster_Transcript_Mat"] ~> "Gene_Acc"
+    ["Pre_Get_Promoters", "Cluster_Gene_Mat"] ~> "Gene_Acc"
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions

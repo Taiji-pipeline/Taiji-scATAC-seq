@@ -32,6 +32,7 @@ import Bio.Utils.Misc (readDouble, readInt)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
 import Data.Conduit.Zlib (gzip)
+import Data.ByteString.Lex.Integral (packDecimal)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Pipeline.SC.ATACSeq.Functions.DR
@@ -287,6 +288,7 @@ plotClusters dir (qc, input) = do
     inputData <- decodeFile $ input^.replicates._2.files.location
     let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
+        output2 = printf "%s/%s_metadata.tsv" dir (T.unpack $ input^.eid)
         (nms, num_cells) = unzip $ map (\(CellCluster nm cells) ->
             (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
         plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
@@ -295,6 +297,7 @@ plotClusters dir (qc, input) = do
     savePlots output [] $ visualizeCluster clusters ++
         clusterComposition compos : tissueComposition compos : plt :
             clusterQC stats inputData
+    outputMetaData output2 stats inputData
   where
     clusterQC stats cls =
         [ plotNumReads res
@@ -306,6 +309,37 @@ plotClusters dir (qc, input) = do
             (T.pack $ B.unpack $ _cluster_name x, map f $ _cluster_member x)
         f x = M.lookupDefault undefined (_cell_barcode x) statMap
         statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
+
+outputMetaData :: FilePath -> [Stat] -> [CellCluster] -> IO ()
+outputMetaData output stat = B.writeFile output . B.unlines . (header:) . concatMap f
+  where
+    f CellCluster{..} = map g _cluster_member
+      where
+        g Cell{..} = B.intercalate "\t"
+            [ _cell_barcode
+            , cl
+            , toShortest $ fst _cell_2d
+            , toShortest $ snd _cell_2d
+            , toShortest $ maybe 0 _te $ M.lookup _cell_barcode stat'
+            , fromJust $ packDecimal $ maybe 0 _uniq_reads $ M.lookup _cell_barcode stat'
+            , toShortest $ maybe 0 _doublet_score $ M.lookup _cell_barcode stat'
+            , toShortest $ maybe 0 _mito_rate $ M.lookup _cell_barcode stat'
+            , toShortest $ maybe 0 _dup_rate $ M.lookup _cell_barcode stat'
+            ]
+        cl = B.tail _cluster_name
+    header = B.intercalate "\t"
+        [ "Sample+Barcode"
+        , "Cluster"
+        , "UMAP1"
+        , "UMAP2"
+        , "TSSe"
+        , "Num_fragments"
+        , "Doublet_score"
+        , "Fraction_Mito"
+        , "Fraction_duplication"
+        ]
+    stat' = M.fromList $ map (\x -> (_barcode x, x)) stat
+{-# INLINE outputMetaData #-}
 
 -- | Compute the normalized tissue composition for each cluster.
 tissueComposition :: DF.DataFrame Int -> EChart
