@@ -4,20 +4,23 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
-    ( plotClusters
-    , spectralClust
+    ( filterMatrix
+    , spectral
+    , mkKNNGraph
+    , clustering
+        
+    , plotClusters
     , extractTags
     , extractSubMatrix
     , subMatrix
     , getBedCluster
     , extractBedByBarcode 
-    , mkKNNGraph
-    , clustering
     , combineClusters
     ) where
 
 import qualified Data.ByteString.Char8 as B
 import Data.Binary (encodeFile, decodeFile)
+import Bio.Utils.Functions (scale)
 import qualified Data.Conduit.List as CL
 import qualified Data.Text as T
 import qualified Data.HashSet as S
@@ -26,16 +29,15 @@ import Data.Singletons.Prelude (Elem)
 import Bio.Data.Bed
 import Control.Arrow (first)
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed.Mutable as UM
+import qualified Data.Vector.Unboxed as U
 import System.IO
 import Data.List.Ordered (nubSort)
-import Bio.Utils.Misc (readDouble, readInt)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
 import Data.Conduit.Zlib (gzip)
-import Data.ByteString.Lex.Integral (packDecimal)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
-import Taiji.Pipeline.SC.ATACSeq.Functions.DR
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature (streamMatrices)
@@ -44,35 +46,55 @@ import Taiji.Utils.Plot
 import Taiji.Utils
 import Taiji.Utils.Plot.ECharts
 
--- | Perform spectral clustering.
-spectralClust :: FilePath   -- ^ Directory to save the results
-              -> Double -> Builder ()
-spectralClust prefix resolution = do
-    nodePar "Filter_Mat" [| filterMatrix prefix |] $ return ()
-    nodePar "Reduce_Dims" [| spectral prefix Nothing |] $ return ()
-    nodePar "Make_KNN" [| \x -> mkKNNGraph prefix $
-        x & replicates.traverse.files %~ return
-        |] $ return ()
-    node "Cluster_Config" [| \xs -> if null xs
-        then return []
-        else do
-            dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
-            let output = dir ++ "/parameters.txt"
-            liftIO $ writeFile output $ unlines $ map
-                (\x -> T.unpack (x^.eid) ++ "\t" ++ show resolution) xs
-            return $ zip (repeat output) xs
-        |] $ return ()
-    nodePar "Cluster" [| \(fl, x) -> do
-        let f [a,b] = (T.pack a, read b)
-        optimizer <- asks _scatacseq_cluster_optimizer
-        ps <- liftIO $ map (f . words) . lines <$> readFile fl
-        clustering prefix (fromJust $ lookup (x^.eid) ps) optimizer x 
-        |] $ return ()
-    path ["Filter_Mat", "Reduce_Dims", "Make_KNN", "Cluster_Config", "Cluster"]
+filterMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+             => FilePath
+             -> SCATACSeq S (File tags 'Other)
+             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File tags 'Other))
+filterMatrix prefix input = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_filt.mat.gz" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+        rownames = printf "%s/%s_rep%d_rownames.txt" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+    input & replicates.traversed.files %%~ ( \fl -> liftIO $ do
+        sp <- mkSpMatrix readInt $ fl^.location
+        runResourceT $ runConduit $
+            streamRows sp .| mapC f .| unlinesAsciiC .| sinkFile rownames
+        counts <- do
+            v <- UM.replicate (_num_col sp) 0
+            runResourceT $ runConduit $ streamRows sp .| concatMapC snd .|
+                mapC fst .| mapM_C (UM.unsafeModify v (+1))
+            U.unsafeFreeze v
+        let (zeros, nonzeros) = U.partition ((==0) . snd) $
+                U.zip (U.enumFromN 0 (U.length counts)) counts
+            (i, v) = U.unzip nonzeros
+            idx = U.toList $ fst $ U.unzip $ U.filter ((>1.65) . snd) $ U.zip i $ scale v
+        filterCols output (idx ++ U.toList (fst $ U.unzip zeros)) $ fl^.location
+        return ( location .~ rownames $ emptyFile
+               , location .~ output $ emptyFile ) )
+  where
+    f (nm, xs) = nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
+
+-- | Reduce dimensionality using spectral clustering
+spectral :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+         => FilePath  -- ^ directory
+         -> Maybe Int  -- ^ seed
+         -> SCATACSeq S (a, File tags 'Other)
+         -> ReaderT config IO (SCATACSeq S (a, File '[Gzip] 'Tsv))
+spectral prefix seed input = do
+    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_rep%d_spectral.tsv.gz" dir
+            (T.unpack $ input^.eid) (input^.replicates._1)
+    input & replicates.traversed.files %%~ liftIO . ( \(rownames, fl) -> do
+        shelly $ run_ "taiji-utils" $ ["reduce", T.pack $ fl^.location,
+            T.pack output] ++ maybe []
+            (\x -> ["--seed", T.pack $ show x]) seed
+        return (rownames, location .~ output $ emptyFile)
+        )
 
 mkKNNGraph :: SCATACSeqConfig config
            => FilePath
-           -> SCATACSeq S [(File '[] 'Tsv, File '[Gzip] 'Tsv)]
+           -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
 mkKNNGraph prefix input = do
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
@@ -80,19 +102,18 @@ mkKNNGraph prefix input = do
             (input^.replicates._1)
         output_umap = printf "%s/%s_rep%d_umap.txt" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \fls -> do
+    input & replicates.traversed.files %%~ liftIO . ( \(idxFl, matFl) -> do
         shelly $ run_ "taiji-utils" $
             [ "knn"
-            , T.pack $ intercalate "," $ map (^.location) $ snd $ unzip fls
+            , T.pack $ matFl^.location
             , T.pack output_knn
             , "-k", "50"
             , "--embed", T.pack output_umap
             , "--thread", "4" ]
-        return ( head $ fst $ unzip fls
+        return ( idxFl
                , location .~ output_knn $ emptyFile
                , location .~ output_umap $ emptyFile )
         )
-
 
 clustering :: SCATACSeqConfig config
            => FilePath

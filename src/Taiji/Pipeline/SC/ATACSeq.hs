@@ -9,11 +9,10 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import           Bio.Seq.IO (withGenome, getChrSizes)
 import Data.Binary
-import System.Random.MWC (uniformR, create)
 
 import           Taiji.Prelude
+import           Taiji.Utils (concatMatrix)
 import           Taiji.Pipeline.SC.ATACSeq.Functions
-import Taiji.Utils (concatMatrix, mkSpMatrix, SpMatrix(..))
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 -- | The basic analysis.
@@ -70,8 +69,7 @@ preClustering = do
         nodePar "Cluster" [| \input -> do
             let prefix = "/temp/Pre/Cluster/"
             filterMatrix prefix input >>= spectral prefix Nothing >>=
-                (\x -> mkKNNGraph prefix $ x & replicates.traverse.files %~ return)
-                >>= clustering prefix 1 RBConfiguration 
+                mkKNNGraph prefix >>= clustering prefix 1 RBConfiguration 
             |] $ return ()
         path ["Make_Window_Mat", "Cluster"]
 
@@ -187,30 +185,16 @@ builder = do
 --------------------------------------------------------------------------------
     node "Merged_Filter_Mat" [| \case
         Nothing -> return Nothing
-        Just input -> Just <$> filterMatrix "/Cluster/" input
+        Just x -> Just <$> filterMatrix "/Cluster/" x
         |] $ return ()
-    node "Merged_Reduce_Dims_Prep" [| \case
-        Nothing -> return []
-        Just mat -> liftIO $ do
-            nCell <- _num_row <$>
-                mkSpMatrix id (mat^.replicates._2.files._2.location)
-            let sampleSize = 20000
-                ratio = nCell `div` sampleSize
-            if ratio == 0
-                then return [(0, mat)]
-                else do
-                    g <- create
-                    seeds <- replicateM (min 5 ratio) $
-                        uniformR (1, 100000) g
-                    return $ zip seeds $ repeat mat
+    node "Merged_Reduce_Dims" [| \case
+        Nothing -> return Nothing
+        Just x -> Just <$>
+            spectral "/Cluster/" (Just 3943) x
         |] $ return ()
-    nodePar "Merged_Reduce_Dims" [| \(s,x) ->
-        spectral ("/Cluster/" ++ show s ++ "/") (Just s) x
-        |] $ return ()
-    node "Merged_Make_KNN" [| \input -> if null input
-        then return Nothing
-        else let [x] = concatMap split $ mergeExp input
-             in Just <$> mkKNNGraph "/Cluster/" x
+    node "Merged_Make_KNN" [| \case
+        Nothing -> return Nothing
+        Just x -> Just <$> mkKNNGraph "/Cluster/" x
         |] $ nCore .= 4
     node "Merged_Cluster" [| \case
         Nothing -> return Nothing
@@ -219,8 +203,8 @@ builder = do
             resolution <- asks _scatacseq_cluster_resolution
             Just <$> clustering "/Cluster/" resolution optimizer input
         |] $ return ()
-    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims_Prep"
-        , "Merged_Reduce_Dims", "Merged_Make_KNN", "Merged_Cluster"]
+    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
+        "Merged_Make_KNN", "Merged_Cluster"]
     node "Merged_Cluster_Viz" [| \(qc, input) -> case input of
         Nothing -> return ()
         Just x -> do
