@@ -93,11 +93,11 @@ deDuplicates input = do
             (input^.replicates._1)
         outputMito = printf "%s/%s_rep%d_mito.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        f fl = do
+        f pair fl = do
             header <- getBamHeader fl
             _ <- runResourceT $ runConduit $ streamBam fl .|
                 groupBy ((==) `on` (extractBarcode . queryName)) .|
-                mapC (filterReads header tss) .| zipSinks
+                mapC (filterReads header pair tss) .| zipSinks
                     ( zipSinks
                         (concatMapC (fst . fst) .| sinkBam outputBam header)
                         (concatMapC (snd . fst) .| sinkBam outputMito header) )
@@ -105,18 +105,21 @@ deDuplicates input = do
             return ( location .~ outputBam $ emptyFile
                    , location .~ outputMito $ emptyFile
                    , location .~ outputStat $ emptyFile )
-    input & replicates.traverse.files %%~ liftIO . f . either
-        (^.location) (^.location)
+    input & replicates.traverse.files %%~ liftIO . either
+        (f False . (^.location)) (f True . (^.location))
 
 -- | Remove duplicated and chrM reads. 
 filterReads :: BAMHeader
+            -> Bool   -- ^ is PairedEnd
             -> BEDTree (Int, Bool)   -- ^ TSS
             -> [BAM]
             -> (([BAM], [BAM]), Stat)
-filterReads hdr tss bam = runState filterFn $ Stat bc 0 0 0 0 0
+filterReads hdr pair tss bam = runState filterFn $ Stat bc 0 0 0 0 0
   where
     filterFn = do
-        (tags, mito) <- rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
+        (tags, mito) <- if pair
+            then rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
+            else rmDup bam >>= rmChrM hdr
         tssEnrichment tss hdr tags
         totalReads tags
         return (tags, mito)

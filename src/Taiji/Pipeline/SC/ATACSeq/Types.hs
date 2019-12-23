@@ -58,6 +58,7 @@ class SCATACSeqConfig config where
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double
     _scatacseq_minimal_fragment :: config -> Int
+    _scatacseq_doublet_score_cutoff :: config -> Double
 
 data Stat = Stat
     { _barcode :: B.ByteString
@@ -141,5 +142,6 @@ getQCFunction :: SCATACSeqConfig config => ReaderT config IO (Stat -> Bool)
 getQCFunction = do
     teCutoff <- asks _scatacseq_te_cutoff
     fragmentCutoff <- asks _scatacseq_minimal_fragment
-    return $ \x -> _te x >= teCutoff && _uniq_reads x >= fragmentCutoff && _doublet_score x <= 0.5
+    doubletCutoff <- asks _scatacseq_doublet_score_cutoff
+    return $ \x -> _te x >= teCutoff && _uniq_reads x >= fragmentCutoff && _doublet_score x <= doubletCutoff
 {-# INLINE getQCFunction #-}

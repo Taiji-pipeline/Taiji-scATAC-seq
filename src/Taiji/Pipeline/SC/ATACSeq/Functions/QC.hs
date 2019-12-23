@@ -171,8 +171,10 @@ rmChrM header input = do
 {-# INLINE rmChrM #-}
 
 totalReads :: [BAM] -> State Stat ()
-totalReads x = modify' $ \s -> s
-    {_uniq_reads = length $ filter (isFirstSegment . flag) x}
+totalReads bam = modify' $ \s -> s
+    {_uniq_reads = length $ filter (f . flag) bam}
+  where
+    f x = not (hasMultiSegments x) || isFirstSegment x
 {-# INLINE totalReads #-}
 
 tssEnrichment :: BEDTree (Int, Bool)   -- ^ TSS
