@@ -61,8 +61,8 @@ plotStat inputs = do
     dir <- qcDir
     passedQC <- getQCFunction
     teCutoff <- asks _scatacseq_te_cutoff 
-    let output = dir <> "/qc.html"
-        outputStat = dir <> "/qc_stats.tsv"
+    let output = dir <> "/QC.html"
+        outputStat = dir <> "/QC_merged.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
             stats <- readStats $ input^.replicates._2.files.location
@@ -232,7 +232,7 @@ detectDoublet :: SCATACSeqConfig config
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
 detectDoublet input = do
     dir <- qcDir
-    let output = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
+    let output = dir <> "qc_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".tsv"
         outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"

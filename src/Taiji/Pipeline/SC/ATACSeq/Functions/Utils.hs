@@ -19,10 +19,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , mkFeatMat
     , groupCells
     , mergeMatrix
-
-    , computeSS
-    , computeRAS
-    , computeCDF
     ) where
 
 import Bio.Data.Bed
@@ -38,25 +34,17 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.Set as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
-import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector.Unboxed.Mutable as UM
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as VM
 import Data.Conduit.Zlib (gzip)
 import Data.Binary (encode, decode)
 import Data.Singletons.Prelude (Elem)
 import System.IO.Temp (withTempFile)
-import System.Random.MWC (create)
-import System.Random.MWC.Distributions (normal)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
-import qualified Data.Matrix as Mat
 import           Data.List.Ordered       (nubSort)
 import Data.CaseInsensitive (CI)
-import Statistics.Sample (varianceUnbiased, mean)
 
 import Taiji.Prelude hiding (groupBy)
-import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils
 
 -------------------------------------------------------------------------------
@@ -181,92 +169,6 @@ decodeCutSite chrs = concatMap f . zip chrs . either error id . decode
   where
     f (chr, xs) = map (\x -> CutSite chr x) xs
 {-# INLINE decodeCutSite #-}
-
-computeRAS :: FilePath -> IO (U.Vector Double)
-computeRAS fl = do
-    mat <- mkSpMatrix readInt fl
-    fmap accScore $ runResourceT $ runConduit $
-        streamRows mat .| sink (_num_col mat)
-  where
-    sink n = do
-        v <- lift $ UM.replicate n 0.1
-        mapM_C $ \(_, xs) -> forM_ xs $ \(i, x) ->
-            UM.unsafeModify v (+fromIntegral x) i
-        lift $ U.unsafeFreeze v
-    accScore xs = U.map (\x -> x * 1000000 / s) xs
-      where
-        s = U.sum xs
-
--- | Compute Specificity Score (SS).
-computeSS :: DF.DataFrame Double -> DF.DataFrame Double
-computeSS df = df{ DF._dataframe_data = mat}
-  where
-    mat = Mat.fromRows $ map (q_t . normalize) $ Mat.toRows $
-        DF._dataframe_data df
-    q_t xs = V.map (\x -> e - logBase 2 x) xs
-      where
-        e = negate $ V.sum $ V.map (\p -> p * logBase 2 p) xs
-    normalize xs = V.map (/s) xs'
-      where
-        s = V.sum xs'
-        xs' = V.map (+pseudoCount) xs
-        pseudoCount = 1
-{-# INLINE computeSS #-}
-
-{-
-buildNullModel :: DF.DataFrame Double -> IO (V.Vector Double)
-buildNullModel df = do
-    fmap (V.concat . map (q_t . normalize) . Mat.toRows) . shuffleMatrix
-  where
-    mat = let k = truncate $ 0.05 * fromIntegral (Mat.rows $ DF._dataframe_data df)
-          in Mat.fromColumns $
-              map (V.take k . V.modify (\x -> I.partialSortBy (flip compare) x k)) $
-              Mat.toColumns $ DF._dataframe_data df
-    shuffleMatrix :: Mat.Matrix Double -> IO (Mat.Matrix Double)
-    shuffleMatrix mat = fmap (Mat.fromVector (Mat.dim mat)) $
-        create >>= uniformShuffle (Mat.flatten mat)
-    mkVector vec = 
-      where
-        vec' = V.modify (\x -> I.partialSortBy (flip compare) x k) vec
-        k = truncate $ 0.1 * fromIntegral (V.length vec)
--}
-
-computeCDF :: DF.DataFrame Double -> IO (V.Vector Double, Double, Double)
-computeCDF df = do
-    gen <- create
-    let std = let rows = filter ((>5) . V.maximum) $ Mat.toRows $
-                      Mat.map (+1) $ DF._dataframe_data df
-                  f xs = (xs, 1 / entropy (normalize xs))
-                  n = truncate $ (0.7 :: Double) * fromIntegral (length rows)
-                  getFold xs = let m = mean xs in V.map (logBase 2 . (/m)) xs
-                  entropy xs = negate $ V.sum $ V.map (\p -> p * logBase 2 p) xs
-              in sqrt $ varianceUnbiased $ V.concat $ map (getFold . fst) $
-                  take n $ sortBy (comparing snd) $ map f $ rows
-    runConduit $ replicateMC nSample (V.toList <$> mkSample gen std) .|
-        concatC .| mkCDF 0.001
-  where
-    ncol = Mat.cols $ DF._dataframe_data df
-    nSample = 500000
-    mkCDF res = do
-        vec <- VM.replicate n 0
-        mapM_C $ \x -> do
-          let i = min n $ truncate $ x / res
-          VM.unsafeModify vec (+1) i
-        v <- V.scanl1' (+) <$> V.unsafeFreeze vec
-        return (V.map (/(V.last v)) v, res, fromIntegral $ nSample*ncol)
-      where
-        n = truncate $ 2 * logBase 2 (fromIntegral ncol) / res
-    -- | https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2396180/
-    normalize xs = V.map (/s) xs
-      where
-        s = V.sum xs
-    mkSample gen !std = do
-        folds <- replicateM ncol $ normal 0 std gen 
-        return $ q_t $ normalize $ V.fromList $ map (\x -> 2**x) folds
-    q_t xs = V.map (\x -> e - logBase 2 x) xs
-      where
-        e = negate $ V.sum $ V.map (\p -> p * logBase 2 p) xs
-{-# INLINE computeCDF #-}
 
 -- | Generating the cell by feature count matrix as a gzipped stream.
 -- The input stream is raw tags grouped by cells.

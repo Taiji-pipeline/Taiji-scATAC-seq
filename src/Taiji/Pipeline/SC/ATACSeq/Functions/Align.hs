@@ -89,7 +89,7 @@ deDuplicates input = do
     tss <- getAnnotation >>= liftIO . readTSS
     let outputBam = printf "%s/%s_rep%d_srt_filt.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        outputStat = printf "%s/%s_rep%d_stat.txt" dir (T.unpack $ input^.eid)
+        outputStat = printf "%s/%s_rep%d_qc.txt" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         outputMito = printf "%s/%s_rep%d_mito.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)

@@ -261,10 +261,6 @@ builder = do
 
     node "Peak_Acc" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
     ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Peak_Acc"
-    node "Diff_Peak" [| \(pk, x) -> case x of
-        Nothing -> return []
-        Just x' -> specificPeaks "/Diff/Peak/Cluster/" (pk,x') |] $ return ()
-    ["Call_Peaks", "Peak_Acc"] ~> "Diff_Peak"
 
 --------------------------------------------------------------------------------
 -- Make gene matrix
