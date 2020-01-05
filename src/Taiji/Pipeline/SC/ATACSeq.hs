@@ -8,6 +8,7 @@ import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import           Bio.Seq.IO (withGenome, getChrSizes)
+import           Bio.Data.Bed (streamBedGzip)
 import Data.Binary
 
 import           Taiji.Prelude
@@ -80,11 +81,8 @@ preClustering = do
                     "_rep" <> show (input^.replicates._1)
             dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
             clusters <- liftIO $ decodeFile $ cl^.location
-            let (nm, bcs) = unzip $ flip map clusters $ \c ->
-                    (_cluster_name c, map _cell_barcode $ _cluster_member c)
-                outputs = map (\x -> dir <> "/" <> B.unpack x <> ".bed") nm
-            fls <- liftIO $ extractBedByBarcode outputs bcs bed
-            return $ zip nm fls
+            runResourceT $ runConduit $ streamBedGzip (bed^.location) .|
+                splitBedByCluster' dir clusters
             )
             |] $ return ()
         path ["Extract_Tags_Prep", "Extract_Tags"]
