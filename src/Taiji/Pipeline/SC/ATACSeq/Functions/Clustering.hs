@@ -199,10 +199,10 @@ splitBedByCluster' dir clusters = do
     fileHandles <- liftIO $ V.fromList <$>
         mapM (\x -> openFile x WriteMode) outputs
     CL.groupBy ((==) `on` (^.name)) .| mapM_C ( \beds ->
-        let idx = M.lookupDefault (error $ show bc) bc bcIdxMap
-            bc = fromJust $ head beds ^. name
-        in liftIO $ B.hPutStrLn (fileHandles V.! idx) $ B.unlines $
-            map toLine beds )
+        maybe (return ())
+            (\x -> liftIO $ B.hPutStrLn (fileHandles V.! x) $ B.unlines $ map toLine beds) $
+            M.lookup (fromJust $ head beds ^. name) bcIdxMap
+            )
     liftIO $ mapM_ hClose fileHandles
     return $ zip nm $ map (\x -> location .~ x $ emptyFile) outputs
 {-# INLINE splitBedByCluster' #-}
