@@ -200,7 +200,7 @@ splitBedByCluster' dir clusters = do
         mapM (\x -> openFile x WriteMode) outputs
     CL.groupBy ((==) `on` (^.name)) .| mapM_C ( \beds ->
         maybe (return ())
-            (\x -> liftIO $ B.hPutStrLn (fileHandles V.! x) $ B.unlines $ map toLine beds) $
+            (\x -> liftIO $ B.hPutStr (fileHandles V.! x) $ B.unlines $ map toLine beds) $
             M.lookup (fromJust $ head beds ^. name) bcIdxMap
             )
     liftIO $ mapM_ hClose fileHandles

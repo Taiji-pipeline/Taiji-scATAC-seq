@@ -59,6 +59,7 @@ class SCATACSeqConfig config where
     _scatacseq_te_cutoff :: config -> Double
     _scatacseq_minimal_fragment :: config -> Int
     _scatacseq_doublet_score_cutoff :: config -> Double
+    _scatacseq_cluster_by_window :: config -> Bool
 
 data Stat = Stat
     { _barcode :: B.ByteString

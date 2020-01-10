@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE LambdaCase #-}
@@ -8,13 +9,35 @@ import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import           Bio.Seq.IO (withGenome, getChrSizes)
-import           Bio.Data.Bed (streamBedGzip)
+import           Bio.Data.Bed (streamBedGzip, sinkFileBedGzip, BED3)
+import Data.List.Ordered (nubSort)
 import Data.Binary
 
 import           Taiji.Prelude
 import           Taiji.Utils (concatMatrix)
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Types
+
+getFeatures :: SCATACSeqConfig config
+            => ( [SCATACSeq S [(B.ByteString, File '[] 'NarrowPeak)]]
+               , [SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)] )
+            -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
+getFeatures ([], []) = return Nothing
+getFeatures (peaks, windows) = asks _scatacseq_cluster_by_window >>= \case
+    True -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir tmp)
+        let output = dir <> "/merged.window.bed.gz" 
+            f acc x = do
+                regions <- liftIO $ runResourceT $ runConduit $
+                    streamBedGzip (x^.replicates._2.files._2.location) .|
+                    sinkList
+                return $ nubSort $ acc ++ (regions :: [BED3])
+        beds <- foldM f [] windows
+        liftIO $ runResourceT $ runConduit $ yieldMany beds .| sinkFileBedGzip output
+        return $ Just $ location .~ output $ emptyFile
+    _ -> mergePeaks tmp $ flip concatMap peaks $ \pk -> pk^.replicates._2.files
+  where
+    tmp = "/temp/Pre/Peak/"
 
 -- | The basic analysis.
 basicAnalysis :: Builder ()
@@ -99,10 +122,8 @@ preClustering = do
             |] $ return ()
         path ["Extract_Tags", "Call_Peaks", "Merge_Peaks"]
 
-        node "Get_Peak_List" [| \inputs -> mergePeaks "/temp/Pre/Peak/" $
-            flip concatMap inputs $ \input -> input^.replicates._2.files
-            |] $ return ()
-        path ["Call_Peaks", "Get_Peak_List"]
+        node "Get_Peak_List" 'getFeatures $ return ()
+        ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
 
         node "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $ \input ->
             input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
