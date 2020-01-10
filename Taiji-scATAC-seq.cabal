@@ -57,7 +57,7 @@ library
                      , jmacro
                      , mtl
                      , matrices
-                     , SciFlow >= 0.7.0
+                     , SciFlow >= 0.7.2
                      , template-haskell
                      , text
                      , temporary

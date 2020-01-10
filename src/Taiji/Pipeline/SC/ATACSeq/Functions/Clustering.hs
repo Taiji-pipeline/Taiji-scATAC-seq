@@ -155,10 +155,10 @@ extractTags :: FilePath   -- ^ Directory to save the results
             -> Builder ()
 extractTags prefix = do
     nodePar "Extract_Tags" 'splitBedByCluster $ return ()
-    node "Merge_Tags_Prep" [| \input -> return $
+    uNode "Merge_Tags_Prep" [| \input ->
         map (first head . unzip) $ groupBy ((==) `on` fst) $
         sortBy (comparing fst) $ concat $ input^..folded.replicates._2.files
-        |] $ return ()
+        |]
     nodePar "Merge_Tags" [| mergeBedCluster prefix |] $ return ()
     path ["Extract_Tags", "Merge_Tags_Prep", "Merge_Tags"]
 
