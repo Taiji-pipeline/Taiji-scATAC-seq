@@ -43,38 +43,30 @@ getFeatures (peaks, windows) = asks _scatacseq_cluster_by_window >>= \case
 basicAnalysis :: Builder ()
 basicAnalysis = do
     node "Read_Input" 'readInput $
-        doc .= "Read ATAC-seq data information from input file."
+        doc .= "Read input data information."
     node "Download_Data" 'download $ doc .= "Download data."
+    node "Make_Index" 'mkIndices $ doc .= "Generate the genome index."
     uNode "Get_Fastq" 'getFastq
-    node "Make_Index" 'mkIndices $ doc .= "Generate the BWA index."
-    path ["Read_Input", "Download_Data", "Get_Fastq", "Make_Index"]
- 
-    uNode "Align_Prep" 'fst
-    ["Get_Fastq", "Make_Index"] ~> "Align_Prep"
     nodePar "Align" 'tagAlign $ do
         nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
     nodePar "Filter_Bam" 'filterNameSortBam $ do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
-    path ["Align_Prep", "Align"]
+    path ["Read_Input", "Download_Data", "Make_Index", "Get_Fastq", "Align"]
 
     uNode "Filter_Bam_Prep" [| \(input, x) -> getBamUnsorted input ++ x |]
-    ["Download_Data", "Align"] ~> "Filter_Bam_Prep"
+    ["Make_Index", "Align"] ~> "Filter_Bam_Prep"
     ["Filter_Bam_Prep"] ~> "Filter_Bam"
 
     uNode "Get_Bam" [| \(input, x) -> getBam input ++ x |]
-    ["Download_Data", "Filter_Bam"] ~> "Get_Bam"
+    ["Make_Index", "Filter_Bam"] ~> "Get_Bam"
 
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
     nodePar "Filter_Cell" 'filterCell $ return ()
     path ["Get_Bam", "Remove_Duplicates", "Filter_Cell"]
-    node "Get_Bed" [| \(input, x) -> do
-        let output = getSortedBed input ++ x
-        unless (null output) $ getGenomeIndex >> return ()
-        return output
-        |] $ return ()
-    [ "Download_Data", "Filter_Cell"] ~> "Get_Bed"
+    uNode "Get_Bed" [| \(input, x) -> getSortedBed input ++ x |]
+    [ "Make_Index", "Filter_Cell"] ~> "Get_Bed"
 
 -- PreClustering and doublet detection
 preClustering :: Builder ()

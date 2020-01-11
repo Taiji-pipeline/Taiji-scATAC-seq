@@ -26,19 +26,23 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 
-mkIndices :: SCATACSeqConfig config => [a] -> ReaderT config IO ()
-mkIndices input
-    | null input = return ()
-    | otherwise = do
+mkIndices :: SCATACSeqConfig config
+          => [SCATACSeq N [Either SomeFile (SomeFile, SomeFile)]]
+          -> ReaderT config IO
+              [SCATACSeq N [Either SomeFile (SomeFile, SomeFile)]]
+mkIndices [] = return []
+mkIndices input = do
+    _ <- getGenomeIndex 
+    let fq = filter (isFq . either id fst) $ concat $
+            input^..folded.replicates.folded.files
+    unless (null fq) $ do
         genome <- getGenomeFasta
-
         -- Generate BWA index
         dir <- asks (fromJust . _scatacseq_bwa_index)
-        _ <- liftIO $ bwaMkIndex genome dir
-
-        -- Generate genome index
-        _ <- getGenomeIndex
-        return ()
+        liftIO (bwaMkIndex genome dir) >> return ()
+    return input
+  where
+    isFq x = getFileType x == Fastq
 
 tagAlign :: SCATACSeqConfig config
          => SCATACSeq S ( Either (SomeTags 'Fastq)
