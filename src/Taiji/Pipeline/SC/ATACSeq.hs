@@ -109,34 +109,19 @@ preClustering = do
                        & cutoff .~ QValue 0.05
                  ))
             |] $ return ()
-        nodePar "Merge_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-            mergePeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
+        path ["Extract_Tags", "Call_Peaks"]
+
+        uNode "Make_Peak_Mat_Prep" [| \(x, y) -> flip map (zipExp x y) $
+            \input -> input & replicates._2.files %~
+                ( \((a,_,c), pk) ->(a,pk,c) ) |]
+        ["Get_Windows", "Call_Peaks"] ~> "Make_Peak_Mat_Prep"
+        nodePar "Make_Peak_Mat" [| \input -> do
+            let tmp = "/temp/Pre/Peak/"
+            input' <- input & replicates.traverse.files._2 %%~ fmap fromJust .
+                mergePeaks (tmp <> T.unpack (input^.eid) <> "/")
+            mkPeakMat tmp input'
             |] $ return ()
-        path ["Extract_Tags", "Call_Peaks", "Merge_Peaks"]
-
-        node "Get_Peak_List" 'getFeatures $ return ()
-        ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
-
-        uNode "Make_Peak_Mat_Prep" [| \(x, y) -> flip map (zipExp x y) $ \input ->
-            input & replicates._2.files %~ (\((a,_,c), pk) -> (a,fromJust pk,c))
-            |]
-        nodePar "Make_Peak_Mat" [| mkPeakMat "/temp/Pre/Peak/" |] $ return ()
-        ["Get_Windows", "Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
-
-        -- Make cell by gene matrix
-        node "Get_Promoters" [| \input -> if null input
-            then return Nothing
-            else Just <$> writePromoters
-            |] $ doc .= "Get the list of promoters from the annotation file."
-        ["Get_Windows"] ~> "Get_Promoters"
-        uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> 
-            let xs' = map (\x -> x & replicates.traverse.files %~ (\(a,_,c) -> (a,c))) xs
-            in zip xs' $ repeat $ fromJust genes |]
-        nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
-            doc .= "Create cell by transcript matrix for each sample."
-        ["Get_Windows", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
-        path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
         -- Doublet detection
         uNode "Detect_Doublet_Prep" [| uncurry zipExp |]
@@ -147,6 +132,8 @@ preClustering = do
         path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
         -- Make feature matrix
+        node "Get_Peak_List" 'getFeatures $ return ()
+        ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
         uNode "Make_Feat_Mat_Prep" [| \(bed, pk) ->
             flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
                 x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
@@ -165,20 +152,6 @@ preClustering = do
                     replicates._2.files.location .~ output
             |] $ return ()
         path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
-
-        {-
-        node "Cluster_QC_Prep" [| \(genes, x1, x2, x3, diff) -> do
-            let diff' = concatMap split $ mergeExp $ flip map diff $ \x ->
-                    let (i, cl) = T.breakOn "+" $ x^.eid
-                    in eid .~ i $ replicates._2.files %~ (,) (T.tail cl) $ x
-            return $ zip (repeat genes) $ (zipExp x1 $ zipExp x2 $ zipExp x3 diff') &
-                traverse.replicates.traverse.files %~ (\(a,(b,(c,d))) -> (a,b,c,d))
-            |] $ return ()
-        nodePar "Cluster_QC" 'plotClusterQC $ return ()
-        ["Get_Genes", "Detect_Doublet", "Cluster", "Make_Gene_Mat", "Diff_Gene"]
-            ~> "Cluster_QC_Prep"
-        ["Cluster_QC_Prep"] ~> "Cluster_QC"
-        -}
 
 builder :: Builder ()
 builder = do
@@ -276,13 +249,23 @@ builder = do
 --------------------------------------------------------------------------------
 -- Make gene matrix
 --------------------------------------------------------------------------------
+    node "Get_Promoters" [| \input -> if null input
+        then return Nothing
+        else Just <$> writePromoters
+        |] $ doc .= "Get the list of promoters from the annotation file."
+    ["Pre_Remove_Doublets"] ~> "Get_Promoters"
+    uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> zip xs $ repeat $ fromJust genes |]
+    ["Pre_Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
+    nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
+        doc .= "Create cell by transcript matrix for each sample."
+    path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
     node "Cluster_Gene_Mat" [| \(mats, cl) -> case cl of
         Nothing -> return []
         Just x -> subMatrix "/Feature/Gene/Cluster/" mats $ x^.replicates._2.files
         |] $ return ()
-    ["Pre_Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
+    ["Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
     node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
-    ["Pre_Get_Promoters", "Cluster_Gene_Mat"] ~> "Gene_Acc"
+    ["Get_Promoters", "Cluster_Gene_Mat"] ~> "Gene_Acc"
 
 --------------------------------------------------------------------------------
 -- Call CRE interactions
