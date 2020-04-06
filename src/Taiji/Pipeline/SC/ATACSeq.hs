@@ -9,7 +9,7 @@ import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import           Bio.Seq.IO (withGenome, getChrSizes)
-import           Bio.Data.Bed (streamBedGzip, sinkFileBedGzip, BED3)
+import           Bio.Data.Bed (readBed, streamBedGzip, sinkFileBedGzip, BED3)
 import Data.List.Ordered (nubSort)
 import Data.Binary
 
@@ -210,9 +210,12 @@ builder = do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Cluster/")
         seqIndex <- getGenomeIndex
         let output = dir <> B.unpack nm <> ".bw"
+        blackRegions <- asks _scatacseq_blacklist >>= \case
+            Nothing -> return []
+            Just blacklist -> liftIO $ readBed blacklist
         liftIO $ do
             chrSize <- withGenome seqIndex $ return . getChrSizes
-            bedToBigWig output chrSize fl
+            bedToBigWig output chrSize blackRegions fl
         |] $ return ()
     ["Merge_Tags"] ~> "Make_BigWig"
 
@@ -254,6 +257,8 @@ builder = do
         else Just <$> writePromoters
         |] $ doc .= "Get the list of promoters from the annotation file."
     ["Pre_Remove_Doublets"] ~> "Get_Promoters"
+
+    {-
     uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> zip xs $ repeat $ fromJust genes |]
     ["Pre_Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
     nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
@@ -264,8 +269,10 @@ builder = do
         Just x -> subMatrix "/Feature/Gene/Cluster/" mats $ x^.replicates._2.files
         |] $ return ()
     ["Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
+    -}
+
     node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
-    ["Get_Promoters", "Cluster_Gene_Mat"] ~> "Gene_Acc"
+    ["Get_Promoters", "Peak_Acc"] ~> "Gene_Acc"
 
 --------------------------------------------------------------------------------
 -- Run ChromVar 
