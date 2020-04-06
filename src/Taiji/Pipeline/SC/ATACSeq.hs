@@ -268,9 +268,18 @@ builder = do
     ["Get_Promoters", "Cluster_Gene_Mat"] ~> "Gene_Acc"
 
 --------------------------------------------------------------------------------
--- Call CRE interactions
+-- Run ChromVar 
 --------------------------------------------------------------------------------
     -- Motif finding
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
     nodePar "Find_TFBS" 'findMotifs $ return ()
     path ["Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
+
+    -- ChromVar
+    node "Make_Motif_Peak_Mat" 'mkMotifMat $ return ()
+    ["Merge_Peaks", "Find_TFBS"] ~> "Make_Motif_Peak_Mat"
+
+    node "ChromVar_Pre" 'preChromVar $ return ()
+    ["Make_Motif_Peak_Mat", "Merge_Peaks", "Cluster_Peak_Mat"] ~> "ChromVar_Pre"
+    nodePar "ChromVar" 'runChromVar $ return ()
+    ["ChromVar_Pre"] ~> "ChromVar"

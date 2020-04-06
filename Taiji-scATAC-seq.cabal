@@ -22,14 +22,15 @@ library
 
   exposed-modules:     Taiji.Pipeline.SC.ATACSeq
                        Taiji.Pipeline.SC.ATACSeq.Functions
-                       Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
+                       Taiji.Pipeline.SC.ATACSeq.Functions.ChromVar
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
-                       Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
                        Taiji.Pipeline.SC.ATACSeq.Functions.Utils
                        Taiji.Pipeline.SC.ATACSeq.Types
@@ -41,12 +42,13 @@ library
                      , bytestring
                      , bytestring-lexing
                      , bio-experiments
-                     , bioinformatics-toolkit >= 0.9.0
+                     , bioinformatics-toolkit >= 0.9.3.1
                      , conduit-extra
                      , clustering
                      , case-insensitive
                      , containers
                      , conduit
+                     , ChromVAR
                      , deepseq
                      , data-default
                      , data-ordlist

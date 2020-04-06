@@ -87,7 +87,8 @@ writePromoters = do
     return ( location .~ output $ emptyFile
            , location .~ geneOutput $ emptyFile )
   where
-    getPromoter gene = map f $ geneTranscripts gene
+    getPromoter gene = map f $ fitler ((==Coding) . transType) $
+        geneTranscripts gene
       where
         nm = Just $ B.map toUpper $ original $ geneName gene
         f Transcript{..}

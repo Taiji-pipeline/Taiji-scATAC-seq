@@ -7,6 +7,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
     ( getOpenRegion
     , findMotifsPre
     , findMotifs
+    , mkMotifMat
     ) where
 
 import Bio.Seq.IO (withGenome, getChrSizes)
@@ -16,14 +17,20 @@ import           Bio.Pipeline.Instances ()
 import Bio.Data.Bed
 import Data.Binary
 import           Bio.Motif                     hiding (score)
+import Control.Arrow (first, second)
+import Data.Conduit.Internal (zipSources)
 import qualified Data.HashMap.Strict as M
+import qualified Data.IntSet as IS
 import qualified Data.ByteString.Char8 as B
 import qualified Bio.Utils.BitVector as BV
 import           System.IO (hClose)
 import           System.IO.Temp (withTempFile)
 import           Data.Default (def)
+import           Data.CaseInsensitive              (original)
+import Data.List.Ordered (nubSort)
 
 import Taiji.Prelude
+import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 findMotifsPre :: SCATACSeqConfig config
@@ -69,6 +76,42 @@ findMotifs (chr, openChromatin, motifFl) = do
         sinkFileBed fl
         return r
 {-# INLINE findMotifs #-}
+
+mkMotifMat :: SCATACSeqConfig config
+           => ( Maybe (File '[Gzip] 'NarrowPeak)
+              , [(B.ByteString, Maybe (File '[] 'BigBed))] )
+           -> ReaderT config IO (Maybe FilePath)
+mkMotifMat (Just peakFl, motifs) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/ChromVar/")
+    let output = dir <> "/motif_by_peak.bin"
+    liftIO $ do
+        res <- fun peakFl motifs
+
+        let source = yieldMany $ map (second $ \idx -> zip (IS.toList idx) $ repeat (1 :: Int)) res
+            n = maximum $ map (IS.findMax . snd) res
+        runResourceT $ runConduit $ source .|
+            sinkRows (length res) n (fromJust . packDecimal) (dir <> "/motif_by_peak.mat.gz")
+
+        encodeFile output res
+        return $ Just output
+  where
+    fun :: File '[Gzip] 'NarrowPeak
+        -> [(B.ByteString, Maybe (File '[] 'BigBed))]
+        -> IO [(B.ByteString, IS.IntSet)]
+    fun pkFl motif = do
+        bbIdx <- openBBs motif
+        fmap (map (first original) . M.toList) $ runResourceT $ runConduit $
+            zipSources (iterateC succ 0) (streamBedGzip $ pkFl^.location) .|
+            concatMapMC (getMotifs bbIdx) .| foldlC f M.empty
+      where
+        f m (x, i) = M.alter (maybe (Just $ IS.singleton i) $ Just . IS.insert i) x m
+        getMotifs idx (i, bed) = liftIO $ do
+            ms <- fmap nubSort $ runConduit $ queryBB (bed :: BED3) idx .|
+                mapC (^._data) .|
+                --filterC ((>=0.5) . getSiteAffinity . _site_affinity) .|
+                mapC _tf_name .| sinkList
+            return $ zip ms $ repeat i
+mkMotifMat _ = return Nothing
 
 -- | Identify all accessiable regions.
 getOpenRegion :: SCATACSeqConfig config
