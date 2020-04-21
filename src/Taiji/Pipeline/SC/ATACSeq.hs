@@ -131,7 +131,30 @@ preClustering = do
         nodePar "Remove_Doublets" 'removeDoublet $ return ()
         path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
-        -- Make feature matrix
+        -- Make Gene matrix 
+        node "Get_Promoters" [| \input -> if null input
+            then return Nothing
+            else Just <$> writePromoters
+            |] $ doc .= "Get the list of promoters from the annotation file."
+        ["Remove_Doublets"] ~> "Get_Promoters"
+        uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> zip xs $ repeat $ fromJust genes |]
+        ["Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
+        nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
+            doc .= "Create cell by transcript matrix for each sample."
+        node "Merge_Gene_Mat" [| \mats -> if null mats
+            then return Nothing
+            else do
+                dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/Gene/"))
+                let output = dir <> "Merged_cell_by_gene.mat.gz"
+                liftIO $ concatMatrix output $ flip map mats $ \mat ->
+                    ( Just $ B.pack $ T.unpack $ mat^.eid
+                    , mat^.replicates._2.files.location )
+                return $ Just $ (head mats & eid .~ "Merged") &
+                    replicates._2.files.location .~ output
+            |] $ return ()
+        path ["Make_Gene_Mat_Prep", "Make_Gene_Mat", "Merge_Gene_Mat"]
+ 
+        -- Make Peak matrix
         node "Get_Peak_List" 'getFeatures $ return ()
         ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
         uNode "Make_Feat_Mat_Prep" [| \(bed, pk) ->
@@ -250,29 +273,10 @@ builder = do
     ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Peak_Acc"
 
 --------------------------------------------------------------------------------
--- Make gene matrix
+-- Gene accessibility
 --------------------------------------------------------------------------------
-    node "Get_Promoters" [| \input -> if null input
-        then return Nothing
-        else Just <$> writePromoters
-        |] $ doc .= "Get the list of promoters from the annotation file."
-    ["Pre_Remove_Doublets"] ~> "Get_Promoters"
-
-    {-
-    uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> zip xs $ repeat $ fromJust genes |]
-    ["Pre_Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
-    nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
-        doc .= "Create cell by transcript matrix for each sample."
-    path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
-    node "Cluster_Gene_Mat" [| \(mats, cl) -> case cl of
-        Nothing -> return []
-        Just x -> subMatrix "/Feature/Gene/Cluster/" mats $ x^.replicates._2.files
-        |] $ return ()
-    ["Make_Gene_Mat", "Merged_Cluster"] ~> "Cluster_Gene_Mat"
-    -}
-
     node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
-    ["Get_Promoters", "Peak_Acc"] ~> "Gene_Acc"
+    ["Pre_Get_Promoters", "Peak_Acc"] ~> "Gene_Acc"
 
 --------------------------------------------------------------------------------
 -- Run ChromVar 

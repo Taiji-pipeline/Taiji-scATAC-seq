@@ -5,22 +5,21 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     ( mkExprTable
     , writePromoters
+    , mkCellByGene
     ) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.HashMap.Strict                  as M
-import Control.Arrow (first, second)
+import Control.Arrow (second)
 import Data.Char (toUpper)
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
-import Data.List.Ordered (nubSort)
 import Data.Singletons.Prelude (Elem)
 import qualified Data.Matrix            as Mat
 import qualified Data.Text as T
 import Bio.RealWorld.GENCODE (readGenes, Gene(..), Transcript(..), TranscriptType(..))
 import           Data.CaseInsensitive  (original)
 import           Bio.Pipeline.Utils
-import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector as V
 import Data.Conduit.Zlib (gzip)
 import qualified Data.IntervalMap.Strict as IM
@@ -31,49 +30,42 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 import qualified Taiji.Utils.DataFrame as DF
 
-{-
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
-             -> (SCATACSeq S (File tags 'Bed, Int), (File '[Gzip] 'Bed, File '[] 'Tsv))
+             -> (SCATACSeq S (File tags 'Bed, Int), File '[] 'Tsv)
              -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
-mkCellByGene prefix (input, (promoters, geneFl)) = do
+mkCellByGene prefix (input, promoters) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_gene.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . ( \(fl, nCell) -> do
-        regions <- runResourceT $ runConduit $
-            streamBedGzip (promoters^.location) .| sinkList
-        genes <- fmap B.lines $ B.readFile $ geneFl^.location
-        let geneIdx = M.fromList $ zip genes [0..]
+        regions <- map (map readBED3 . B.split ',' . last . B.split '\t') . B.lines <$>
+            B.readFile (promoters^.location)
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
-            groupCells .| mkMat nCell regions geneIdx .| sinkFile output
+            groupCells .| mkMat nCell regions .| sinkFile output
         return $ emptyFile & location .~ output )
   where
     mkMat :: (PrimMonad m, MonadThrow m)
           => Int   -- ^ the number of cells
-          -> [BED]    -- ^ a list of regions
-          -> M.HashMap B.ByteString Int
+          -> [[BED3]]    -- ^ a list of regions
           -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
-    mkMat nCell regions geneIdx = source .| unlinesAsciiC .| gzip
+    mkMat nCell regions = source .| unlinesAsciiC .| gzip
       where
-        names = V.fromList $ map (fromJust . (^.name)) regions
         source = yield header >> mapC
             (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
-        bedTree = bedToTree (++) $ zip regions $ map return [0::Int ..]
-        nBin = M.size geneIdx
-        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-        countEachCell :: BEDTree [Int] -> [BED] -> [(Int, Int)]
+        bedTree = bedToTree (++) $ concat $
+            zipWith (\i xs -> zipWith (\j x -> (x, [(i,j)])) [0..] xs) [0..] regions
+        header = B.pack $ printf "Sparse matrix: %d x %d" nCell (length regions)
+        countEachCell :: BEDTree [(Int, Int)] -> [BED] -> [(Int, Int)]
         countEachCell beds = M.toList . M.fromListWith max .
-            map (first findIdx) . M.toList . foldl' f M.empty
+            map (\((i,_), x) -> (i,x)) . M.toList . foldl' f M.empty
           where
-            findIdx i = M.lookupDefault undefined (names V.! i) geneIdx
             f m bed = foldl' (\x k -> M.insertWith (+) k (1::Int) x) m $
                 concat $ intersecting beds query
               where
                 query = case bed^.strand of
                     Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
                     _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
--}
 
 writePromoters :: SCATACSeqConfig config 
                => ReaderT config IO (File '[] 'Tsv)
