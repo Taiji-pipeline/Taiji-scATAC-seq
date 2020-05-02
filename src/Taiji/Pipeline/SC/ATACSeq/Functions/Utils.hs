@@ -212,10 +212,8 @@ mergeMatrix inputs idxOut = do
         idxVec <- fmap (V.map (flip (M.findWithDefault undefined) idxMap)) $
             runResourceT $ runConduit $ streamBedGzip (idxFl^.location) .| sinkVector
         mat <- mkSpMatrix readInt $ matFl^.location
-        return ( nm, mat
-            { _decoder = \x -> _decoder mat x .|
-                mapC (second (map (first (idxVec V.!))))
-            , _num_col = M.size idxMap } )
+        return ( nm
+               , transformation (mapC (second (map (first (idxVec V.!))))) mat{_num_col = M.size idxMap} )
     merge mats
   where
     merge ms
