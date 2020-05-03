@@ -231,7 +231,8 @@ builder = do
 
     nodePar "Make_BigWig" [| \(nm, fl) -> do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Cluster/")
-        seqIndex <- getGenomeIndex
+        seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
+            _scatacseq_genome_index )
         let output = dir <> B.unpack nm <> ".bw"
         blackRegions <- asks _scatacseq_blacklist >>= \case
             Nothing -> return []

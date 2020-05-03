@@ -32,7 +32,7 @@ mkIndices :: SCATACSeqConfig config
               [SCATACSeq N [Either SomeFile (SomeFile, SomeFile)]]
 mkIndices [] = return []
 mkIndices input = do
-    _ <- getGenomeIndex 
+    mkGenomeIndex 
     let fq = filter (isFq . either id fst) $ concat $
             input^..folded.replicates.folded.files
     unless (null fq) $ do

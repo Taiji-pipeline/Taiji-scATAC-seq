@@ -33,7 +33,8 @@ preChromVar :: SCATACSeqConfig config
                 [(Int, FilePath, File '[Gzip] 'Other, File '[] 'Other)]
 preChromVar (Just motifFl, Just peakFl, inputs) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> "/ChromVar/")
-    genome <- getGenomeIndex 
+    genome <- asks ( fromMaybe (error "Genome index file was not specified!") .
+        _scatacseq_genome_index )
     let f (Left _) = 0.5
         f (Right s) = gcContent (s :: DNA IUPAC)
         peakMat = dir <> "merged_cell_by_peak.mat.gz"

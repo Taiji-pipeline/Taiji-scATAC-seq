@@ -41,7 +41,8 @@ findMotifsPre :: SCATACSeqConfig config
 findMotifsPre p (Just region) = do
     motifFile <- fromMaybe (error "Motif file is not specified!") <$>
         asks _scatacseq_motif_file
-    genome <- getGenomeIndex
+    genome <- asks ( fromMaybe (error "Genome index file was not specified!") .
+        _scatacseq_genome_index )
     chrs <- liftIO $ withGenome genome $ return . map fst . getChrSizes
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp"))
     let output = dir ++ "/motif.bin"
@@ -54,7 +55,8 @@ findMotifs :: SCATACSeqConfig config
            => (B.ByteString, File '[Gzip] 'NarrowPeak, File '[] 'Other)
            -> ReaderT config IO (B.ByteString, Maybe (File '[] 'BigBed))
 findMotifs (chr, openChromatin, motifFl) = do
-    seqIndex <- getGenomeIndex
+    seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
+        _scatacseq_genome_index )
     chrSize <- liftIO $ withGenome seqIndex $
         return . filter ((==chr). fst) . getChrSizes
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Feature/TF/"))
