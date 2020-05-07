@@ -39,8 +39,7 @@ findMotifsPre :: SCATACSeqConfig config
               -> ReaderT config IO
                   [(B.ByteString, File '[Gzip] 'NarrowPeak, File '[] 'Other)]
 findMotifsPre p (Just region) = do
-    motifFile <- fromMaybe (error "Motif file is not specified!") <$>
-        asks _scatacseq_motif_file
+    motifFile <- getMotif
     genome <- asks ( fromMaybe (error "Genome index file was not specified!") .
         _scatacseq_genome_index )
     chrs <- liftIO $ withGenome genome $ return . map fst . getChrSizes
