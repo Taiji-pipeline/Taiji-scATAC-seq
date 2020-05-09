@@ -46,7 +46,7 @@ basicAnalysis = do
         doc .= "Read input data information."
     node "Download_Data" 'download $ doc .= "Download data."
     node "Make_Index" 'mkIndices $ doc .= "Generate the genome index."
-    uNode "Get_Fastq" 'getFastq
+    uNode "Get_Fastq" [| return . getFastq |]
     nodePar "Align" 'tagAlign $ do
         nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
@@ -55,17 +55,17 @@ basicAnalysis = do
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     path ["Read_Input", "Download_Data", "Make_Index", "Get_Fastq", "Align"]
 
-    uNode "Filter_Bam_Prep" [| \(input, x) -> getBamUnsorted input ++ x |]
+    uNode "Filter_Bam_Prep" [| \(input, x) -> return $ getBamUnsorted input ++ x |]
     ["Make_Index", "Align"] ~> "Filter_Bam_Prep"
     ["Filter_Bam_Prep"] ~> "Filter_Bam"
 
-    uNode "Get_Bam" [| \(input, x) -> getBam input ++ x |]
+    uNode "Get_Bam" [| \(input, x) -> return $ getBam input ++ x |]
     ["Make_Index", "Filter_Bam"] ~> "Get_Bam"
 
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
     nodePar "Filter_Cell" 'filterCell $ return ()
     path ["Get_Bam", "Remove_Duplicates", "Filter_Cell"]
-    uNode "Get_Bed" [| \(input, x) -> getSortedBed input ++ x |]
+    uNode "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |]
     [ "Make_Index", "Filter_Cell"] ~> "Get_Bed"
 
 -- PreClustering and doublet detection
@@ -90,7 +90,7 @@ preClustering = do
         path ["Make_Window_Mat", "Cluster"]
 
         -- Extract tags for each cluster
-        uNode "Extract_Tags_Prep"  [| uncurry zipExp |]
+        uNode "Extract_Tags_Prep"  [| return . uncurry zipExp |]
         nodePar "Extract_Tags" [| \input -> input & replicates.traverse.files %%~ ( \(bed, cl) -> do
             let idRep = asDir $ "/temp/Pre/Bed/" <> T.unpack (input^.eid) <>
                     "_rep" <> show (input^.replicates._1)
@@ -111,7 +111,7 @@ preClustering = do
             |] $ return ()
         path ["Extract_Tags", "Call_Peaks"]
 
-        uNode "Make_Peak_Mat_Prep" [| \(x, y) -> flip map (zipExp x y) $
+        uNode "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $
             \input -> input & replicates._2.files %~
                 ( \((a,_,c), pk) ->(a,pk,c) ) |]
         ["Get_Windows", "Call_Peaks"] ~> "Make_Peak_Mat_Prep"
@@ -124,10 +124,10 @@ preClustering = do
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
         -- Doublet detection
-        uNode "Detect_Doublet_Prep" [| uncurry zipExp |]
+        uNode "Detect_Doublet_Prep" [| return . uncurry zipExp |]
         nodePar "Detect_Doublet" 'detectDoublet $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
-        uNode "Remove_Doublets_Prep" [| uncurry zipExp |]
+        uNode "Remove_Doublets_Prep" [| return . uncurry zipExp |]
         nodePar "Remove_Doublets" 'removeDoublet $ return ()
         path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
@@ -137,7 +137,7 @@ preClustering = do
             else Just <$> writePromoters
             |] $ doc .= "Get the list of promoters from the annotation file."
         ["Remove_Doublets"] ~> "Get_Promoters"
-        uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> zip xs $ repeat $ fromJust genes |]
+        uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat $ fromJust genes |]
         ["Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
         nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
             doc .= "Create cell by transcript matrix for each sample."
@@ -157,7 +157,7 @@ preClustering = do
         -- Make Peak matrix
         node "Get_Peak_List" 'getFeatures $ return ()
         ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
-        uNode "Make_Feat_Mat_Prep" [| \(bed, pk) ->
+        uNode "Make_Feat_Mat_Prep" [| \(bed, pk) -> return $
             flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
                 x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
             |]
@@ -224,7 +224,7 @@ builder = do
 -- Make Cluster BED and BigWig files
 --------------------------------------------------------------------------------
     -- Extract tags for each cluster
-    uNode "Extract_Tags_Prep" [| \(x,y) -> zip x $ repeat $ fromJust y |]
+    uNode "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |]
     extractTags "/Bed/Cluster/"
     ["Pre_Remove_Doublets", "Merged_Cluster"] ~> "Extract_Tags_Prep"
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
@@ -253,7 +253,7 @@ builder = do
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
-    uNode "Make_Peak_Mat_Prep" [| \(bed, pk) ->
+    uNode "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
             x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
         |]
