@@ -6,6 +6,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     ( mkExprTable
     , writePromoters
     , mkCellByGene
+    , GeneAccDef(..)
     ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -67,9 +68,13 @@ mkCellByGene prefix (input, promoters) = do
                     Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
                     _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
 
+data GeneAccDef = PromoterOnly -- ^ -/+ 1000 around TSS
+                | PromoterPlusGeneBody   -- ^ Gene body plus upstream 2000
+
 writePromoters :: SCATACSeqConfig config 
-               => ReaderT config IO (File '[] 'Tsv)
-writePromoters = do
+               => GeneAccDef 
+               -> ReaderT config IO (File '[] 'Tsv)
+writePromoters def = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "promoters.tsv"
     genes <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust
@@ -77,19 +82,26 @@ writePromoters = do
     liftIO $ do
         let f xs = fromJust (head xs^.name) <> "\t" <>
                 B.intercalate "," (map showBED xs)
-        B.writeFile output $ B.unlines $ map f $ groupBy ((==) `on` (^.name)) $ sortBy (comparing (^.name)) promoters
+        B.writeFile output $ B.unlines $ map f $ groupBy ((==) `on` (^.name)) $
+            sortBy (comparing (^.name)) promoters
     return $ location .~ output $ emptyFile
   where
-    getPromoter gene = map f $ keepCoding $ geneTranscripts gene
+    getPromoter Gene{..} = case def of
+        PromoterOnly -> map f $ keepCoding geneTranscripts
+        PromoterPlusGeneBody -> case geneStrand of
+            True -> [BED geneChrom (max 0 $ geneLeft - 2000)
+                geneRight nm Nothing (Just geneStrand)]
+            False -> [BED geneChrom geneLeft
+                (geneRight + 2000) nm Nothing (Just geneStrand)]
       where
         keepCoding xs =
             let xs' = filter ((==Coding) . transType) xs
             in if null xs' then xs else xs'
-        nm = Just $ B.map toUpper $ original $ geneName gene
+        nm = Just $ B.map toUpper $ original geneName
         f Transcript{..}
-            | transStrand = BED (geneChrom gene) (max 0 $ transLeft - 1000)
+            | transStrand = BED geneChrom (max 0 $ transLeft - 1000)
                 (transLeft + 1000) nm Nothing (Just transStrand)
-            | otherwise = BED (geneChrom gene) (max 0 $ transRight - 1000)
+            | otherwise = BED geneChrom (max 0 $ transRight - 1000)
                 (transRight + 1000) nm Nothing (Just transStrand)
 
 -- | Combine expression data into a table and output

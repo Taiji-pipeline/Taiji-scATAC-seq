@@ -80,19 +80,26 @@ mergePeaks _ [] = return Nothing
 mergePeaks prefix input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     let output = dir <> "/merged.narrowPeak.gz" 
-    liftIO $ withTemp Nothing $ \tmp -> do
+    liftIO $ withTemp Nothing $ \tmp1 -> withTemp Nothing $ \tmp2 -> do
+        runResourceT $ runConduit $ mapM_ (streamBed . (^._2.location)) input .|
+            mapC resize .| sinkFileBed tmp1
         shelly $ escaping False $ bashPipeFail bash_ "cat" $
-            map (T.pack . (^._2.location)) input ++
-            [ "|", "sort", "-k1,1", "-k2,2n", "-k3,3n", ">", T.pack tmp ]
-        let source = streamBed tmp .| mergeSortedBedWith getBestPeak .| mapC resize 
+            [T.pack tmp1, "|", "sort", "-k1,1", "-k2,2n", "-k3,3n", ">", T.pack tmp2]
+        let source = streamBed tmp2 .|
+                mergeSortedBedWith iterativeMerge .| concatC
         runResourceT $ runConduit $ zipSources (iterateC succ (0 :: Int)) source .|
             mapC (\(i, p) -> name .~ Just ("p" <> B.pack (show i)) $ p) .|
             sinkFileBedGzip output
     return $ Just $ location .~ output $ emptyFile
   where
-    getBestPeak = maximumBy $ comparing (fromJust . (^.npPvalue))
+    iterativeMerge [] = []
+    iterativeMerge peaks = bestPeak : iterativeMerge rest
+      where
+        rest = filter (\x -> sizeOverlapped x bestPeak == 0) peaks
+        bestPeak = maximumBy (comparing (fromJust . (^.npPvalue))) peaks
     resize pk = chromStart .~ max 0 (summit - 250) $
-        chromEnd .~ summit + 250 $ pk
+        chromEnd .~ summit + 250 $
+        npPeak .~ Just 250 $ pk
       where
         summit = pk^.chromStart + fromJust (pk^.npPeak)
     
