@@ -58,7 +58,7 @@ extractBarcode = head . B.split ':'
 
 -- | Get a list of potential TSS from GTF file
 readPromoters :: FilePath -> IO (BEDTree [CI B.ByteString])
-readPromoters = fmap (bedToTree (++) . concatMap fn) . readGenes
+readPromoters = fmap (bedToTree (++) . concatMap fn) . readGenesValidated
   where
     fn :: Gene -> [(BED3, [CI B.ByteString])]
     fn Gene{..} = map g $ nubSort tss

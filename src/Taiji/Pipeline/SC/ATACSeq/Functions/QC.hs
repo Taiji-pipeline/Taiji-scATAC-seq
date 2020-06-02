@@ -51,7 +51,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
 import qualified Taiji.Utils.Plot.ECharts as E
-import Taiji.Utils (mkSpMatrix, streamRows)
+import Taiji.Utils (mkSpMatrix, streamRows, readGenesValidated)
 
 plotStat :: SCATACSeqConfig config
          => [SCATACSeq S (File '[] 'Tsv)]
@@ -200,7 +200,7 @@ tssEnrichment regions header input = modify' $ \x -> x{_te = te}
         i = if isRev bam then endLoc bam - 76 else startLoc bam + 75
 
 readTSS :: FilePath -> IO (BEDTree (Int, Bool))
-readTSS = fmap (bedToTree const . concatMap fn) . readGenes
+readTSS = fmap (bedToTree const . concatMap fn) . readGenesValidated
   where
     fn Gene{..} = map g $ nubSort tss
       where

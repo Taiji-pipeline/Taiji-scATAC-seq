@@ -18,7 +18,7 @@ import Bio.Data.Bed
 import Data.Singletons.Prelude (Elem)
 import qualified Data.Matrix            as Mat
 import qualified Data.Text as T
-import Bio.RealWorld.GENCODE (readGenes, Gene(..), Transcript(..), TranscriptType(..))
+import Bio.RealWorld.GENCODE (Gene(..), Transcript(..), TranscriptType(..))
 import           Data.CaseInsensitive  (original)
 import           Bio.Pipeline.Utils
 import qualified Data.Vector as V
@@ -77,7 +77,7 @@ writePromoters :: SCATACSeqConfig config
 writePromoters def = do
     dir <- asks ((<> "/Feature/Gene/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "promoters.tsv"
-    genes <- asks _scatacseq_annotation >>= liftIO . readGenes . fromJust
+    genes <- asks _scatacseq_annotation >>= liftIO . readGenesValidated . fromJust
     let promoters = concatMap getPromoter genes
     liftIO $ do
         let f xs = fromJust (head xs^.name) <> "\t" <>
