@@ -171,7 +171,8 @@ splitBedByCluster :: SCATACSeqConfig config
 splitBedByCluster (input, clFl) = do
     let idRep = asDir $ "/temp/" <> T.unpack (input^.eid) <>
             "_rep" <> show (input^.replicates._1)
-        exp_id = B.pack $ T.unpack $ input^.eid
+        exp_id = B.pack $
+            T.unpack (input^.eid) <> "_" <> show (input^.replicates._1)
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
     input & replicates.traverse.files %%~ ( \(bed,_) -> liftIO $ do
         let filterBarcode cl =

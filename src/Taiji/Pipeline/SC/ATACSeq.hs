@@ -103,8 +103,10 @@ preClustering = do
         path ["Extract_Tags_Prep", "Extract_Tags"]
 
         -- Make cell by peak matrix
-        nodePar "Call_Peaks" [| \input -> input & replicates.traverse.files %%~ 
-            mapM (findPeaks ("/temp/Pre/Peak/" <> T.unpack (input^.eid) <> "/")
+        nodePar "Call_Peaks" [| \input -> do
+            let dir = printf "/temp/Pre/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
+                    (input^.replicates._1)
+            input & replicates.traverse.files %%~ mapM (findPeaks dir
                  ( def & mode .~ NoModel (-100) 200
                        & cutoff .~ QValue 0.05
                  ))
@@ -116,10 +118,11 @@ preClustering = do
                 ( \((a,_,c), pk) ->(a,pk,c) ) |]
         ["Get_Windows", "Call_Peaks"] ~> "Make_Peak_Mat_Prep"
         nodePar "Make_Peak_Mat" [| \input -> do
-            let tmp = "/temp/Pre/Peak/"
+            let dir = printf "/temp/Pre/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
+                    (input^.replicates._1)
             input' <- input & replicates.traverse.files._2 %%~ fmap fromJust .
-                mergePeaks (tmp <> T.unpack (input^.eid) <> "/")
-            mkPeakMat tmp input'
+                mergePeaks dir
+            mkPeakMat "/temp/Pre/Peak/" input'
             |] $ return ()
         path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
@@ -147,7 +150,7 @@ preClustering = do
                 dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/Gene/"))
                 let output = dir <> "Merged_cell_by_gene.mat.gz"
                 liftIO $ concatMatrix output $ flip map mats $ \mat ->
-                    ( Just $ B.pack $ T.unpack $ mat^.eid
+                    ( Just $ B.pack $ T.unpack (mat^.eid) <> "_" <> show (mat^.replicates._1)
                     , mat^.replicates._2.files.location )
                 return $ Just $ (head mats & eid .~ "Merged") &
                     replicates._2.files.location .~ output
@@ -169,7 +172,7 @@ preClustering = do
                 dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/Feature/"))
                 let output = dir <> "Merged_cell_by_peak.mat.gz"
                 liftIO $ concatMatrix output $ flip map mats $ \mat ->
-                    ( Just $ B.pack $ T.unpack $ mat^.eid
+                    ( Just $ B.pack $ T.unpack (mat^.eid) <> "_" <> show (mat^.replicates._1)
                     , mat^.replicates._2.files.location )
                 return $ Just $ (head mats & eid .~ "Merged") &
                     replicates._2.files.location .~ output

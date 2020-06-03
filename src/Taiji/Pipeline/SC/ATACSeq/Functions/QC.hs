@@ -68,8 +68,9 @@ plotStat inputs = do
             stats <- readStats $ input^.replicates._2.files.location
             let stats' = filter passedQC stats
                 cellQC = plotCells teCutoff stats <> title
-                    (printf "%s: %d cells passed QC" (T.unpack $ input^.eid) (length stats'))
-            return (cellQC, (input^.eid, stats'))
+                    (printf "%s: %d cells passed QC" (T.unpack nm) (length stats'))
+                nm = (input^.eid) <> "_" <> T.pack (show $ input^.replicates._1)
+            return (cellQC, (nm, stats'))
         savePlots output cellQCs 
             [ plotNumReads stats, plotTE stats, plotDupRate stats
             , plotMitoRate stats ]
