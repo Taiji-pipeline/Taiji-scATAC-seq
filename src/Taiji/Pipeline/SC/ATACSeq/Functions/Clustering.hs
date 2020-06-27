@@ -8,6 +8,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , spectral
     , mkKNNGraph
     , clustering
+    , computeStability
+    , pickResolution
         
     , plotClusters
     , extractTags
@@ -149,6 +151,34 @@ clustering prefix resolution optimizer input = do
   where
     f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
     f _ = error "formatting error"
+
+computeStability :: SCATACSeqConfig config
+                 => ( (Optimizer, Double)
+                    , SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
+                 -> ReaderT config IO ((Optimizer, Double), Double, Double)
+computeStability ((optimizer, res), input) = do
+    tmp <- asks _scatacseq_tmp_dir
+    let knn = input^.replicates.traversed.files._2.location
+    liftIO $ withTemp tmp $ \tmpFl -> do
+        shelly $ run_ "taiji-utils"
+            [ "clust", T.pack knn, T.pack tmpFl
+            , "--stability"
+            , "--res", T.pack $ show res
+            , "--optimizer"
+            , case optimizer of
+                RBConfiguration -> "RB"
+                CPM -> "CPM"
+            ]
+        [num, st] <- words . head . lines <$> readFile tmpFl
+        return ((optimizer, res), read num, read st)
+
+pickResolution :: [(a, Double, Double)]
+               -> a
+pickResolution xs = case filter (\x -> x^._3 > 0.8) (take 5 xs') of
+    [] -> head xs' ^. _1
+    x -> maximumBy (comparing (^._2)) x ^. _1
+  where
+    xs' = sortBy (flip (comparing (^._3))) xs
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results

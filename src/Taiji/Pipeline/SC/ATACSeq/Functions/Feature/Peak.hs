@@ -55,10 +55,10 @@ findPeaks :: (SingI tags, SCATACSeqConfig config)
           => FilePath
           -> CallPeakOpts
           -> (B.ByteString, File tags 'Bed)
-          -> ReaderT config IO (B.ByteString, File '[] 'NarrowPeak)
+          -> ReaderT config IO (B.ByteString, File '[Gzip] 'NarrowPeak)
 findPeaks prefix opts (cName, bedFl) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
-    let output = dir ++ "/" ++ B.unpack cName ++ ".narrowPeak" 
+    let output = dir ++ "/" ++ B.unpack cName ++ ".narrowPeak.gz" 
     asks _scatacseq_blacklist >>= \case
         Nothing -> liftIO $ do
             r <- callPeaks output bedFl Nothing opts
@@ -67,21 +67,22 @@ findPeaks prefix opts (cName, bedFl) = do
             _ <- callPeaks tmp bedFl Nothing opts
             blackRegions <- readBed blacklist :: IO [BED3]
             let bedTree = bedToTree const $ map (\x -> (x, ())) blackRegions
-            peaks <- readBed tmp :: IO [NarrowPeak]
-            writeBed output $ filter (not . isIntersected bedTree) peaks
+            runResourceT $ runConduit $
+                (streamBedGzip tmp :: ConduitT () NarrowPeak (ResourceT IO) ()) .|
+                filterC (not . isIntersected bedTree) .| sinkFileBedGzip output
             return (cName, location .~ output $ emptyFile)
 
 -- | Merge peaks
 mergePeaks :: SCATACSeqConfig config
            => FilePath
-           -> [(B.ByteString, File '[] 'NarrowPeak)]
+           -> [(B.ByteString, File '[Gzip] 'NarrowPeak)]
            -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
 mergePeaks _ [] = return Nothing
 mergePeaks prefix input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     let output = dir <> "/merged.narrowPeak.gz" 
     liftIO $ withTemp Nothing $ \tmp1 -> withTemp Nothing $ \tmp2 -> do
-        runResourceT $ runConduit $ mapM_ (streamBed . (^._2.location)) input .|
+        runResourceT $ runConduit $ mapM_ (streamBedGzip . (^._2.location)) input .|
             mapC resize .| sinkFileBed tmp1
         shelly $ escaping False $ bashPipeFail bash_ "cat" $
             [T.pack tmp1, "|", "sort", "-k1,1", "-k2,2n", "-k3,3n", ">", T.pack tmp2]

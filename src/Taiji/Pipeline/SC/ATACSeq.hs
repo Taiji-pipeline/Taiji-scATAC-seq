@@ -19,7 +19,7 @@ import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Types
 
 getFeatures :: SCATACSeqConfig config
-            => ( [SCATACSeq S [(B.ByteString, File '[] 'NarrowPeak)]]
+            => ( [SCATACSeq S [(B.ByteString, File '[Gzip] 'NarrowPeak)]]
                , [SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)] )
             -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
 getFeatures ([], []) = return Nothing
@@ -206,15 +206,29 @@ builder = do
         Nothing -> return Nothing
         Just x -> Just <$> mkKNNGraph "/Cluster/" x
         |] $ nCore .= 4
+    uNode "Merged_Compute_Stability_Prep" [| \case
+        Nothing -> return []
+        Just input -> do
+            res <- asks _scatacseq_cluster_resolutions
+            optimizer <- asks _scatacseq_cluster_optimizer 
+            return $ zip (zip (repeat optimizer) res) $ repeat input
+        |]
+    nodePar "Merged_Compute_Stability" 'computeStability $ return ()
+    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
+        "Merged_Make_KNN", "Merged_Compute_Stability_Prep", "Merged_Compute_Stability"]
+
+    node "Merged_Pick_Resolution" [| \(knn, res) -> case knn of
+        Nothing -> return Nothing
+        Just knn' -> return $ Just (pickResolution res, knn')
+        |] $ return ()
+    ["Merged_Make_KNN", "Merged_Compute_Stability"] ~> "Merged_Pick_Resolution"
     node "Merged_Cluster" [| \case
         Nothing -> return Nothing
-        Just input -> do
-            optimizer <- asks _scatacseq_cluster_optimizer
-            resolution <- asks _scatacseq_cluster_resolution
-            Just <$> clustering "/Cluster/" resolution optimizer input
+        Just ((optimizer, res), input) -> do
+            Just <$> clustering "/Cluster/" res optimizer input
         |] $ return ()
-    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
-        "Merged_Make_KNN", "Merged_Cluster"]
+    path ["Merged_Pick_Resolution", "Merged_Cluster"]
+
     node "Merged_Cluster_Viz" [| \(qc, input) -> case input of
         Nothing -> return ()
         Just x -> do
@@ -291,6 +305,7 @@ builder = do
     path ["Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
 
     -- ChromVar
+    {-
     node "Make_Motif_Peak_Mat" 'mkMotifMat $ return ()
     ["Merge_Peaks", "Find_TFBS"] ~> "Make_Motif_Peak_Mat"
 
@@ -298,3 +313,4 @@ builder = do
     ["Make_Motif_Peak_Mat", "Merge_Peaks", "Cluster_Peak_Mat"] ~> "ChromVar_Pre"
     nodePar "ChromVar" 'runChromVar $ return ()
     ["ChromVar_Pre"] ~> "ChromVar"
+    -}
