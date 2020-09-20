@@ -14,7 +14,7 @@ import Bio.Seq.IO (withGenome, getChrSizes)
 import Bio.Data.Bed.Utils
 import           Bio.Pipeline
 import           Bio.Pipeline.Instances ()
-import Bio.Data.Bed
+import Bio.Data.Bed hiding (NarrowPeak)
 import Data.Binary
 import           Bio.Motif                     hiding (score)
 import Control.Arrow (first, second)

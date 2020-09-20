@@ -16,7 +16,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 
 import           Bio.Pipeline
 import qualified Data.HashSet as S
-import Bio.Data.Bed
+import Bio.Data.Bed hiding (NarrowPeak)
+import qualified Bio.Data.Bed as Bed
 import Data.Conduit.Internal (zipSinks, zipSources)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
@@ -68,7 +69,7 @@ findPeaks prefix opts (cName, bedFl) = do
             blackRegions <- readBed blacklist :: IO [BED3]
             let bedTree = bedToTree const $ map (\x -> (x, ())) blackRegions
             runResourceT $ runConduit $
-                (streamBedGzip tmp :: ConduitT () NarrowPeak (ResourceT IO) ()) .|
+                (streamBedGzip tmp :: ConduitT () Bed.NarrowPeak (ResourceT IO) ()) .|
                 filterC (not . isIntersected bedTree) .| sinkFileBedGzip output
             return (cName, location .~ output $ emptyFile)
 
@@ -151,7 +152,7 @@ getPeakEnrichment (peaks, Just refPeak) = do
   where
     toString x = T.pack (B.unpack $ x^.chrom) <> ":" <>
         T.pack (show $ x^.chromStart) <> "-" <> T.pack (show $ x^.chromEnd)
-    getValue :: [NarrowPeak]  -- ^ query
+    getValue :: [Bed.NarrowPeak]  -- ^ query
             -> [BED3]  -- ^ Peak list
             -> [(Double, Double)]
     getValue query peakList = runIdentity $ runConduit $

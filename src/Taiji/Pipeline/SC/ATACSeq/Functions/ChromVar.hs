@@ -9,7 +9,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.ChromVar
     ) where
 
 import qualified Data.ByteString.Char8 as B
-import Bio.Data.Bed
+import Bio.Data.Bed hiding (NarrowPeak)
+import qualified Bio.Data.Bed as Bed
 import Data.Binary (encodeFile, decodeFile)
 import Bio.Data.Bed.Utils (fetchSeq)
 import Data.Conduit.Internal (zipSinks)
@@ -45,8 +46,8 @@ preChromVar (Just motifFl, Just peakFl, inputs) = do
         mat <- mkSpMatrix readDouble peakMat
         gc <- withGenome genome $ \g -> runResourceT $ runConduit $ 
             streamBedGzip (peakFl^.location) .|
-            mapC (convert :: NarrowPeak -> BED) .|
-            fetchSeq g .| mapC f .| sinkVector
+            mapMC (liftIO . fmap f . fetchSeq g . (convert :: Bed.NarrowPeak -> BED)) .|
+            sinkVector
         readCount <- colSum mat
         let acc = U.map (logBase 10) readCount
         bk <- create >>= getBackgroundPeaks 50 (U.zip acc gc)

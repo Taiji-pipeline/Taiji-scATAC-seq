@@ -250,13 +250,14 @@ builder = do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Cluster/")
         seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
             _scatacseq_genome_index )
+        tmpdir <- fromMaybe "./" <$> asks _scatacseq_tmp_dir
         let output = dir <> B.unpack nm <> ".bw"
         blackRegions <- asks _scatacseq_blacklist >>= \case
             Nothing -> return []
             Just blacklist -> liftIO $ readBed blacklist
         liftIO $ do
             chrSize <- withGenome seqIndex $ return . getChrSizes
-            bedToBigWig output chrSize blackRegions fl
+            bedToBigWig output chrSize blackRegions tmpdir fl
         |] $ return ()
     ["Merge_Tags"] ~> "Make_BigWig"
 
