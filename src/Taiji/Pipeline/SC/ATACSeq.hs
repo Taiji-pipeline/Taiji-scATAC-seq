@@ -137,7 +137,7 @@ preClustering = do
         -- Make Gene matrix 
         node "Get_Promoters" [| \input -> if null input
             then return Nothing
-            else Just <$> writePromoters PromoterPlusGeneBody
+            else Just <$> writePromoters PromoterOnly
             |] $ doc .= "Get the list of promoters from the annotation file."
         ["Remove_Doublets"] ~> "Get_Promoters"
         uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat $ fromJust genes |]
