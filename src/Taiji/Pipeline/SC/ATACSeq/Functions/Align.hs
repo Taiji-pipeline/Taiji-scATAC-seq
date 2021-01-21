@@ -38,15 +38,14 @@ mkIndices input = do
     unless (null fq) $ do
         genome <- getGenomeFasta
         -- Generate BWA index
-        dir <- asks (fromJust . _scatacseq_bwa_index)
-        liftIO (bwaMkIndex genome dir) >> return ()
+        idx <- asks (fromJust . _scatacseq_bwa_index)
+        liftIO (bwaMkIndex genome idx) >> return ()
     return input
   where
     isFq x = getFileType x == Fastq
 
 tagAlign :: SCATACSeqConfig config
-         => SCATACSeq S ( Either (SomeTags 'Fastq)
-                (SomeTags 'Fastq, SomeTags 'Fastq) )
+         => SCATACSeq S (File '[Demultiplexed, Gzip] 'Fastq, File '[Demultiplexed, Gzip] 'Fastq)
          -> ReaderT config IO ( SCATACSeq S
                 (Either (File '[] 'Bam) (File '[PairedEnd] 'Bam)) )
 tagAlign input = do
@@ -54,15 +53,10 @@ tagAlign input = do
     idx <- asks (fromJust . _scatacseq_bwa_index)
     let output = printf "%s/%s_rep%d.bam" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . ( \fl -> case fl of
-        Left f ->
-            let f' = fromSomeTags f :: File '[] 'Fastq
-            in bwaAlign output idx (Left f') $ defaultBWAOpts & bwaCores .~ 8
-        Right (f1,f2) ->
-            let f1' = fromSomeTags f1 :: File '[] 'Fastq
-                f2' = fromSomeTags f2 :: File '[] 'Fastq
-            in bwaAlign output idx (Right (f1', f2')) $
-                defaultBWAOpts & bwaCores .~ 8
+    input & replicates.traverse.files %%~ liftIO . ( \(f1, f2) ->
+        let f1' = location .~ (f1^.location) $ emptyFile :: File '[] 'Fastq
+            f2' = location .~ (f2^.location) $ emptyFile :: File '[] 'Fastq
+        in bwaAlign output idx (Right (f1', f2')) $ defaultBWAOpts & bwaCores .~ 8
         )
 
 filterNameSortBam :: SCATACSeqConfig config

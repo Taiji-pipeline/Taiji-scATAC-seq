@@ -34,6 +34,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.QC
                        Taiji.Pipeline.SC.ATACSeq.Functions.Utils
                        Taiji.Pipeline.SC.ATACSeq.Types
+  other-modules:       Taiji.Pipeline.SC.ATACSeq.Functions.Internal
 
   build-depends:       base >= 4.7 && < 5
                      , aeson

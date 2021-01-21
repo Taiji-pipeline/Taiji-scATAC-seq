@@ -54,6 +54,7 @@ class SCATACSeqConfig config where
     _scatacseq_callpeak_opts :: config -> CallPeakOpts
     _scatacseq_annotation :: config -> Maybe FilePath
     _scatacseq_tmp_dir :: config -> Maybe FilePath
+    _scatacseq_cell_barcode_length :: config -> Maybe Int
     _scatacseq_cluster_resolutions :: config -> [Double]
     _scatacseq_cluster_optimizer :: config -> Optimizer
     _scatacseq_blacklist :: config -> Maybe FilePath

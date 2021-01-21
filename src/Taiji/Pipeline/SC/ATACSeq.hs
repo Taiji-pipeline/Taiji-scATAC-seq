@@ -46,16 +46,22 @@ basicAnalysis = do
         doc .= "Read input data information."
     node "Download_Data" 'download $ doc .= "Download data."
     node "Make_Index" 'mkIndices $ doc .= "Generate the genome index."
+
     uNode "Get_Fastq" [| return . getFastq |]
+    nodePar "Demultiplex" 'demultiplex $ return ()
+    path ["Read_Input", "Download_Data", "Make_Index", "Get_Fastq", "Demultiplex"]
+
+    uNode "Get_Fastq_Demulti"  [| \(input, x) -> return $ getDemultiFastq input <> x |]
     nodePar "Align" 'tagAlign $ do
         nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
-    nodePar "Filter_Bam" 'filterNameSortBam $ do
-        doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
-    path ["Read_Input", "Download_Data", "Make_Index", "Get_Fastq", "Align"]
+    ["Read_Input", "Demultiplex"] ~> "Get_Fastq_Demulti"
+    path ["Get_Fastq_Demulti", "Align"]
 
     uNode "Filter_Bam_Prep" [| \(input, x) -> return $ getBamUnsorted input ++ x |]
+    nodePar "Filter_Bam" 'filterNameSortBam $ do
+        doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     ["Make_Index", "Align"] ~> "Filter_Bam_Prep"
     ["Filter_Bam_Prep"] ~> "Filter_Bam"
 
