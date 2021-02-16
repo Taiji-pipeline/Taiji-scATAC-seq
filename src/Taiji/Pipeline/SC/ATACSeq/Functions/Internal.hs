@@ -25,4 +25,4 @@ demulti out1 out2 bcMap k fqidx fq1 fq2 = do
         Nothing -> Nothing
         Just bc' -> Just (addBarcode bc' fq1, addBarcode bc' fq2)
       where
-        addBarcode bc fq = fq{fastqSeqId = B.concat [B.pack $ show bc, ":", fastqSeqId fq]}
+        addBarcode bc fq = fq{fastqSeqId = B.concat [intToDna bc, ":", fastqSeqId fq]}

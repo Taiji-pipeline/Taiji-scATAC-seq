@@ -8,8 +8,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , spectral
     , mkKNNGraph
     , clustering
-    , computeStability
-    , pickResolution
         
     , plotClusters
     , extractTags
@@ -34,11 +32,11 @@ import System.IO
 import Data.List.Ordered (nubSort)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
+import Data.Conduit.Zlib (multiple, ungzip)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.Feature (streamMatrices)
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils.Plot
 import Taiji.Utils
@@ -152,33 +150,49 @@ clustering prefix resolution optimizer input = do
     f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
     f _ = error "formatting error"
 
-computeStability :: SCATACSeqConfig config
-                 => ( (Optimizer, Double)
-                    , SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
-                 -> ReaderT config IO ((Optimizer, Double), Double, Double)
-computeStability ((optimizer, res), input) = do
+-- | Evaluating the clustering results
+evalClusters :: SCATACSeqConfig config
+             => Optimizer  -- ^ Optimizer
+             -> Double     -- ^ Resolution
+             -> FilePath   -- ^ spectral
+             -> FilePath   -- ^ knn
+             -> ReaderT config IO (Int, Double, Double)
+evalClusters optimizer res spectral knn = do
     tmp <- asks _scatacseq_tmp_dir
-    let knn = input^.replicates.traversed.files._2.location
     liftIO $ withTemp tmp $ \tmpFl -> do
-        shelly $ run_ "taiji-utils"
-            [ "clust", T.pack knn, T.pack tmpFl
-            , "--stability"
-            , "--res", T.pack $ show res
-            , "--optimizer"
+        shelly $ run_ "taiji-utils" [ "clust", T.pack knn, T.pack tmpFl
+            , "--stability", "--res", T.pack $ show res, "--optimizer"
             , case optimizer of
                 RBConfiguration -> "RB"
                 CPM -> "CPM"
             ]
-        [num, st] <- words . head . lines <$> readFile tmpFl
-        return ((optimizer, res), read num, read st)
+        [_, stability] <- words . head . lines <$> readFile tmpFl
+        shelly $ run_ "taiji-utils" [ "clust", T.pack knn, T.pack tmpFl
+            , "--res", T.pack $ show res, "--optimizer"
+            , case optimizer of
+                RBConfiguration -> "RB"
+                CPM -> "CPM"
+            ]
+        clusters <- map (map readInt . B.split ',') . B.lines <$> B.readFile tmpFl
+        points <- runResourceT $ runConduit $ sourceFile spectral .|
+            multiple ungzip .| linesUnboundedAsciiC .|
+            mapC (U.fromList . map readDouble . B.split '\t') .| sinkVector
+        let sil = silhouette $ (map . map) (points V.!) clusters
+        return (length clusters, sil, read stability)
 
-pickResolution :: [(a, Double, Double)]
-               -> a
-pickResolution xs = case filter (\x -> x^._3 > 0.8) (take 5 xs') of
-    [] -> head xs' ^. _1
-    x -> maximumBy (comparing (^._2)) x ^. _1
+optimalParam :: FilePath
+             -> [((Optimizer, Double), (Int, Double, Double))]
+             -> IO (Optimizer, Double)
+optimalParam output input = do
+    savePlots output [] plt
+    return $ fst $ maximumBy (comparing (^._2._2)) $ filter (\x -> x^._2._3 >= 0.9) input
   where
-    xs' = sortBy (flip (comparing (^._3))) xs
+    (res, dat) = unzip $ flip map input $ \((_, r), (n, sil, stab)) -> (r, (fromIntegral n, sil, stab))
+    (num, sils, stabs) = unzip3 dat
+    plt = [ scatter' [("number of clusters", zip res num)]
+          , scatter' [("Silhouette", zip res sils)]
+          , scatter' [("Stability", zip res stabs)] ]
+    
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
@@ -259,21 +273,23 @@ subMatrix :: SCATACSeqConfig config
           -> [SCATACSeq S (File tags 'Other)]   -- ^ Matrices
           -> File tag' 'Other   -- Clusters
           -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
-subMatrix prefix mats clFl = do
+subMatrix prefix inputs clFl = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
     liftIO $ do
         cls <- decodeFile $ clFl^.location
-        mat <- mkSpMatrix id $ head mats ^. replicates._2.files.location
+        mat <- mkSpMatrix id $ head inputs ^. replicates._2.files.location
         let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
                 (sinkRows (S.size ids) (_num_col mat) id output >> return res)
               where
                 ids = S.fromList $ map _cell_barcode _cluster_member
                 output = dir <> B.unpack _cluster_name <> ".mat.gz"
-                res = head mats & eid .~ T.pack (B.unpack _cluster_name)
-                                & replicates._2.files.location .~ output
-        runResourceT $ runConduit $ streamMatrices id mats .|
-            sequenceSinks (map mkSink cls)
-
+                res = head inputs & eid .~ T.pack (B.unpack _cluster_name)
+                                  & replicates._2.files.location .~ output
+        mergedMat <- fmap concatMatrix' $ forM inputs $ \input -> do
+            let f x = B.concat [ B.pack $ T.unpack $ input^.eid, "_"
+                    , B.pack $ show (input^.replicates._1), "+", x ]
+            fmap (mapRows (first f)) $ mkSpMatrix id $ input^.replicates._2.files.location
+        runResourceT $ runConduit $ streamRows mergedMat .| sequenceSinks (map mkSink cls)
 
 --------------------------------------------------------------------------------
 -- Vizualization

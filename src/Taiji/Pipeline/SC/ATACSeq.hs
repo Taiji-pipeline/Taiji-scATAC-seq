@@ -14,7 +14,7 @@ import Data.List.Ordered (nubSort)
 import Data.Binary
 
 import           Taiji.Prelude
-import           Taiji.Utils (concatMatrix)
+import           Taiji.Utils (concatMatrix, optimalParam, evalClusters)
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Types
 
@@ -71,16 +71,14 @@ basicAnalysis = do
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
     nodePar "Filter_Cell" 'filterCell $ return ()
     path ["Get_Bam", "Remove_Duplicates", "Filter_Cell"]
-    uNode "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |]
-    [ "Make_Index", "Filter_Cell"] ~> "Get_Bed"
 
 -- PreClustering and doublet detection
 preClustering :: Builder ()
 preClustering = do
-    path ["Get_Bed", "Pre_Get_Windows"]
-    ["Get_Bed", "Pre_Cluster"] ~> "Pre_Extract_Tags_Prep"
+    path ["Filter_Cell", "Pre_Get_Windows"]
+    ["Filter_Cell", "Pre_Cluster"] ~> "Pre_Extract_Tags_Prep"
     ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
-    ["Get_Bed", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
+    ["Filter_Cell", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix
         nodePar "Get_Windows" [| getWindows "/Feature/Window/" |] $ return ()
@@ -197,7 +195,7 @@ builder = do
     ["Pre_Detect_Doublet"] ~> "QC"
 
 --------------------------------------------------------------------------------
--- Clustering
+-- Construct KNN
 --------------------------------------------------------------------------------
     node "Merged_Filter_Mat" [| \case
         Nothing -> return Nothing
@@ -212,28 +210,43 @@ builder = do
         Nothing -> return Nothing
         Just x -> Just <$> mkKNNGraph "/Cluster/" x
         |] $ nCore .= 4
-    uNode "Merged_Compute_Stability_Prep" [| \case
-        Nothing -> return []
-        Just input -> do
+    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
+        "Merged_Make_KNN"]
+
+--------------------------------------------------------------------------------
+-- Selecting parameter
+--------------------------------------------------------------------------------
+    uNode "Merged_Param_Search_Prep" [| \case
+        (Just spectral, Just knn) -> do
             res <- asks _scatacseq_cluster_resolutions
             optimizer <- asks _scatacseq_cluster_optimizer 
-            return $ zip (zip (repeat optimizer) res) $ repeat input
+            return $ flip map res $ \r ->
+                ( optimizer, r
+                , spectral^.replicates._2.files._2.location
+                , knn^.replicates._2.files._2.location )
+        _ -> return []
         |]
-    nodePar "Merged_Compute_Stability" 'computeStability $ return ()
-    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
-        "Merged_Make_KNN", "Merged_Compute_Stability_Prep", "Merged_Compute_Stability"]
-
-    node "Merged_Pick_Resolution" [| \(knn, res) -> case knn of
-        Nothing -> return Nothing
-        Just knn' -> return $ Just (pickResolution res, knn')
+    ["Merged_Reduce_Dims", "Merged_Make_KNN"] ~> "Merged_Param_Search_Prep"
+    nodePar "Merged_Param_Search" [| \(optimizer, r, spectral, knn) -> do
+        res <- liftIO $ evalClusters optimizer r spectral knn
+        return ((optimizer, r), res)
         |] $ return ()
-    ["Merged_Make_KNN", "Merged_Compute_Stability"] ~> "Merged_Pick_Resolution"
+    path ["Merged_Param_Search_Prep", "Merged_Param_Search"]
+
+    node "Merged_Get_Param" [| \(knn, res) -> case knn of
+        Nothing -> return Nothing
+        Just knn' -> do
+            dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")
+            p <- liftIO $ optimalParam (dir <> "Clustering_parameters.html") res
+            return $ Just (p, knn')
+        |] $ return ()
+    ["Merged_Make_KNN", "Merged_Param_Search"] ~> "Merged_Get_Param"
     node "Merged_Cluster" [| \case
         Nothing -> return Nothing
         Just ((optimizer, res), input) -> do
             Just <$> clustering "/Cluster/" res optimizer input
         |] $ return ()
-    path ["Merged_Pick_Resolution", "Merged_Cluster"]
+    path ["Merged_Get_Param", "Merged_Cluster"]
 
     node "Merged_Cluster_Viz" [| \(qc, input) -> case input of
         Nothing -> return ()

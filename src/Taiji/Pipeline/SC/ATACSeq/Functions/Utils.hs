@@ -18,7 +18,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
       -- * Feature matrix
     , mkFeatMat
     , groupCells
-    , mergeMatrix
     ) where
 
 import Bio.Data.Bed
@@ -28,7 +27,6 @@ import Data.Conduit.List (groupBy)
 import Data.Conduit.Internal (zipSinks)
 import           Bio.RealWorld.GENCODE
 import Control.Arrow (first, second)
-import Data.Either (either)
 import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Set as S
@@ -198,36 +196,3 @@ groupCells :: Monad m => ConduitT BED (B.ByteString, [BED]) m ()
 groupCells = groupBy ((==) `on` (^.name)) .|
     mapC (\xs -> (fromJust $ head xs^.name, xs))
 {-# INLINE groupCells #-}
-
--- | Merge sparse matrix.
-mergeMatrix :: Elem 'Gzip tags1 ~ 'True
-            => [(B.ByteString, (File tags1 file, File tags2 'Other))]  -- ^ (regions, matrix)
-            -> FilePath   -- ^ Index file output
-            -> ConduitT () B.ByteString (ResourceT IO) ()
-mergeMatrix inputs idxOut = do
-    indices <- liftIO $ getIndices $ map (fst . snd) inputs
-    liftIO $ runResourceT $ runConduit $ yieldMany indices .| sinkFileBedGzip idxOut 
-    let idxMap = M.fromList $ zip indices [0..]
-    mats <- liftIO $ forM inputs $ \(nm, (idxFl, matFl)) -> do
-        idxVec <- fmap (V.map (flip (M.findWithDefault undefined) idxMap)) $
-            runResourceT $ runConduit $ streamBedGzip (idxFl^.location) .| sinkVector
-        mat <- mkSpMatrix readInt $ matFl^.location
-        return ( nm
-               , transformation (mapC (second (map (first (idxVec V.!))))) mat{_num_col = M.size idxMap} )
-    merge mats
-  where
-    merge ms
-        | any (/=nBin) (map (_num_col . snd) ms) = error "Column unmatched!"
-        | otherwise = source .|
-            (yield header >> mapC (encodeRowWith (fromJust . packDecimal))) .|
-            unlinesAsciiC .| gzip
-      where
-        source = forM_ ms $ \(sample, m) -> streamRows m .| 
-            mapC (first (\x -> sample <> "+" <> x))
-        nCell = foldl' (+) 0 $ map (_num_row . snd) ms
-        nBin = _num_col $ snd $ head ms
-        header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
-    getIndices :: [File tags file] -> IO [BED3]
-    getIndices idxFls = fmap S.toList $ runResourceT $ runConduit $
-        mapM_ (streamBedGzip . (^.location)) idxFls .|
-        foldlC (flip S.insert) S.empty

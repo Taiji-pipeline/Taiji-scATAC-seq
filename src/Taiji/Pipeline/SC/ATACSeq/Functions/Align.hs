@@ -12,7 +12,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ) where
 
 import Bio.Data.Bed
-import Bio.Data.Bed.Types (BED(..))
 import Bio.Data.Bam
 import           Bio.HTS
 import Data.Conduit.Internal (zipSinks)
