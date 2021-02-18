@@ -32,7 +32,6 @@ import System.IO
 import Data.List.Ordered (nubSort)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
-import Data.Conduit.Zlib (multiple, ungzip)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Prelude
@@ -149,50 +148,6 @@ clustering prefix resolution optimizer input = do
   where
     f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
     f _ = error "formatting error"
-
--- | Evaluating the clustering results
-evalClusters :: SCATACSeqConfig config
-             => Optimizer  -- ^ Optimizer
-             -> Double     -- ^ Resolution
-             -> FilePath   -- ^ spectral
-             -> FilePath   -- ^ knn
-             -> ReaderT config IO (Int, Double, Double)
-evalClusters optimizer res spectral knn = do
-    tmp <- asks _scatacseq_tmp_dir
-    liftIO $ withTemp tmp $ \tmpFl -> do
-        shelly $ run_ "taiji-utils" [ "clust", T.pack knn, T.pack tmpFl
-            , "--stability", "--res", T.pack $ show res, "--optimizer"
-            , case optimizer of
-                RBConfiguration -> "RB"
-                CPM -> "CPM"
-            ]
-        [_, stability] <- words . head . lines <$> readFile tmpFl
-        shelly $ run_ "taiji-utils" [ "clust", T.pack knn, T.pack tmpFl
-            , "--res", T.pack $ show res, "--optimizer"
-            , case optimizer of
-                RBConfiguration -> "RB"
-                CPM -> "CPM"
-            ]
-        clusters <- map (map readInt . B.split ',') . B.lines <$> B.readFile tmpFl
-        points <- runResourceT $ runConduit $ sourceFile spectral .|
-            multiple ungzip .| linesUnboundedAsciiC .|
-            mapC (U.fromList . map readDouble . B.split '\t') .| sinkVector
-        let sil = silhouette $ (map . map) (points V.!) clusters
-        return (length clusters, sil, read stability)
-
-optimalParam :: FilePath
-             -> [((Optimizer, Double), (Int, Double, Double))]
-             -> IO (Optimizer, Double)
-optimalParam output input = do
-    savePlots output [] plt
-    return $ fst $ maximumBy (comparing (^._2._2)) $ filter (\x -> x^._2._3 >= 0.9) input
-  where
-    (res, dat) = unzip $ flip map input $ \((_, r), (n, sil, stab)) -> (r, (fromIntegral n, sil, stab))
-    (num, sils, stabs) = unzip3 dat
-    plt = [ scatter' [("number of clusters", zip res num)]
-          , scatter' [("Silhouette", zip res sils)]
-          , scatter' [("Stability", zip res stabs)] ]
-    
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
@@ -330,16 +285,16 @@ outputMetaData output stat = B.writeFile output . B.unlines . (header:) . concat
   where
     f CellCluster{..} = map g _cluster_member
       where
-        g Cell{..} = B.intercalate "\t"
-            [ _cell_barcode
-            , cl
-            , toShortest $ fst _cell_2d
-            , toShortest $ snd _cell_2d
-            , toShortest $ maybe 0 _te $ M.lookup _cell_barcode stat'
-            , fromJust $ packDecimal $ maybe 0 _uniq_reads $ M.lookup _cell_barcode stat'
-            , toShortest $ maybe 0 _doublet_score $ M.lookup _cell_barcode stat'
-            , toShortest $ maybe 0 _mito_rate $ M.lookup _cell_barcode stat'
-            , toShortest $ maybe 0 _dup_rate $ M.lookup _cell_barcode stat'
+        g Cell{..} = B.intercalate "\t" $ map (fromMaybe "NA")
+            [ Just _cell_barcode
+            , Just cl
+            , Just $ toShortest $ fst _cell_2d
+            , Just $ toShortest $ snd _cell_2d
+            , fmap (toShortest . _te) $ M.lookup _cell_barcode stat'
+            , fmap (fromJust . packDecimal . _uniq_reads) $ M.lookup _cell_barcode stat'
+            , join $ fmap (fmap toShortest . _doublet_score) $ M.lookup _cell_barcode stat'
+            , join $ fmap (fmap toShortest . _mito_rate) $ M.lookup _cell_barcode stat'
+            , join $ fmap (fmap toShortest . _dup_rate) $ M.lookup _cell_barcode stat'
             ]
         cl = B.tail _cluster_name
     header = B.intercalate "\t"

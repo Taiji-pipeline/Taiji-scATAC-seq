@@ -69,15 +69,21 @@ basicAnalysis = do
     ["Make_Index", "Filter_Bam"] ~> "Get_Bam"
 
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
+    path ["Get_Bam", "Remove_Duplicates"]
+
+    uNode "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |]
+    ["Make_Index", "Remove_Duplicates"] ~> "Get_Bed"
+
+    nodePar "Run_QC" 'getQCMetric $ return ()
     nodePar "Filter_Cell" 'filterCell $ return ()
-    path ["Get_Bam", "Remove_Duplicates", "Filter_Cell"]
+    path ["Get_Bed", "Run_QC", "Filter_Cell"]
 
 -- PreClustering and doublet detection
 preClustering :: Builder ()
 preClustering = do
     path ["Filter_Cell", "Pre_Get_Windows"]
     ["Filter_Cell", "Pre_Cluster"] ~> "Pre_Extract_Tags_Prep"
-    ["Pre_Make_Peak_Mat", "Remove_Duplicates"] ~> "Pre_Detect_Doublet_Prep"
+    ["Pre_Make_Peak_Mat", "Run_QC"] ~> "Pre_Detect_Doublet_Prep"
     ["Filter_Cell", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
     namespace "Pre" $ do
         -- Creating Cell by Window matrix

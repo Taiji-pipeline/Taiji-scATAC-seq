@@ -24,7 +24,6 @@ import           Data.Binary (Binary(..))
 import Bio.Data.Experiment.Types
 import qualified Data.ByteString.Char8 as B
 import Bio.Data.Experiment.Replicate
-import Bio.Pipeline.CallPeaks (CallPeakOpts)
 import GHC.Generics (Generic)
 import qualified Data.Text as T
 import Control.Exception (catch, SomeException(..))
@@ -65,11 +64,11 @@ class SCATACSeqConfig config where
 
 data Stat = Stat
     { _barcode :: B.ByteString
-    , _dup_rate :: Double
-    , _mito_rate :: Double
+    , _dup_rate :: Maybe Double
+    , _mito_rate :: Maybe Double
     , _te :: Double
     , _uniq_reads :: Int
-    , _doublet_score :: Double }
+    , _doublet_score :: Maybe Double }
 
 qcDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")
@@ -148,5 +147,5 @@ getQCFunction = do
     teCutoff <- asks _scatacseq_te_cutoff
     fragmentCutoff <- asks _scatacseq_minimal_fragment
     doubletCutoff <- asks _scatacseq_doublet_score_cutoff
-    return $ \x -> _te x >= teCutoff && _uniq_reads x >= fragmentCutoff && _doublet_score x <= doubletCutoff
+    return $ \x -> _te x >= teCutoff && _uniq_reads x >= fragmentCutoff && fromMaybe 0 (_doublet_score x) <= doubletCutoff
 {-# INLINE getQCFunction #-}

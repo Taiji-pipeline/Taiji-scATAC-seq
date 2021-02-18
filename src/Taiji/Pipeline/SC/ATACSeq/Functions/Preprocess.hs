@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     ( readInput
     , download
@@ -85,16 +86,18 @@ getBam input = concatMap split $ concatMap split $
               fl `hasTag` PairedEnd = Just $ Right $ fromSomeFile fl
          | getFileType fl == Bam && fl `hasTag` NameSorted = Just $ Left $ fromSomeFile fl
          | otherwise = Nothing
-     
-getSortedBed :: [RAWInput]
-             -> [ SCATACSeq S (File '[NameSorted, Gzip] 'Bed) ]
-getSortedBed input = concatMap split $ concatMap split $
-    input & mapped.replicates.mapped.files %~ f
-  where
-    f fls = map fromSomeFile $
-        filter (\x -> getFileType x == Bed && x `hasTag` NameSorted &&
-            x `hasTag` Gzip) $ lefts fls
 
+getSortedBed :: ( unpair ~ '[NameSorted, Gzip]
+                , paired ~ '[NameSorted, PairedEnd, Gzip] )
+             => [RAWInput]
+             -> [SCATACSeq S (Either (File unpair 'Bed) (File paired 'Bed))]
+getSortedBed input = concatMap split $ concatMap split $
+    input & mapped.replicates.mapped.files %~ map f . filter filterFn . lefts
+  where
+    filterFn x = getFileType x == Bed && x `hasTag` NameSorted && x `hasTag` Gzip
+    f fl | fl `hasTag` PairedEnd = Right $ fromSomeFile fl
+         | otherwise = Left $ fromSomeFile fl
+      
 demultiplex :: SCATACSeqConfig config
             => SCATACSeq S ( (File '[Gzip] 'Fastq, File '[Gzip] 'Fastq)
                            , File '[Gzip] 'Fastq )

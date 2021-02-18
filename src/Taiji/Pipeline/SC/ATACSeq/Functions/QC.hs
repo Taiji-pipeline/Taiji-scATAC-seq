@@ -6,13 +6,12 @@
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ( plotStat
     , readStats
+    , writeStats
     , showStat
     , decodeStat
     , rmAbnoramlFragment
     , rmChrM
     , rmDup
-    , baseCoverageStat
-    , totalReads
     , tssEnrichment
     , readTSS
     , detectDoublet
@@ -31,11 +30,8 @@ import Language.Javascript.JMacro
 import Bio.Utils.Functions (slideAverage)
 import           Bio.Data.Bed
 import Bio.RealWorld.GENCODE
-import           Bio.Data.Bed.Types
-import Bio.Utils.Misc (readInt, readDouble)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
-import qualified Data.IntMap.Strict as I
 import qualified Data.HashSet as S
 import Data.Conduit.List (groupBy)
 import Data.Conduit.Internal (zipSinks)
@@ -48,6 +44,7 @@ import Shelly (shelly, run_)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (extractBarcode)
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
 import qualified Taiji.Utils.Plot.ECharts as E
@@ -80,25 +77,34 @@ plotStat inputs = do
         return outputStat
 
 readStats :: FilePath -> IO [Stat]
-readStats = fmap (map decodeStat . B.lines) . B.readFile
+readStats = fmap (map decodeStat . tail . B.lines) . B.readFile
+
+writeStats :: FilePath -> [Stat] -> IO ()
+writeStats output stats = B.writeFile output $ B.unlines $ header : map showStat stats
+  where
+    header = "barcode\tduplication_rate\tchrM_rate\tTSSe\tunique_fragment\tdoublet_likelihood"
 
 showStat :: Stat -> B.ByteString
 showStat Stat{..} = B.intercalate "\t" $
     [ _barcode
-    , B.pack $ show _dup_rate
-    , B.pack $ show _mito_rate
+    , maybe "NA" (B.pack . show) _dup_rate
+    , maybe "NA" (B.pack . show) _mito_rate
     , B.pack $ show _te
     , B.pack $ show _uniq_reads
-    , B.pack $ show _doublet_score ]
+    , maybe "NA" (B.pack . show) _doublet_score ]
 {-# INLINE showStat #-}
 
 decodeStat :: B.ByteString -> Stat
-decodeStat x = Stat bc (readDouble dupRate) (readDouble mitoRate)
-    (readDouble te) (readInt uniq) (readDouble ds)
+decodeStat x = Stat bc
+    (if dupRate == "NA" then Nothing else Just $ readDouble dupRate)
+    (if mitoRate == "NA" then Nothing else Just $ readDouble mitoRate)
+    (readDouble te) (readInt uniq) 
+    (if ds == "NA" then Nothing else Just $ readDouble ds)
   where
     [bc, dupRate, mitoRate, te, uniq, ds] = B.split '\t' x
 {-# INLINE decodeStat #-}
 
+{-
 baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
 baseCoverageStat header bam = sort $ I.toList $ runIdentity $ runConduit $
     mergeBedWith counts beds .| foldlC (I.unionWith (+)) I.empty
@@ -128,77 +134,84 @@ toBed header = sortedBamToBedPE header .| concatMapC makeFragment
                   then Just (asBed (b1^.chrom) left right :: BED3)
                   else error "Left coordinate is larger than right coordinate."
 {-# INLINE toBed #-}
+-}
 
-rmAbnoramlFragment:: [BAM] -> State Stat [BAM]
-rmAbnoramlFragment = return . filter f  
-  where
-    f bam = let s = abs $ tLen bam
-            in s > 30 && s < 1000
+rmAbnoramlFragment:: [BAM] -> [BAM]
+rmAbnoramlFragment = filter $ \bam ->
+    let s = abs $ tLen bam in s > 30 && s < 1000
 {-# INLINE rmAbnoramlFragment #-}
 
--- | Remove duplicates for reads originated from a single cell.
-rmDup :: [BAM] -> State Stat [BAM]
-rmDup [] = return []
-rmDup input = do
-    modify' $ \x -> x{_dup_rate = dupRate}
-    return output
+-- | Remove duplicates for reads originated from a single cell and convert
+-- BAM to BED with TN5 correction.
+-- The BED interval of the fragment is obtained by adjusting the BAM alignment
+-- interval of the sequenced read-pair. The start of the interval is moved
+-- forward by 4bp from a left-most alignment position and backward 5bp from the
+-- right-most alignment position. The transposase cuts the two DNA strands with
+-- a 9bp overhang, and adjusted positions represent the center point between
+-- these cuts; this position is recorded as a cut site that represents a
+-- chromatin accessibility event.
+rmDup :: Bool -> BAMHeader -> [BAM] -> ([BED], Double)
+rmDup _ _ [] = ([], 0)
+rmDup pair hdr input' = (output, dupRate)
   where
-    output = map snd $ M.elems $ M.fromListWith collapse $
-        map (\b -> (getKey b, (getSc b, b))) input
-    collapse x y | fst x > fst y = x
-                 | otherwise = y
-    getKey b | not (hasMultiSegments flg) || isNextUnmapped flg = singleKey
-             | otherwise = pairKey
+    input = filter (\b ->
+        let f = flag b
+        in not pair || (isFirstSegment f && hasMultiSegments f && not (isNextUnmapped f))) input'
+    output = map (\(_, bed, c) -> score .~ Just c $ bed) $ M.elems $
+        M.fromListWith collapse $
+        map (\b -> (getKey b, (getSc b, toBed b, 1))) input
+    collapse (sc1, b1, c1) (sc2, b2, c2) | sc1 > sc2 = (sc1, b1, c1+c2)
+                                         | otherwise = (sc2, b2, c1+c2)
+    getKey b | pair = pairKey
+             | otherwise = singleKey
       where
         (singleKey, pairKey) = makeKey (const Nothing) b
-        flg = flag b
     getSc b = case queryAuxData ('m', 's') b of
         Just (AuxInt x) -> x + fromJust (sumQual 15 b)
         _ -> fromJust $ sumQual 15 b
+    toBed b | pair = adjust $ fromJust $ bamToFragment hdr b
+            | otherwise = adjust $ fromJust $ bamToBed hdr b
+      where
+        adjust x = name %~ fmap extractBarcode $ chromStart %~ (+4) $ chromEnd %~ (subtract 5) $ x
     dupRate = 1 - fromIntegral (length output) / fromIntegral (length input)
 {-# INLINE rmDup #-}
 
 -- | Remove chrM reads.
-rmChrM :: BAMHeader -> [BAM] -> State Stat ([BAM], [BAM])
-rmChrM _ [] = return ([], [])
-rmChrM header input = do
-    modify' $ \x -> x{_mito_rate = chrMRate}
-    return output
+rmChrM :: [BED] -> ([BED], [BED], Double)
+rmChrM [] = ([], [], 0)
+rmChrM input = (output, mito, chrMRate)
   where
-    output = partition notChrM input
-    chrMRate = fromIntegral (length $ snd output) / fromIntegral (length input)
-    notChrM x = let chr = fromJust $ refName header x
-                in chr /= "chrM" && chr /= "M"
+    (output, mito) = partition notChrM input
+    chrMRate = fromIntegral (length output) / fromIntegral (length input)
+    notChrM x = let chr = x^.chrom in chr /= "chrM" && chr /= "M"
 {-# INLINE rmChrM #-}
 
-totalReads :: [BAM] -> State Stat ()
-totalReads bam = modify' $ \s -> s
-    {_uniq_reads = length $ filter (f . flag) bam}
-  where
-    f x = not (hasMultiSegments x) || isFirstSegment x
-{-# INLINE totalReads #-}
-
 tssEnrichment :: BEDTree (Int, Bool)   -- ^ TSS
-              -> BAMHeader -> [BAM] -> State Stat ()
-tssEnrichment regions header input = modify' $ \x -> x{_te = te}
-  where
-    te = U.maximum $ normalize vec 
-      where
-        vec = U.create $ do
+              -> [BED]   -- ^ Valid input can be fragments or single-end reads
+              -> Double
+tssEnrichment regions beds = U.maximum $ normalize $ U.create $ do
             v <- UM.replicate 4000 0
-            forM_ input $ \r -> do
-                let cutsite = getCutSite r
+            forM_ (concatMap getCutSite beds) $ \cutsite ->
                 forM_ (IM.elems $ intersecting regions cutsite) $ \(x, str) ->
                     UM.unsafeModify v (+1) $ if str
                         then cutsite^.chromStart - (x - 2000)
                         else 3999 - (x + 2000 - cutsite^.chromStart)
             return v
+  where
     normalize vec = slideAverage 5 $ U.map (/bk) vec
       where
         bk = (U.sum (U.take 100 vec) + U.sum (U.drop 3900 vec)) / 200 + 0.1
-    getCutSite bam = BED3 (fromJust $ refName header bam) i $ i + 1
+    getCutSite bed = case bed^.strand of
+        -- This is a fragment
+        Nothing -> [left, right]
+        -- Single forward strand
+        Just True -> [left]
+        -- Single reverse strand
+        Just False -> [right]
       where
-        i = if isRev bam then endLoc bam - 76 else startLoc bam + 75
+        left = let i = bed^.chromStart + 75 in BED3 (bed^.chrom) i $ i+1
+        right = let i = bed^.chromEnd - 76 in BED3 (bed^.chrom) i $ i+1
+{-# INLINE tssEnrichment #-}
 
 readTSS :: FilePath -> IO (BEDTree (Int, Bool))
 readTSS = fmap (bedToTree const . concatMap fn) . readGenesValidated
@@ -208,6 +221,7 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenesValidated
         g x = (BED3 geneChrom (x - 2000) (x + 2000), (x, geneStrand))
         tss | geneStrand = geneLeft : map transLeft geneTranscripts
             | otherwise = geneRight : map transRight geneTranscripts
+{-# INLINE readTSS #-}
 
 removeDoublet :: SCATACSeqConfig config
               => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
@@ -229,7 +243,7 @@ removeDoublet input = do
         return (location .~ output $ emptyFile, nCells) )
 
 detectDoublet :: SCATACSeqConfig config
-              => SCATACSeq S (File tags 'Other, (a, b, File '[] 'Tsv ))
+              => SCATACSeq S (File tags 'Other, (a, File '[] 'Tsv ))
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
 detectDoublet input = do
     dir <- qcDir
@@ -237,7 +251,7 @@ detectDoublet input = do
             show (input^.replicates._1) <> ".tsv"
         outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
-    input & replicates.traverse.files %%~ liftIO . (\(fl, (_,_,stat)) -> withTemp Nothing $ \tmp -> do
+    input & replicates.traverse.files %%~ liftIO . (\(fl, (_,stat)) -> withTemp Nothing $ \tmp -> do
         shelly $ run_ "taiji-utils" ["doublet", T.pack $ fl^.location, T.pack tmp]
         [probs, threshold, sc, sim_sc] <- B.lines <$> B.readFile tmp
         let th = readDouble threshold
@@ -253,9 +267,9 @@ detectDoublet input = do
         bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
         let doubletScore = M.fromList $ zip bcs dProbs
         stats <- readStats $ stat^.location
-        B.writeFile output $ B.unlines $ flip map stats $ \s ->
+        writeStats output $ flip map stats $ \s ->
             let v = M.findWithDefault 0 (_barcode s) doubletScore
-            in showStat s{_doublet_score = v}
+            in s{_doublet_score = Just v}
         return $ location .~ output $ emptyFile
         )
   where
@@ -291,11 +305,11 @@ plotDupRate stats = E.addAttr [jmacroE| {
     }|] plt
   where
     plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
-        (nm, map _dup_rate stat)
+        (nm, map (fromMaybe 0 . _dup_rate) stat)
 
 plotMitoRate :: [(T.Text, [Stat])] -> E.EChart
 plotMitoRate stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
-    (nm, map _mito_rate stat)
+    (nm, map (fromMaybe 0 . _mito_rate) stat)
 
 plotNumReads :: [(T.Text, [Stat])] -> E.EChart
 plotNumReads stats = E.addAttr [jmacroE| {
@@ -331,7 +345,7 @@ plotDoubletScore stats = E.addAttr [jmacroE| {
     }|] plt
   where
     plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
-        (nm, map _doublet_score stat)
+        (nm, map (fromMaybe 0 . _doublet_score) stat)
 
 plotCells :: Double -> [Stat] -> Vega
 plotCells teCutoff input = plt <> axes <> vline <> hline <> scales

@@ -1,24 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE GADTs #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
     , mkIndices
     , filterNameSortBam
     , deDuplicates
+    , getQCMetric
     , filterCell
     ) where
 
 import Bio.Data.Bed
 import Bio.Data.Bam
+import Data.Binary (encodeFile, decodeFile)
 import           Bio.HTS
+import qualified Data.ByteString.Char8 as B
 import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
+import qualified Data.Map.Strict as M
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -73,57 +79,7 @@ filterNameSortBam input = do
     input & replicates.traverse.files %%~ liftIO . either
         (fmap Left . fun) (fmap Right . filterBam tmp output)
 
-deDuplicates :: SCATACSeqConfig config
-             => SCATACSeq S ( Either
-                 (File '[NameSorted] 'Bam)
-                 (File '[NameSorted, PairedEnd] 'Bam) )
-             -> ReaderT config IO
-                 (SCATACSeq S ( File '[NameSorted, Filtered] 'Bam  -- ^ filtered reads
-                              , File '[NameSorted] 'Bam        -- ^ mito reads
-                              , File '[] 'Tsv ))               -- ^ Stat
-deDuplicates input = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bam"))
-    tss <- getAnnotation >>= liftIO . readTSS
-    let outputBam = printf "%s/%s_rep%d_srt_filt.bam" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        outputStat = printf "%s/%s_rep%d_qc.txt" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        outputMito = printf "%s/%s_rep%d_mito.bam" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        f pair fl = do
-            header <- getBamHeader fl
-            _ <- runResourceT $ runConduit $ streamBam fl .|
-                groupBy ((==) `on` (extractBarcode . queryName)) .|
-                mapC (filterReads header pair tss) .| zipSinks
-                    ( zipSinks
-                        (concatMapC (fst . fst) .| sinkBam outputBam header)
-                        (concatMapC (snd . fst) .| sinkBam outputMito header) )
-                    (mapC (showStat . snd) .| unlinesAsciiC .| sinkFile outputStat)
-            return ( location .~ outputBam $ emptyFile
-                   , location .~ outputMito $ emptyFile
-                   , location .~ outputStat $ emptyFile )
-    input & replicates.traverse.files %%~ liftIO . either
-        (f False . (^.location)) (f True . (^.location))
-
--- | Remove duplicated and chrM reads. 
-filterReads :: BAMHeader
-            -> Bool   -- ^ is PairedEnd
-            -> BEDTree (Int, Bool)   -- ^ TSS
-            -> [BAM]
-            -> (([BAM], [BAM]), Stat)
-filterReads hdr pair tss bam = runState filterFn $ Stat bc 0 0 0 0 0
-  where
-    filterFn = do
-        (tags, mito) <- if pair
-            then rmAbnoramlFragment bam >>= rmDup >>= rmChrM hdr
-            else rmDup bam >>= rmChrM hdr
-        tssEnrichment tss hdr tags
-        totalReads tags
-        return (tags, mito)
-    bc = extractBarcode $ queryName $ head bam
-{-# INLINE filterReads #-}
-
--- | Filter QC-failed cells and convert bam to bed with TN5 correction.
+-- | Remove duplicates and convert bam file to fragments.
 -- The BED interval of the fragment is obtained by adjusting the BAM alignment
 -- interval of the sequenced read-pair. The start of the interval is moved
 -- forward by 4bp from a left-most alignment position and backward 5bp from the
@@ -131,34 +87,101 @@ filterReads hdr pair tss bam = runState filterFn $ Stat bc 0 0 0 0 0
 -- a 9bp overhang, and adjusted positions represent the center point between
 -- these cuts; this position is recorded as a cut site that represents a
 -- chromatin accessibility event.
-filterCell :: SCATACSeqConfig config
-           => (SCATACSeq S ( File '[NameSorted, Filtered] 'Bam 
-                           , File '[NameSorted] 'Bam        
-                           , File '[] 'Tsv ))               
+deDuplicates :: ( SCATACSeqConfig config
+                , unpair ~ '[NameSorted]
+                , paired ~ '[NameSorted, PairedEnd]
+                , unpair' ~ Insert' Gzip unpair
+                , paired' ~ Insert' Gzip paired )
+             => SCATACSeq S (Either (File unpair 'Bam) (File paired 'Bam))
+             -> ReaderT config IO (
+                 SCATACSeq S (Either (File unpair' 'Bed) (File paired' 'Bed)) )
+deDuplicates input = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
+    let outputBed = printf "%s/%s_rep%d_fragments.bed.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        outputStat = printf "%s/%s_rep%d_dup.qc" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        f pair fl = do
+            header <- getBamHeader fl
+            let filterReads bam = (bed, (bc, dupRate))
+                  where
+                    (bed, dupRate) = rmDup pair header (if pair then rmAbnoramlFragment bam else bam)
+                    bc = extractBarcode $ queryName $ head bam
+            (_, stat) <- runResourceT $ runConduit $ streamBam fl .|
+                groupBy ((==) `on` (extractBarcode . queryName)) .|
+                mapC filterReads .| zipSinks
+                    (concatMapC fst .| sinkFileBedGzip outputBed)
+                    (mapC snd .| sinkList)
+            encodeFile outputStat (stat :: [(B.ByteString, Double)])
+    input & replicates.traverse.files %%~ liftIO . ( \case
+        Left fl -> do
+            f False $ fl^.location
+            return $ Left $ info .~ [("QC", T.pack outputStat)] $
+                location .~ outputBed $ emptyFile
+        Right fl -> do
+            f True $ fl^.location
+            return $ Right $ info .~ [("QC", T.pack outputStat)] $
+                location .~ outputBed $ emptyFile )
+
+getQCMetric :: ( SCATACSeqConfig config
+               , unpair ~ '[NameSorted, Gzip]
+               , paired ~ '[NameSorted, PairedEnd, Gzip] )
+             => SCATACSeq S (Either (File unpair 'Bed) (File paired 'Bed))
+             -> ReaderT config IO (SCATACSeq S 
+                 ( Either (File unpair 'Bed) (File paired 'Bed)
+                 , File '[] 'Tsv ))
+getQCMetric input = do
+    dir <- qcDir
+    tss <- getAnnotation >>= liftIO . readTSS
+    let output = printf "%s/%s_rep%d_qc.tsv" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+    input & replicates.traverse.files %%~ liftIO . \fl -> do
+        q <- either (qc output tss . SomeFile) (qc output tss . SomeFile) fl
+        return (fl, q)
+  where
+    qc output tss (SomeFile fl) = do
+        dupQC <- case M.lookup "QC" (fl^.info) of
+            Nothing -> return Nothing
+            Just q -> fmap (Just . M.fromList) $ decodeFile $ T.unpack q
+        stats <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
+            groupBy ((==) `on` (^.name)) .| mapC (f dupQC) .| sinkList
+        writeStats output stats
+        return $ location .~ output $ emptyFile
+      where
+        f dupQC beds = Stat bc dupRate (Just chrMRate) te num Nothing
+          where
+            bc = fromJust $ head beds ^. name
+            dupRate = join $ fmap (M.lookup bc) dupQC
+            (beds', _, chrMRate) = rmChrM beds
+            te = tssEnrichment tss beds'
+            num = length beds'
+
+-- | Filter QC-failed cells and convert fragments into TN5 insertions.
+filterCell :: ( SCATACSeqConfig config
+              , unpair ~ '[NameSorted, Gzip]
+              , paired ~ '[NameSorted, PairedEnd, Gzip] )
+           => SCATACSeq S ( Either (File unpair 'Bed) (File paired 'Bed)
+                          , File '[] 'Tsv )
            -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
 filterCell input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
     passedQC <- getQCFunction
-    let output = printf "%s/%s_rep%d_srt_filt.bed.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_TN5_insertion.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(bamFl, _, statFl) -> do
-        stats <- readStats $ statFl^.location
+    input & replicates.traverse.files %%~ liftIO . ( \(bedFl, qcFl) -> do
+        stats <- readStats $ qcFl^.location
         let cells = S.fromList $ map _barcode $ filter passedQC stats
-        header <- getBamHeader $ bamFl^.location
-        runResourceT $ runConduit $ streamBam (bamFl^.location) .|
-            mapC (toBed header) .| groupBy ((==) `on` (^.name)) .|
-            filterC ((`S.member` cells) . fromJust . (^.name) . head) .|
-            concatC .| sinkFileBedGzip output
+        either (f output cells . SomeFile) (f output cells . SomeFile) bedFl
         return $ location .~ output $ emptyFile )
   where
-    toBed header bam
-        | tLen bam > 0 = BED chr (start+4) end nm sc str
-        | otherwise = BED chr start (end-5) nm sc str
+    f output cells (SomeFile fl) = runResourceT $ runConduit $
+        streamBedGzip (fl^.location) .| groupBy ((==) `on` (^.name)) .|
+        filterC ((`S.member` cells) . fromJust . (^.name) . head) .|
+        concatMapC (concatMap getCutSite . filter notChrM) .| sinkFileBedGzip output
       where
-        chr = fromJust $ refName header bam 
-        start = startLoc bam
-        end = endLoc bam
-        nm = Just $ extractBarcode $ queryName bam
-        str = Just $ not $ isRev bam
-        sc = Just $ fromIntegral $ mapq bam
-{-# INLINE filterCell #-}
+        getCutSite x | fl `hasTag` PairedEnd = [left, right]
+                     | otherwise = [x]
+          where
+            left = let i = x^.chromStart in BED (x^.chrom) i (i+1) (x^.name) Nothing (Just True)
+            right = let i = x^.chromEnd - 1 in BED (x^.chrom) i (i+1) (x^.name) Nothing (Just False)
+    notChrM x = let chr = fromJust $ x^.name in chr /= "chrM" && chr /= "M"
