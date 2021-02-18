@@ -44,7 +44,7 @@ basicAnalysis :: Builder ()
 basicAnalysis = do
     node "Read_Input" 'readInput $
         doc .= "Read input data information."
-    node "Download_Data" 'download $ doc .= "Download data."
+    nodePar "Download_Data" 'download $ doc .= "Download data."
     node "Make_Index" 'mkIndices $ doc .= "Generate the genome index."
 
     uNode "Get_Fastq" [| return . getFastq |]

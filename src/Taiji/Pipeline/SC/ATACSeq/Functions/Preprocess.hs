@@ -36,11 +36,11 @@ readInput _ = do
     liftIO $ mkInputReader input "scATAC-seq" SCATACSeq
 
 download :: SCATACSeqConfig config
-         => [RAWInput]
-         -> ReaderT config IO [RAWInput]
+         => RAWInput
+         -> ReaderT config IO RAWInput
 download input = do
     tmp <- fromMaybe "./" <$> asks _scatacseq_tmp_dir
-    input & traverse.replicates.traverse.files.traverse %%~ ( \fl -> do
+    input & replicates.traverse.files.traverse %%~ ( \fl -> do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Download"))
         liftIO $ downloadFiles dir tmp fl )
 
