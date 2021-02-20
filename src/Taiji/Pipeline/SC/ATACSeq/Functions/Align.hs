@@ -107,12 +107,12 @@ deDuplicates input = do
                   where
                     (bed, dupRate) = rmDup pair header (if pair then rmAbnoramlFragment bam else bam)
                     bc = extractBarcode $ queryName $ head bam
-            (_, stat) <- runResourceT $ runConduit $ streamBam fl .|
+            _ <- runResourceT $ runConduit $ streamBam fl .|
                 groupBy ((==) `on` (extractBarcode . queryName)) .|
                 mapC filterReads .| zipSinks
                     (concatMapC fst .| sinkFileBedGzip outputBed)
-                    (mapC snd .| sinkList)
-            encodeFile outputStat (stat :: [(B.ByteString, Double)])
+                    (mapC ((\(a,b) -> a <> "\t" <> toShortest b) . snd) .| unlinesAsciiC .| sinkFile outputStat)
+            return ()
     input & replicates.traverse.files %%~ liftIO . ( \case
         Left fl -> do
             f False $ fl^.location
@@ -142,7 +142,7 @@ getQCMetric input = do
     qc output tss (SomeFile fl) = do
         dupQC <- case M.lookup "QC" (fl^.info) of
             Nothing -> return Nothing
-            Just q -> fmap (Just . M.fromList) $ decodeFile $ T.unpack q
+            Just q -> fmap (Just . M.fromList . map ((\[a,b] -> (a, readDouble b)) . B.split '\t') . B.lines) $ B.readFile $ T.unpack q
         stats <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
             groupBy ((==) `on` (^.name)) .| mapC (f dupQC) .| sinkList
         writeStats output stats

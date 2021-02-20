@@ -71,9 +71,8 @@ plotStat inputs = do
         savePlots output cellQCs 
             [ plotNumReads stats, plotTE stats, plotDupRate stats
             , plotMitoRate stats ]
-        B.writeFile outputStat $ B.unlines $ map showStat $
-            flip concatMap stats $ \(i, stat) -> map (\x ->
-                x{_barcode = B.pack (T.unpack i) <> "+" <> _barcode x}) stat
+        writeStats outputStat $ flip concatMap stats $ \(i, stat) -> map (\x ->
+            x{_barcode = B.pack (T.unpack i) <> "+" <> _barcode x}) stat
         return outputStat
 
 readStats :: FilePath -> IO [Stat]

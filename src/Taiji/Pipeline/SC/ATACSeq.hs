@@ -61,6 +61,7 @@ basicAnalysis = do
 
     uNode "Filter_Bam_Prep" [| \(input, x) -> return $ getBamUnsorted input ++ x |]
     nodePar "Filter_Bam" 'filterNameSortBam $ do
+        nCore .= 2
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     ["Make_Index", "Align"] ~> "Filter_Bam_Prep"
     ["Filter_Bam_Prep"] ~> "Filter_Bam"
@@ -224,7 +225,7 @@ builder = do
 --------------------------------------------------------------------------------
     uNode "Merged_Param_Search_Prep" [| \case
         (Just spectral, Just knn) -> do
-            res <- asks _scatacseq_cluster_resolutions
+            res <- asks _scatacseq_cluster_resolution_list
             optimizer <- asks _scatacseq_cluster_optimizer 
             return $ flip map res $ \r ->
                 ( optimizer, r
@@ -235,8 +236,8 @@ builder = do
     ["Merged_Reduce_Dims", "Merged_Make_KNN"] ~> "Merged_Param_Search_Prep"
     nodePar "Merged_Param_Search" [| \(optimizer, r, spectral, knn) -> do
         res <- liftIO $ evalClusters optimizer r spectral knn
-        return ((optimizer, r), res)
-        |] $ return ()
+        return (r, res)
+        |] $ nCore .= 5
     path ["Merged_Param_Search_Prep", "Merged_Param_Search"]
 
     node "Merged_Get_Param" [| \(knn, res) -> case knn of
@@ -244,12 +245,15 @@ builder = do
         Just knn' -> do
             dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")
             p <- liftIO $ optimalParam (dir <> "Clustering_parameters.html") res
-            return $ Just (p, knn')
+            asks _scatacseq_cluster_resolution >>= \case
+                Nothing -> return $ Just (p, knn')
+                Just p' -> return $ Just (p', knn')
         |] $ return ()
     ["Merged_Make_KNN", "Merged_Param_Search"] ~> "Merged_Get_Param"
     node "Merged_Cluster" [| \case
         Nothing -> return Nothing
-        Just ((optimizer, res), input) -> do
+        Just (res, input) -> do
+            optimizer <- asks _scatacseq_cluster_optimizer 
             Just <$> clustering "/Cluster/" res optimizer input
         |] $ return ()
     path ["Merged_Get_Param", "Merged_Cluster"]
