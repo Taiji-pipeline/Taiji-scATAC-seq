@@ -25,6 +25,7 @@ library
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
                        Taiji.Pipeline.SC.ATACSeq.Functions.ChromVar
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
+                       Taiji.Pipeline.SC.ATACSeq.Functions.Subclustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
                        Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak

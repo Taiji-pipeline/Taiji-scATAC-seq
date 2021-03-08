@@ -45,6 +45,7 @@ instance Binary (container (Replicate file)) =>
 class SCATACSeqConfig config where
     _scatacseq_output_dir :: config -> Directory
     _scatacseq_input :: config -> FilePath
+    _scatacseq_batch_info :: config -> Maybe FilePath
     _scatacseq_assembly :: config -> Maybe String
     _scatacseq_bwa_index :: config -> Maybe FilePath
     _scatacseq_genome_fasta :: config -> Maybe FilePath

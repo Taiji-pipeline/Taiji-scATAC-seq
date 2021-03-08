@@ -14,7 +14,7 @@ import Data.List.Ordered (nubSort)
 import Data.Binary
 
 import           Taiji.Prelude
-import           Taiji.Utils (concatMatrix, optimalParam, evalClusters)
+import           Taiji.Utils
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Types
 
@@ -56,7 +56,7 @@ basicAnalysis = do
         nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
-    ["Read_Input", "Demultiplex"] ~> "Get_Fastq_Demulti"
+    ["Download_Data", "Demultiplex"] ~> "Get_Fastq_Demulti"
     path ["Get_Fastq_Demulti", "Align"]
 
     uNode "Filter_Bam_Prep" [| \(input, x) -> return $ getBamUnsorted input ++ x |]
@@ -213,12 +213,16 @@ builder = do
         Just x -> Just <$>
             spectral "/Cluster/" (Just 3943) x
         |] $ return ()
+    node "Merged_Batch_Correction" [| \case
+        Nothing -> return Nothing
+        Just x -> Just <$> batchCorrection "/Cluster/" x
+        |] $ return ()
     node "Merged_Make_KNN" [| \case
         Nothing -> return Nothing
         Just x -> Just <$> mkKNNGraph "/Cluster/" x
         |] $ nCore .= 4
     path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
-        "Merged_Make_KNN"]
+        "Merged_Batch_Correction", "Merged_Make_KNN"]
 
 --------------------------------------------------------------------------------
 -- Selecting parameter
@@ -319,6 +323,47 @@ builder = do
 
     node "Peak_Acc" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
     ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Peak_Acc"
+
+--------------------------------------------------------------------------------
+-- Subclustering 
+--------------------------------------------------------------------------------
+    uNode "Subcluster_Reduce_Dims_Prep" [| \xs -> 
+        let f x = do 
+                nCells <- liftIO $ _num_row <$>
+                    mkSpMatrix id (x^.replicates._2.files.location)
+                return $ nCells >= 1000
+        in filterM f xs
+        |]
+    nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()
+    nodePar "Subcluster_Make_KNN" [| mkKNNGraph "/Subcluster/KNN/" |] $ return ()
+    path ["Cluster_Peak_Mat", "Subcluster_Reduce_Dims_Prep", "Subcluster_Reduce_Dims", "Subcluster_Make_KNN"]
+
+    uNode "Subcluster_Param_Search_Prep" [| \(sp, knn) -> do
+        res <- asks _scatacseq_cluster_resolution_list
+        optimizer <- asks _scatacseq_cluster_optimizer 
+        return $ flip map (zipExp sp knn) $ \e -> e & replicates.traversed.files %~
+            ( \(x,y) -> flip map res $ \r -> (optimizer, r, x^._2.location, y^._2.location) )
+        |]
+    nodePar "Subcluster_Param_Search" [| \input -> input & replicates.traversed.files %%~
+        liftIO . ( \xs -> do
+            res <- forM xs $ \(optimizer, r, spectral, knn) -> do
+                res <- liftIO $ evalClusters optimizer r spectral knn
+                return (r, res)
+            return (head xs ^. _4, res)
+            )
+        |] $ nCore .= 5
+    nodePar "Subcluster_Get_Param" [| \input -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
+        let output = printf "%s/%s_parameters.html" dir (T.unpack $ input^.eid)
+        input & replicates.traversed.files %%~ ( \(knn, res) -> do
+            p <- liftIO $ optimalParam output res
+            return (p, knn)
+            )
+        |] $ return ()
+    ["Subcluster_Reduce_Dims", "Subcluster_Make_KNN"] ~> "Subcluster_Param_Search_Prep"
+    path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search", "Subcluster_Get_Param"]
+ 
+
 
 --------------------------------------------------------------------------------
 -- Gene accessibility

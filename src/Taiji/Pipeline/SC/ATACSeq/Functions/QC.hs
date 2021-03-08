@@ -149,16 +149,13 @@ rmAbnoramlFragment = filter $ \bam ->
 -- a 9bp overhang, and adjusted positions represent the center point between
 -- these cuts; this position is recorded as a cut site that represents a
 -- chromatin accessibility event.
-rmDup :: Bool -> BAMHeader -> [BAM] -> ([BED], Double)
-rmDup _ _ [] = ([], 0)
-rmDup pair hdr input' = (output, dupRate)
+rmDup :: Bool -> BAMHeader -> [BAM] -> [BED]
+rmDup pair hdr input' = map (\(_, bed, c) -> score .~ Just c $ bed) $ M.elems $
+    M.fromListWith collapse $ map (\b -> (getKey b, (getSc b, toBed b, 1))) input
   where
     input = filter (\b ->
         let f = flag b
         in not pair || (isFirstSegment f && hasMultiSegments f && not (isNextUnmapped f))) input'
-    output = map (\(_, bed, c) -> score .~ Just c $ bed) $ M.elems $
-        M.fromListWith collapse $
-        map (\b -> (getKey b, (getSc b, toBed b, 1))) input
     collapse (sc1, b1, c1) (sc2, b2, c2) | sc1 > sc2 = (sc1, b1, c1+c2)
                                          | otherwise = (sc2, b2, c1+c2)
     getKey b | pair = pairKey
@@ -172,7 +169,6 @@ rmDup pair hdr input' = (output, dupRate)
             | otherwise = adjust $ fromJust $ bamToBed hdr b
       where
         adjust x = name %~ fmap extractBarcode $ chromStart %~ (+4) $ chromEnd %~ (subtract 5) $ x
-    dupRate = 1 - fromIntegral (length output) / fromIntegral (length input)
 {-# INLINE rmDup #-}
 
 -- | Remove chrM reads.

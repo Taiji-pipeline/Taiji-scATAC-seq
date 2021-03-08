@@ -16,15 +16,12 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
 
 import Bio.Data.Bed
 import Bio.Data.Bam
-import Data.Binary (encodeFile, decodeFile)
 import           Bio.HTS
-import qualified Data.ByteString.Char8 as B
-import Data.Conduit.Internal (zipSinks)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
-import qualified Data.Map.Strict as M
+import           Data.Coerce             (coerce)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -97,31 +94,20 @@ deDuplicates :: ( SCATACSeqConfig config
                  SCATACSeq S (Either (File unpair' 'Bed) (File paired' 'Bed)) )
 deDuplicates input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
-    let outputBed = printf "%s/%s_rep%d_fragments.bed.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_fragments.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        outputStat = printf "%s/%s_rep%d_dup.qc" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        f pair fl = do
-            header <- getBamHeader fl
-            let filterReads bam = (bed, (bc, dupRate))
-                  where
-                    (bed, dupRate) = rmDup pair header (if pair then rmAbnoramlFragment bam else bam)
-                    bc = extractBarcode $ queryName $ head bam
-            _ <- runResourceT $ runConduit $ streamBam fl .|
-                groupBy ((==) `on` (extractBarcode . queryName)) .|
-                mapC filterReads .| zipSinks
-                    (concatMapC fst .| sinkFileBedGzip outputBed)
-                    (mapC ((\(a,b) -> a <> "\t" <> toShortest b) . snd) .| unlinesAsciiC .| sinkFile outputStat)
-            return ()
-    input & replicates.traverse.files %%~ liftIO . ( \case
-        Left fl -> do
-            f False $ fl^.location
-            return $ Left $ info .~ [("QC", T.pack outputStat)] $
-                location .~ outputBed $ emptyFile
-        Right fl -> do
-            f True $ fl^.location
-            return $ Right $ info .~ [("QC", T.pack outputStat)] $
-                location .~ outputBed $ emptyFile )
+    input & replicates.traverse.files %%~ liftIO . either
+        (fmap (Left . coerce) . f output . SomeFile)
+        (fmap Right . f output . SomeFile)
+  where
+    f output (SomeFile fl) = do
+        let pair = fl `hasTag` PairedEnd
+        header <- getBamHeader $ fl^.location
+        runResourceT $ runConduit $ streamBam (fl^.location) .|
+            groupBy ((==) `on` (extractBarcode . queryName)) .|
+            concatMapC (\bam -> rmDup pair header (if pair then rmAbnoramlFragment bam else bam)) .|
+            sinkFileBedGzip output
+        return $ location .~ output $ emptyFile
 
 getQCMetric :: ( SCATACSeqConfig config
                , unpair ~ '[NameSorted, Gzip]
@@ -140,21 +126,21 @@ getQCMetric input = do
         return (fl, q)
   where
     qc output tss (SomeFile fl) = do
-        dupQC <- case M.lookup "QC" (fl^.info) of
-            Nothing -> return Nothing
-            Just q -> fmap (Just . M.fromList . map ((\[a,b] -> (a, readDouble b)) . B.split '\t') . B.lines) $ B.readFile $ T.unpack q
         stats <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
-            groupBy ((==) `on` (^.name)) .| mapC (f dupQC) .| sinkList
+            groupBy ((==) `on` (^.name)) .| mapC f .| sinkList
         writeStats output stats
         return $ location .~ output $ emptyFile
       where
-        f dupQC beds = Stat bc dupRate (Just chrMRate) te num Nothing
+        f beds = Stat bc dupRate (Just chrMRate) te num Nothing
           where
             bc = fromJust $ head beds ^. name
-            dupRate = join $ fmap (M.lookup bc) dupQC
+            dupRate = case totalReads of
+                Nothing -> Nothing
+                Just s -> Just $ 1 - fromIntegral num / fromIntegral s 
             (beds', _, chrMRate) = rmChrM beds
             te = tssEnrichment tss beds'
             num = length beds'
+            totalReads = fmap (foldl1' (+)) $ sequence $ map (^.score) beds
 
 -- | Filter QC-failed cells and convert fragments into TN5 insertions.
 filterCell :: ( SCATACSeqConfig config
