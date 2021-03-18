@@ -2,9 +2,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
@@ -31,11 +33,13 @@ import           Bio.Seq.IO
 import           System.FilePath               (takeDirectory)
 import           Shelly                        (fromText, mkdir_p, shelly,
                                                 test_f)
+import Control.DeepSeq (NFData)
 
 import Taiji.Prelude
 
 newtype SCATACSeq container file = SCATACSeq (CommonFields container file)
-     deriving (Generic, Experiment)
+    deriving Generic
+    deriving newtype Experiment
 
 deriving instance Show (container (Replicate file)) => Show (SCATACSeq container file)
 
@@ -70,7 +74,7 @@ data Stat = Stat
     , _mito_rate :: Maybe Double
     , _te :: Double
     , _uniq_reads :: Int
-    , _doublet_score :: Maybe Double }
+    , _doublet_score :: Maybe Double } deriving (Generic, NFData)
 
 qcDir :: SCATACSeqConfig config => ReaderT config IO FilePath
 qcDir = asks _scatacseq_output_dir >>= getPath . (<> "/QC/")

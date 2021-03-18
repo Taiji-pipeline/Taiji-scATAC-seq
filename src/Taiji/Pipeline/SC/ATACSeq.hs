@@ -15,6 +15,7 @@ import Data.Binary
 
 import           Taiji.Prelude
 import           Taiji.Utils
+import Taiji.Utils.Plot
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Types
 
@@ -228,47 +229,35 @@ builder = do
 -- Selecting parameter
 --------------------------------------------------------------------------------
     uNode "Merged_Param_Search_Prep" [| \case
-        (Just spectral, Just knn) -> do
-            res <- asks _scatacseq_cluster_resolution_list
+        Just knn -> do
+            ress <- asks _scatacseq_cluster_resolution_list
+            res <- maybe [] return <$> asks _scatacseq_cluster_resolution
             optimizer <- asks _scatacseq_cluster_optimizer 
-            return $ flip map res $ \r ->
+            return $ flip map (nubSort $ res <> ress) $ \r ->
                 ( optimizer, r
-                , spectral^.replicates._2.files._2.location
                 , knn^.replicates._2.files._2.location )
         _ -> return []
         |]
-    ["Merged_Reduce_Dims", "Merged_Make_KNN"] ~> "Merged_Param_Search_Prep"
-    nodePar "Merged_Param_Search" [| \(optimizer, r, spectral, knn) -> do
-        res <- liftIO $ evalClusters optimizer r spectral knn
+    nodePar "Merged_Param_Search" [| \(optimizer, r, knn) -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir ("/Cluster/Params/" <> show r))
+        res <- liftIO $ evalClusters dir optimizer r knn
         return (r, res)
-        |] $ nCore .= 5
-    path ["Merged_Param_Search_Prep", "Merged_Param_Search"]
+        |] $ return ()
+    path ["Merged_Make_KNN", "Merged_Param_Search_Prep", "Merged_Param_Search"]
 
-    node "Merged_Get_Param" [| \(knn, res) -> case knn of
-        Nothing -> return Nothing
-        Just knn' -> do
-            dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Figure/")
-            p <- liftIO $ optimalParam (dir <> "Clustering_parameters.html") res
-            asks _scatacseq_cluster_resolution >>= \case
-                Nothing -> return $ Just (p, knn')
-                Just p' -> return $ Just (p', knn')
+    uNode "Merged_Cluster_Metric_Prep" [| \(spec, x) -> case spec of
+        Nothing -> return []
+        Just fl -> return $ flip map x $ \(r, y) -> (r, y, fl^.replicates._2.files._2.location)
+        |]
+    nodePar "Merged_Cluster_Metric" [| \(res, cl, spec) -> do
+        r <- liftIO $ computeClusterMetrics cl spec
+        return (res, r)
         |] $ return ()
-    ["Merged_Make_KNN", "Merged_Param_Search"] ~> "Merged_Get_Param"
-    node "Merged_Cluster" [| \case
-        Nothing -> return Nothing
-        Just (res, input) -> do
-            optimizer <- asks _scatacseq_cluster_optimizer 
-            Just <$> clustering "/Cluster/" res optimizer input
-        |] $ return ()
-    path ["Merged_Get_Param", "Merged_Cluster"]
+    node "Merged_Cluster" 'plotClusters $ return ()
+    ["Merged_Reduce_Dims", "Merged_Param_Search"] ~> "Merged_Cluster_Metric_Prep"
+    path ["Merged_Cluster_Metric_Prep", "Merged_Cluster_Metric"]
+    ["Merged_Cluster_Metric", "Merged_Param_Search", "Merged_Make_KNN", "QC"] ~> "Merged_Cluster"
 
-    node "Merged_Cluster_Viz" [| \(qc, input) -> case input of
-        Nothing -> return ()
-        Just x -> do
-            dir <- figDir
-            liftIO $ plotClusters dir (qc, x)
-        |] $ return ()
-    ["QC", "Merged_Cluster"] ~> "Merged_Cluster_Viz"
 
 --------------------------------------------------------------------------------
 -- Make Cluster BED and BigWig files
@@ -342,27 +331,38 @@ builder = do
         res <- asks _scatacseq_cluster_resolution_list
         optimizer <- asks _scatacseq_cluster_optimizer 
         return $ flip map (zipExp sp knn) $ \e -> e & replicates.traversed.files %~
-            ( \(x,y) -> flip map res $ \r -> (optimizer, r, x^._2.location, y^._2.location) )
+            ( \(x,y) -> flip map res $ \r -> (optimizer, r, x^._2.location, y) )
         |]
     nodePar "Subcluster_Param_Search" [| \input -> input & replicates.traversed.files %%~
-        liftIO . ( \xs -> do
-            res <- forM xs $ \(optimizer, r, spectral, knn) -> do
-                res <- liftIO $ evalClusters optimizer r spectral knn
+        liftIO . ( \xs -> withTempDir (Just "./") $ \tmp -> do
+            res <- forM xs $ \(optimizer, r, spec, knn) -> do
+                res <- evalClusters tmp optimizer r (knn^._2.location) >>=
+                    (flip computeClusterMetrics) spec
                 return (r, res)
             return (head xs ^. _4, res)
             )
-        |] $ nCore .= 5
+        |] $ return ()
     nodePar "Subcluster_Get_Param" [| \input -> do
         dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
         let output = printf "%s/%s_parameters.html" dir (T.unpack $ input^.eid)
         input & replicates.traversed.files %%~ ( \(knn, res) -> do
             p <- liftIO $ optimalParam output res
-            return (p, knn)
+            return (p, fromJust (lookup p res) ^. _1, knn)
             )
         |] $ return ()
+    nodePar "Subcluster_Cluster" [| \input -> do
+        optimizer <- asks _scatacseq_cluster_optimizer 
+        let res = input^.replicates._2.files._1
+        cl <- clustering "/Subcluster/" res optimizer $ input & replicates.traversed.files %~ (^._3)
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
+        let output = printf "%s/%s_cluster.html" dir (T.unpack $ input^.eid)
+        liftIO $ decodeFile (cl^.replicates._2.files.location) >>= sampleCells >>=
+            savePlots output [] . visualizeCluster
+        return cl
+        |] $ return ()
     ["Subcluster_Reduce_Dims", "Subcluster_Make_KNN"] ~> "Subcluster_Param_Search_Prep"
-    path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search", "Subcluster_Get_Param"]
- 
+    path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search", "Subcluster_Get_Param",
+        "Subcluster_Cluster"]
 
 
 --------------------------------------------------------------------------------

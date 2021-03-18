@@ -41,8 +41,8 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import qualified Taiji.Utils.DataFrame as DF
-import Taiji.Utils.Plot
 import Taiji.Utils
+import Taiji.Utils.Plot (savePlots)
 import Taiji.Utils.Plot.ECharts
 
 filterMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
@@ -123,13 +123,14 @@ batchCorrection prefix input = do
         mapC (B.intercalate "\t" . map toShortest . U.toList) .|
         unlinesAsciiC .| gzip .| sinkFile output
 
+
 mkKNNGraph :: SCATACSeqConfig config
            => FilePath
            -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
 mkKNNGraph prefix input = do
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
-    let output_knn = printf "%s/%s_rep%d_knn.npz" dir (T.unpack $ input^.eid)
+    let output_knn = printf "%s/%s_rep%d_knn.txt" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         output_umap = printf "%s/%s_rep%d_umap.txt" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
@@ -153,30 +154,18 @@ clustering :: SCATACSeqConfig config
            -> SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Other))
 clustering prefix resolution optimizer input = do
-    tmp <- asks _scatacseq_tmp_dir
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traversed.files %%~ liftIO . ( \(idx, knn, umap) -> withTemp tmp $ \tmpFl -> do
-        shelly $ run_ "taiji-utils" $
-            [ "clust", T.pack $ knn^.location, T.pack tmpFl
-            , "--res", T.pack $ show resolution
-            , "--optimizer"
-            , case optimizer of
-                RBConfiguration -> "RB"
-                CPM -> "CPM"
-            ]
+    input & replicates.traversed.files %%~ liftIO . ( \(idx, knn, umap) -> do
         let sourceCells = getZipSource $ (,,) <$>
                 ZipSource (iterateC succ 0) <*>
-                ZipSource ( sourceFile (idx^.location) .|
-                    linesUnboundedAsciiC .|
-                    mapC ((\[a,b] -> (a,b)) . B.split '\t') ) <*>
+                ZipSource (sourceFile (idx^.location) .| linesUnboundedAsciiC .| mapC g) <*>
                 ZipSource ( sourceFile (umap^.location) .|
                     linesUnboundedAsciiC .|
                     mapC (map readDouble . B.split '\t') )
         cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
-        clusters <- map (map readInt . B.split ',') . B.lines <$>
-            B.readFile tmpFl
+        clusters <- fmap (sortBy (flip (comparing length)) . filter ((>100) . length)) $ readKNNGraph (knn^.location) >>= leiden resolution optimizer
         let cellCluster = zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
                 map (map (cells V.!)) clusters
         encodeFile output cellCluster
@@ -184,6 +173,10 @@ clustering prefix resolution optimizer input = do
   where
     f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
     f _ = error "formatting error"
+    g x = case B.split '\t' x of
+        [a, b] -> (a, b)
+        [a] -> (a, "0")
+        _ -> error "formatting error"
 
 -- | Extract tags for clusters.
 extractTags :: FilePath   -- ^ Directory to save the results
@@ -286,25 +279,55 @@ subMatrix prefix inputs clFl = do
 -- Vizualization
 --------------------------------------------------------------------------------
 
-plotClusters :: FilePath
-             -> (FilePath, SCATACSeq S (File '[] 'Other))
-             -> IO ()
-plotClusters dir (qc, input) = do
-    stats <- readStats qc
-    inputData <- decodeFile $ input^.replicates._2.files.location
-    let output = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        output2 = printf "%s/%s_metadata.tsv" dir (T.unpack $ input^.eid)
-        (nms, num_cells) = unzip $ map (\(CellCluster nm cells) ->
-            (T.pack $ B.unpack nm, fromIntegral $ length cells)) inputData
-        plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
-        compos = composition inputData
-    clusters <- sampleCells inputData
-    savePlots output [] $ visualizeCluster clusters ++
-        clusterComposition compos : tissueComposition compos : plt :
-            clusterQC stats inputData
-    outputMetaData output2 stats inputData
+plotClusters :: SCATACSeqConfig config
+             => ( [(Double, (Int, Double, Double))]
+                , [(Double, ([FilePath], FilePath))]
+                , Maybe (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
+                , FilePath )
+             -> ReaderT config IO (Maybe (SCATACSeq S (File '[] 'Other)))
+plotClusters (_, _, Nothing, _) = return Nothing
+plotClusters (params, clFl, Just knn, qc) = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Cluster/")
+    fig <- figDir
+    resAuto <- liftIO $ optimalParam (fig <> "/Clustering_parameters.html") params
+    res <- fromMaybe resAuto <$> asks _scatacseq_cluster_resolution 
+    let clOutput = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ knn^.eid)
+            (knn^.replicates._1)
+    fmap Just $ knn & replicates.traversed.files %%~ liftIO . ( \(idx, _, umap) -> do
+        let sourceCells = getZipSource $ (,,) <$>
+                ZipSource (iterateC succ 0) <*>
+                ZipSource (sourceFile (idx^.location) .| linesUnboundedAsciiC .| mapC g) <*>
+                ZipSource ( sourceFile (umap^.location) .|
+                    linesUnboundedAsciiC .|
+                    mapC (map readDouble . B.split '\t') )
+        cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
+        clusters <- fmap (sortBy (flip (comparing length))) $ decodeFile $ snd $ fromJust $ lookup res clFl
+        let cellCluster = zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
+                map (map (cells V.!)) clusters
+        encodeFile clOutput cellCluster
+
+        stats <- readStats qc
+        let clViz = printf "%s/%s_rep%d_cluster.html" fig (T.unpack $ knn^.eid)
+                (knn^.replicates._1)
+            clMeta = printf "%s/%s_metadata.tsv" dir (T.unpack $ knn^.eid)
+            (nms, num_cells) = unzip $ map (\(CellCluster nm cs) ->
+                (T.pack $ B.unpack nm, fromIntegral $ length cs)) cellCluster
+            plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
+            compos = composition cellCluster
+        clusters' <- sampleCells cellCluster
+        savePlots clViz [] $ visualizeCluster clusters' ++
+            clusterComposition compos : tissueComposition compos : plt :
+                clusterQC stats cellCluster
+        outputMetaData clMeta stats cellCluster
+
+        return $ location .~ clOutput $ emptyFile )
   where
+    f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
+    f _ = error "formatting error"
+    g x = case B.split '\t' x of
+        [a, b] -> (a, b)
+        [a] -> (a, "0")
+        _ -> error "formatting error"
     clusterQC stats cls =
         [ plotNumReads res
         , plotTE res
@@ -312,8 +335,8 @@ plotClusters dir (qc, input) = do
         , plotDupRate res ]
       where
         res = flip map cls $ \x ->
-            (T.pack $ B.unpack $ _cluster_name x, map f $ _cluster_member x)
-        f x = M.lookupDefault undefined (_cell_barcode x) statMap
+            (T.pack $ B.unpack $ _cluster_name x, map h $ _cluster_member x)
+        h x = M.lookupDefault undefined (_cell_barcode x) statMap
         statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
 
 outputMetaData :: FilePath -> [Stat] -> [CellCluster] -> IO ()

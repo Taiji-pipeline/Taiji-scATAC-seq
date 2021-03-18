@@ -40,8 +40,8 @@ subSpectral :: SCATACSeqConfig config
             => SCATACSeq S (File tags 'Other)
             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
 subSpectral input = do
-    dir <- asks ((<> "/Subcluster/Spectral/") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_spectral.tsv.gz" dir (T.unpack $ input^.eid)
+    dir <- asks ((<> "/Subcluster/Spectra/") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%s_spectra.tsv.gz" dir (T.unpack $ input^.eid)
         outputIdx = printf "%s/%s_rownames.tsv" dir (T.unpack $ input^.eid)
     input & replicates.traversed.files %%~ ( \fl -> do
         asks _scatacseq_batch_info >>= \case

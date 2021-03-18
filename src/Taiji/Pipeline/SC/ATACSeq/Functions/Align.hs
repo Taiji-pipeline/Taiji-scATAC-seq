@@ -22,6 +22,8 @@ import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
 import           Data.Coerce             (coerce)
+import Control.DeepSeq (force)
+import Control.Exception (evaluate)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -127,11 +129,11 @@ getQCMetric input = do
   where
     qc output tss (SomeFile fl) = do
         stats <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
-            groupBy ((==) `on` (^.name)) .| mapC f .| sinkList
+            groupBy ((==) `on` (^.name)) .| mapMC f .| sinkList
         writeStats output stats
         return $ location .~ output $ emptyFile
       where
-        f beds = Stat bc dupRate (Just chrMRate) te num Nothing
+        f beds = liftIO $ evaluate $ force $ Stat bc dupRate (Just chrMRate) te num Nothing
           where
             bc = fromJust $ head beds ^. name
             dupRate = case totalReads of

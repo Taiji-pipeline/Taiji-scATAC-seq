@@ -177,7 +177,7 @@ rmChrM [] = ([], [], 0)
 rmChrM input = (output, mito, chrMRate)
   where
     (output, mito) = partition notChrM input
-    chrMRate = fromIntegral (length output) / fromIntegral (length input)
+    chrMRate = fromIntegral (length mito) / fromIntegral (length input)
     notChrM x = let chr = x^.chrom in chr /= "chrM" && chr /= "M"
 {-# INLINE rmChrM #-}
 
