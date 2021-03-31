@@ -172,4 +172,4 @@ filterCell input = do
           where
             left = let i = x^.chromStart in BED (x^.chrom) i (i+1) (x^.name) Nothing (Just True)
             right = let i = x^.chromEnd - 1 in BED (x^.chrom) i (i+1) (x^.name) Nothing (Just False)
-    notChrM x = let chr = fromJust $ x^.name in chr /= "chrM" && chr /= "M"
+    notChrM x = let chr = x^.chrom in chr /= "chrM" && chr /= "M"

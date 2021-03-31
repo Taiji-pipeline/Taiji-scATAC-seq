@@ -242,9 +242,7 @@ detectDoublet :: SCATACSeqConfig config
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
 detectDoublet input = do
     dir <- qcDir
-    let output = dir <> "qc_" <> T.unpack (input^.eid) <> "_rep" <>
-            show (input^.replicates._1) <> ".tsv"
-        outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
+    let outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
     input & replicates.traverse.files %%~ liftIO . (\(fl, (_,stat)) -> withTemp Nothing $ \tmp -> do
         shelly $ run_ "taiji-utils" ["doublet", T.pack $ fl^.location, T.pack tmp]
@@ -262,10 +260,10 @@ detectDoublet input = do
         bcs <- runResourceT $ runConduit $ streamRows mat .| mapC fst .| sinkList
         let doubletScore = M.fromList $ zip bcs dProbs
         stats <- readStats $ stat^.location
-        writeStats output $ flip map stats $ \s ->
+        writeStats (stat^.location) $ flip map stats $ \s ->
             let v = M.findWithDefault 0 (_barcode s) doubletScore
             in s{_doublet_score = Just v}
-        return $ location .~ output $ emptyFile
+        return stat
         )
   where
     mkHist xs ref = plt <> rule

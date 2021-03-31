@@ -11,6 +11,9 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , batchCorrection
     , mkKNNGraph
     , clustering
+    , clusterComposition
+    , tissueComposition
+    , composition
         
     , plotClusters
     , extractTags
@@ -130,7 +133,7 @@ mkKNNGraph :: SCATACSeqConfig config
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
 mkKNNGraph prefix input = do
     dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
-    let output_knn = printf "%s/%s_rep%d_knn.txt" dir (T.unpack $ input^.eid)
+    let output_knn = printf "%s/%s_rep%d_knn.txt.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         output_umap = printf "%s/%s_rep%d_umap.txt" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
@@ -166,7 +169,7 @@ clustering prefix resolution optimizer input = do
                     mapC (map readDouble . B.split '\t') )
         cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
         clusters <- fmap (sortBy (flip (comparing length)) . filter ((>100) . length)) $ readKNNGraph (knn^.location) >>= leiden resolution optimizer
-        let cellCluster = zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
+        let cellCluster = zipWith (\i x -> CellCluster (B.pack $ "C" ++ show i) x Nothing) [1::Int ..] $
                 map (map (cells V.!)) clusters
         encodeFile output cellCluster
         return $ location .~ output $ emptyFile )
@@ -262,6 +265,10 @@ subMatrix prefix inputs clFl = do
     liftIO $ do
         cls <- decodeFile $ clFl^.location
         mat <- mkSpMatrix id $ head inputs ^. replicates._2.files.location
+        mergedMat <- fmap concatMatrix' $ forM inputs $ \input -> do
+            let f x = B.concat [ B.pack $ T.unpack $ input^.eid, "_"
+                    , B.pack $ show (input^.replicates._1), "+", x ]
+            fmap (mapRows (first f)) $ mkSpMatrix id $ input^.replicates._2.files.location
         let mkSink CellCluster{..} = filterC ((`S.member` ids) . fst) .|
                 (sinkRows (S.size ids) (_num_col mat) id output >> return res)
               where
@@ -269,10 +276,6 @@ subMatrix prefix inputs clFl = do
                 output = dir <> B.unpack _cluster_name <> ".mat.gz"
                 res = head inputs & eid .~ T.pack (B.unpack _cluster_name)
                                   & replicates._2.files.location .~ output
-        mergedMat <- fmap concatMatrix' $ forM inputs $ \input -> do
-            let f x = B.concat [ B.pack $ T.unpack $ input^.eid, "_"
-                    , B.pack $ show (input^.replicates._1), "+", x ]
-            fmap (mapRows (first f)) $ mkSpMatrix id $ input^.replicates._2.files.location
         runResourceT $ runConduit $ streamRows mergedMat .| sequenceSinks (map mkSink cls)
 
 --------------------------------------------------------------------------------
@@ -300,23 +303,28 @@ plotClusters (params, clFl, Just knn, qc) = do
                 ZipSource ( sourceFile (umap^.location) .|
                     linesUnboundedAsciiC .|
                     mapC (map readDouble . B.split '\t') )
+            (perturbed, cl) = fromJust $ lookup res clFl
+        clusters <- decodeFile cl
+        perturbedCls <- mapM decodeFile perturbed
+        let (clNames, repro) = unzip $ zipWith (\i x -> (T.pack $ "C" <> show i, x)) [1::Int ..] $
+                computeReproducibility clusters perturbedCls
+            figRepro = line $ DF.mkDataFrame ["reproducibility"] clNames [repro]
         cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
-        clusters <- fmap (sortBy (flip (comparing length))) $ decodeFile $ snd $ fromJust $ lookup res clFl
-        let cellCluster = zipWith (\i -> CellCluster $ B.pack $ "C" ++ show i) [1::Int ..] $
-                map (map (cells V.!)) clusters
+        let cellCluster = zipWith3 (\i x y -> CellCluster (B.pack $ "C" ++ show i) x $ Just y)
+                [1::Int ..] (map (map (cells V.!)) clusters) repro
         encodeFile clOutput cellCluster
 
         stats <- readStats qc
         let clViz = printf "%s/%s_rep%d_cluster.html" fig (T.unpack $ knn^.eid)
                 (knn^.replicates._1)
             clMeta = printf "%s/%s_metadata.tsv" dir (T.unpack $ knn^.eid)
-            (nms, num_cells) = unzip $ map (\(CellCluster nm cs) ->
+            (nms, num_cells) = unzip $ map (\(CellCluster nm cs _) ->
                 (T.pack $ B.unpack nm, fromIntegral $ length cs)) cellCluster
             plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
             compos = composition cellCluster
         clusters' <- sampleCells cellCluster
         savePlots clViz [] $ visualizeCluster clusters' ++
-            clusterComposition compos : tissueComposition compos : plt :
+            figRepro : clusterComposition compos : tissueComposition compos : plt :
                 clusterQC stats cellCluster
         outputMetaData clMeta stats cellCluster
 

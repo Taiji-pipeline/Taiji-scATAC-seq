@@ -27,6 +27,7 @@ import Bio.Data.Experiment.Types
 import qualified Data.ByteString.Char8 as B
 import Bio.Data.Experiment.Replicate
 import GHC.Generics (Generic)
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Control.Exception (catch, SomeException(..))
 import           Bio.Seq.IO
@@ -61,6 +62,7 @@ class SCATACSeqConfig config where
     _scatacseq_cell_barcode_length :: config -> Maybe Int
     _scatacseq_cluster_resolution_list :: config -> [Double]
     _scatacseq_cluster_resolution :: config -> Maybe Double
+    _scatacseq_subcluster_resolution :: config -> Maybe (M.Map T.Text Double)
     _scatacseq_cluster_optimizer :: config -> Optimizer
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double

@@ -184,10 +184,10 @@ computePeakRAS prefix (peakFl, inputs) = do
             return (input^.eid, V.convert vec)
 
         let ras = DF.fromMatrix peaks names $ Mat.fromColumns cols
-            ss = computeSS ras
+            ss = computeSS $ DF.map (logBase 2 . (+1)) ras
         DF.writeTable output1 (T.pack . show) ras
         DF.writeTable output2 (T.pack . show) ss
-        cdf <- computeCDF ras
+        cdf <- computeCDF $ DF.map (logBase 2 . (+1)) ras
         DF.writeTable output3 (T.pack . show) $ DF.map (lookupP cdf) ss
         return $ Just (output1, output2, output3)
   where

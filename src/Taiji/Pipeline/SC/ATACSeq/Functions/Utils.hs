@@ -21,21 +21,17 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     ) where
 
 import Bio.Data.Bed
-import Bio.Data.Bed.Types
 import System.IO
 import Data.Conduit.List (groupBy)
 import Data.Conduit.Internal (zipSinks)
 import           Bio.RealWorld.GENCODE
-import Control.Arrow (first, second)
+import Control.Arrow (second)
 import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
-import qualified Data.Set as S
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
-import qualified Data.Vector as V
 import Data.Conduit.Zlib (gzip)
 import Data.Binary (encode, decode)
-import Data.Singletons.Prelude (Elem)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)

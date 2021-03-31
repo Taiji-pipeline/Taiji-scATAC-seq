@@ -8,6 +8,7 @@ module Taiji.Pipeline.SC.ATACSeq (builder) where
 import           Control.Workflow
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Map.Strict as Map
 import           Bio.Seq.IO (withGenome, getChrSizes)
 import           Bio.Data.Bed (readBed, streamBedGzip, sinkFileBedGzip, BED3)
 import Data.List.Ordered (nubSort)
@@ -15,7 +16,6 @@ import Data.Binary
 
 import           Taiji.Prelude
 import           Taiji.Utils
-import Taiji.Utils.Plot
 import           Taiji.Pipeline.SC.ATACSeq.Functions
 import Taiji.Pipeline.SC.ATACSeq.Types
 
@@ -84,7 +84,7 @@ basicAnalysis = do
 preClustering :: Builder ()
 preClustering = do
     path ["Filter_Cell", "Pre_Get_Windows"]
-    ["Filter_Cell", "Pre_Cluster"] ~> "Pre_Extract_Tags_Prep"
+    ["Filter_Cell", "Pre_Cluster"] ~> "Pre_Call_Peaks_Prep"
     ["Pre_Make_Peak_Mat", "Run_QC"] ~> "Pre_Detect_Doublet_Prep"
     ["Filter_Cell", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublets_Prep"
     namespace "Pre" $ do
@@ -101,29 +101,25 @@ preClustering = do
             |] $ return ()
         path ["Make_Window_Mat", "Cluster"]
 
-        -- Extract tags for each cluster
-        uNode "Extract_Tags_Prep"  [| return . uncurry zipExp |]
-        nodePar "Extract_Tags" [| \input -> input & replicates.traverse.files %%~ ( \(bed, cl) -> do
-            let idRep = asDir $ "/temp/Pre/Bed/" <> T.unpack (input^.eid) <>
-                    "_rep" <> show (input^.replicates._1)
-            dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
-            clusters <- liftIO $ decodeFile $ cl^.location
-            runResourceT $ runConduit $ streamBedGzip (bed^.location) .|
-                splitBedByCluster' dir clusters
-            )
+        uNode "Call_Peaks_Prep"  [| return . uncurry zipExp |]
+        nodePar "Call_Peaks" [| \input -> do
+            dir <- asks _scatacseq_tmp_dir
+            withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
+                let outDir = printf "/temp/Pre/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
+                        (input^.replicates._1)
+                input & replicates.traverse.files %%~ ( \(bed, cl) -> do
+                    clusters <- liftIO $ decodeFile $ cl^.location
+                    bedFls <- liftIO $ runResourceT $ runConduit $ streamBedGzip (bed^.location) .|
+                        splitBedByCluster' tmp clusters
+                    forM bedFls $ findPeaks outDir
+                        ( def & mode .~ NoModel (-100) 200
+                            & cutoff .~ QValue 0.05
+                        )
+                    )
             |] $ return ()
-        path ["Extract_Tags_Prep", "Extract_Tags"]
+        path ["Call_Peaks_Prep", "Call_Peaks"]
 
         -- Make cell by peak matrix
-        nodePar "Call_Peaks" [| \input -> do
-            let dir = printf "/temp/Pre/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
-                    (input^.replicates._1)
-            input & replicates.traverse.files %%~ mapM (findPeaks dir
-                 ( def & mode .~ NoModel (-100) 200
-                       & cutoff .~ QValue 0.05
-                 ))
-            |] $ return ()
-        path ["Extract_Tags", "Call_Peaks"]
 
         uNode "Make_Peak_Mat_Prep" [| \(x, y) -> return $ flip map (zipExp x y) $
             \input -> input & replicates._2.files %~
@@ -146,16 +142,7 @@ preClustering = do
         nodePar "Remove_Doublets" 'removeDoublet $ return ()
         path ["Remove_Doublets_Prep", "Remove_Doublets"]
 
-        -- Make Gene matrix 
-        node "Get_Promoters" [| \input -> if null input
-            then return Nothing
-            else Just <$> writePromoters PromoterOnly
-            |] $ doc .= "Get the list of promoters from the annotation file."
-        ["Remove_Doublets"] ~> "Get_Promoters"
-        uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat $ fromJust genes |]
-        ["Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
-        nodePar "Make_Gene_Mat" [| mkCellByGene "/temp/Pre/Gene/" |] $
-            doc .= "Create cell by transcript matrix for each sample."
+       {-
         node "Merge_Gene_Mat" [| \mats -> if null mats
             then return Nothing
             else do
@@ -167,7 +154,7 @@ preClustering = do
                 return $ Just $ (head mats & eid .~ "Merged") &
                     replicates._2.files.location .~ output
             |] $ return ()
-        path ["Make_Gene_Mat_Prep", "Make_Gene_Mat", "Merge_Gene_Mat"]
+            -}
  
         -- Make Peak matrix
         node "Get_Peak_List" 'getFeatures $ return ()
@@ -203,6 +190,20 @@ builder = do
     ["Pre_Detect_Doublet"] ~> "QC"
 
 --------------------------------------------------------------------------------
+-- Gene matrix
+--------------------------------------------------------------------------------
+    node "Get_Promoters" [| \input -> if null input
+        then return Nothing
+        else Just <$> writePromoters PromoterPlusGeneBody
+        |] $ doc .= "Get the list of promoters from the annotation file."
+    ["Pre_Remove_Doublets"] ~> "Get_Promoters"
+    uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat $ fromJust genes |]
+    nodePar "Make_Gene_Mat" [| mkCellByGene "/Feature/Gene/Sample/" |] $
+        doc .= "Create cell by transcript matrix for each sample."
+    ["Pre_Remove_Doublets", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
+    path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
+
+--------------------------------------------------------------------------------
 -- Construct KNN
 --------------------------------------------------------------------------------
     node "Merged_Filter_Mat" [| \case
@@ -226,7 +227,7 @@ builder = do
         "Merged_Batch_Correction", "Merged_Make_KNN"]
 
 --------------------------------------------------------------------------------
--- Selecting parameter
+-- Clustering
 --------------------------------------------------------------------------------
     uNode "Merged_Param_Search_Prep" [| \case
         Just knn -> do
@@ -283,6 +284,24 @@ builder = do
         |] $ return ()
     ["Merge_Tags"] ~> "Make_BigWig"
 
+--------------------------------------------------------------------------------
+-- Compute gene-level accessibility
+--------------------------------------------------------------------------------
+    uNode "Cluster_Gene_Count_Prep" [| \case
+        (mats, Just promoter, Just clFl) -> return $ zip3 mats (repeat promoter) (repeat clFl)
+        _ -> return []
+        |]
+    nodePar "Cluster_Gene_Count" [| mkExprTable "/temp/Pre/Gene/" |] $ return ()
+    ["Make_Gene_Mat", "Get_Promoters", "Merged_Cluster"] ~> "Cluster_Gene_Count_Prep"
+    path ["Cluster_Gene_Count_Prep", "Cluster_Gene_Count"]
+    node "Gene_Acc" [| \input -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Gene/")
+        let output = dir <> "cluster_gene_acc.tsv"
+        combineExprTable output input
+        |] $ return ()
+    ["Get_Promoters", "Cluster_Gene_Count"] ~> "Gene_Acc"
+
+
  --------------------------------------------------------------------------------
 -- Make cell by peak matrix
 --------------------------------------------------------------------------------
@@ -293,83 +312,122 @@ builder = do
     node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
     path ["Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
+--------------------------------------------------------------------------------
+-- Subclustering 
+--------------------------------------------------------------------------------
+    uNode "Subcluster_Get_Features_Prep" [| \case
+        (Just clFl, Just x) -> liftIO $ do
+            let fl = clFl^.replicates._2.files
+            clusters <- decodeFile $ fl^.location
+            let clNames = map (T.pack . B.unpack . fst) $
+                    filter ((>=500) . snd) $ flip map clusters $ \cl ->
+                        (_cluster_name cl, length $ _cluster_member cl)
+            return $ flip map clNames $ \nm ->
+                (eid .~ nm $ clFl, x)
+        _ -> return []
+        |]
+    nodePar "Subcluster_Get_Features" 'subsetFeatMat $ return ()
+    ["Merged_Cluster", "Pre_Merge_Feat_Mat"] ~> "Subcluster_Get_Features_Prep"
+    path ["Subcluster_Get_Features_Prep", "Subcluster_Get_Features"]
+ 
+    nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()
+    nodePar "Subcluster_Make_KNN" [| mkKNNGraph "/Subcluster/KNN/" |] $ return ()
+    path ["Subcluster_Get_Features", "Subcluster_Reduce_Dims", "Subcluster_Make_KNN"]
+    uNode "Subcluster_Param_Search_Prep" [| \(sp, knn) -> do
+        rs <- asks _scatacseq_cluster_resolution_list
+        optimizer <- asks _scatacseq_cluster_optimizer 
+        fmap (concatMap split) $ forM (zipExp sp knn) $ \e ->
+            e & replicates.traversed.files %%~ ( \(x,y) -> do
+                r <- Map.lookup (e^.eid) . fromMaybe Map.empty <$>
+                    asks _scatacseq_subcluster_resolution 
+                let res = sort $ case r of
+                        Nothing -> rs
+                        Just c -> c : rs
+                return $ flip map res $ \r' -> (optimizer, r', x^._2.location, y)
+                )
+        |]
+    nodePar "Subcluster_Param_Search" [| \input -> input & replicates.traversed.files %%~
+        ( \(optimizer, r, spec, knn) -> do
+            let i = "/Subcluster/Params/" <> T.unpack (input^.eid) <> "/" <> show r <> "/"
+            dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir i)
+            liftIO $ do
+                grs <- evalClusters dir optimizer r (knn^._2.location)
+                metric <- computeClusterMetrics grs spec
+                return (r, metric, grs, knn)
+        )
+        |] $ return ()
+    uNode "Subcluster_Cluster_Prep" [| \input -> return $
+        flip map (concatMap split $ mergeExp input) $ \e -> 
+            let (a,b,c,_) = unzip4 $ e^.replicates._2.files
+            in (zip a b, zip a c, e & replicates.traversed.files %~ (^._4) . head)
+        |]
+    nodePar "Subcluster_Cluster" 'plotSubclusters $ return ()
+    node "Subcluster_Merge" 'combineClusters $ return ()
+    ["Subcluster_Reduce_Dims", "Subcluster_Make_KNN"] ~> "Subcluster_Param_Search_Prep"
+    path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search",
+        "Subcluster_Cluster_Prep", "Subcluster_Cluster", "Subcluster_Merge"]
+
+    uNode "Subcluster_Gene_Count_Prep" [| \case
+        (mats, Just promoter, Just clFl) -> return $ zip3 mats (repeat promoter) (repeat clFl)
+        _ -> return []
+        |]
+    nodePar "Subcluster_Gene_Count" [| mkExprTable "/temp/Pre/Gene/Subcluster/" |] $ return ()
+    ["Make_Gene_Mat", "Get_Promoters", "Subcluster_Merge"] ~> "Subcluster_Gene_Count_Prep"
+    path ["Subcluster_Gene_Count_Prep", "Subcluster_Gene_Count"]
+    node "Subcluster_Gene_Acc" [| \input -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Gene/")
+        let output = dir <> "subcluster_gene_acc.tsv"
+        combineExprTable output input
+        |] $ return ()
+    ["Get_Promoters", "Subcluster_Gene_Count"] ~> "Subcluster_Gene_Acc"
+
+
+    -- Extract tags for each subcluster
+    uNode "Subcluster_Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |]
+    namespace "Subcluster" $ extractTags "/Bed/Subcluster/"
+    ["Pre_Remove_Doublets", "Subcluster_Merge"] ~> "Subcluster_Extract_Tags_Prep"
+    ["Subcluster_Extract_Tags_Prep"] ~> "Subcluster_Extract_Tags"
+
+    nodePar "Subcluster_Call_Peaks" [| \x -> do
+        opts <- getCallPeakOpt
+        findPeaks "/Feature/Peak/Subcluster/" opts x
+        |] $ return ()
+    node "Subcluster_Merge_Peaks" [| mergePeaks "/Feature/Peak/Subcluster/" |] $ return ()
+    path ["Subcluster_Merge_Tags", "Subcluster_Call_Peaks", "Subcluster_Merge_Peaks"]
+
+    nodePar "Subcluster_Make_BigWig" [| \(nm, fl) -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/BigWig/Subcluster/")
+        seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
+            _scatacseq_genome_index )
+        tmpdir <- fromMaybe "./" <$> asks _scatacseq_tmp_dir
+        let output = dir <> B.unpack nm <> ".bw"
+        blackRegions <- asks _scatacseq_blacklist >>= \case
+            Nothing -> return []
+            Just blacklist -> liftIO $ readBed blacklist
+        liftIO $ do
+            chrSize <- withGenome seqIndex $ return . getChrSizes
+            bedToBigWig output chrSize blackRegions tmpdir fl
+        |] $ return ()
+    ["Subcluster_Merge_Tags"] ~> "Subcluster_Make_BigWig"
+
+
     uNode "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
             x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
         |]
-    nodePar "Make_Peak_Mat" [| mkPeakMat "/Feature/Peak/" |] $ return ()
-    ["Pre_Remove_Doublets", "Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
+    nodePar "Make_Peak_Mat" [| mkPeakMat "/Feature/Peak/Sample/" |] $ return ()
+    ["Pre_Remove_Doublets", "Subcluster_Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
     path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
---------------------------------------------------------------------------------
--- Differential Peak analysis
---------------------------------------------------------------------------------
-    node "Cluster_Peak_Mat" [| \(mats, cl) -> case cl of
+    node "Subcluster_Peak_Mat" [| \(mats, cl) -> case cl of
         Nothing -> return []
-        Just x -> subMatrix "/Feature/Peak/Cluster/" mats $ x^.replicates._2.files
+        Just x -> subMatrix "/Feature/Peak/Subcluster/" mats $ x^.replicates._2.files
         |] $ return ()
-    ["Make_Peak_Mat", "Merged_Cluster"] ~> "Cluster_Peak_Mat"
+    ["Make_Peak_Mat", "Subcluster_Merge"] ~> "Subcluster_Peak_Mat"
 
-    node "Peak_Acc" [| computePeakRAS "/Feature/Peak/Cluster/" |] $ return ()
-    ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Peak_Acc"
+    node "Subcluster_Peak_Acc" [| computePeakRAS "/Feature/Peak/Subcluster/" |] $ return ()
+    ["Subcluster_Merge_Peaks", "Subcluster_Peak_Mat"] ~> "Subcluster_Peak_Acc"
 
---------------------------------------------------------------------------------
--- Subclustering 
---------------------------------------------------------------------------------
-    uNode "Subcluster_Reduce_Dims_Prep" [| \xs -> 
-        let f x = do 
-                nCells <- liftIO $ _num_row <$>
-                    mkSpMatrix id (x^.replicates._2.files.location)
-                return $ nCells >= 1000
-        in filterM f xs
-        |]
-    nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()
-    nodePar "Subcluster_Make_KNN" [| mkKNNGraph "/Subcluster/KNN/" |] $ return ()
-    path ["Cluster_Peak_Mat", "Subcluster_Reduce_Dims_Prep", "Subcluster_Reduce_Dims", "Subcluster_Make_KNN"]
-
-    uNode "Subcluster_Param_Search_Prep" [| \(sp, knn) -> do
-        res <- asks _scatacseq_cluster_resolution_list
-        optimizer <- asks _scatacseq_cluster_optimizer 
-        return $ flip map (zipExp sp knn) $ \e -> e & replicates.traversed.files %~
-            ( \(x,y) -> flip map res $ \r -> (optimizer, r, x^._2.location, y) )
-        |]
-    nodePar "Subcluster_Param_Search" [| \input -> input & replicates.traversed.files %%~
-        liftIO . ( \xs -> withTempDir (Just "./") $ \tmp -> do
-            res <- forM xs $ \(optimizer, r, spec, knn) -> do
-                res <- evalClusters tmp optimizer r (knn^._2.location) >>=
-                    (flip computeClusterMetrics) spec
-                return (r, res)
-            return (head xs ^. _4, res)
-            )
-        |] $ return ()
-    nodePar "Subcluster_Get_Param" [| \input -> do
-        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
-        let output = printf "%s/%s_parameters.html" dir (T.unpack $ input^.eid)
-        input & replicates.traversed.files %%~ ( \(knn, res) -> do
-            p <- liftIO $ optimalParam output res
-            return (p, fromJust (lookup p res) ^. _1, knn)
-            )
-        |] $ return ()
-    nodePar "Subcluster_Cluster" [| \input -> do
-        optimizer <- asks _scatacseq_cluster_optimizer 
-        let res = input^.replicates._2.files._1
-        cl <- clustering "/Subcluster/" res optimizer $ input & replicates.traversed.files %~ (^._3)
-        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Subcluster/")
-        let output = printf "%s/%s_cluster.html" dir (T.unpack $ input^.eid)
-        liftIO $ decodeFile (cl^.replicates._2.files.location) >>= sampleCells >>=
-            savePlots output [] . visualizeCluster
-        return cl
-        |] $ return ()
-    ["Subcluster_Reduce_Dims", "Subcluster_Make_KNN"] ~> "Subcluster_Param_Search_Prep"
-    path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search", "Subcluster_Get_Param",
-        "Subcluster_Cluster"]
-
-
---------------------------------------------------------------------------------
--- Gene accessibility
---------------------------------------------------------------------------------
-    node "Gene_Acc" [| mkExprTable "/Feature/Gene/Cluster/" |] $ return ()
-    ["Pre_Get_Promoters", "Peak_Acc"] ~> "Gene_Acc"
 
 --------------------------------------------------------------------------------
 -- Run ChromVar 
