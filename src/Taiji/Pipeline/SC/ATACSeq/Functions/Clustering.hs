@@ -52,8 +52,7 @@ filterMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
              -> SCATACSeq S (File tags 'Other)
              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File tags 'Other))
-filterMatrix prefix input = do
-    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+filterMatrix dir input = do
     let output = printf "%s/%s_rep%d_filt.mat.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
         rownames = printf "%s/%s_rep%d_rownames.txt" dir
@@ -83,8 +82,7 @@ spectral :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
          -> Maybe Int  -- ^ seed
          -> SCATACSeq S (a, File tags 'Other)
          -> ReaderT config IO (SCATACSeq S (a, File '[Gzip] 'Tsv))
-spectral prefix seed input = do
-    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+spectral dir seed input = do
     let output = printf "%s/%s_rep%d_spectral.tsv.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
     input & replicates.traversed.files %%~ liftIO . ( \(rownames, fl) -> do
@@ -131,8 +129,7 @@ mkKNNGraph :: SCATACSeqConfig config
            => FilePath
            -> SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)
            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
-mkKNNGraph prefix input = do
-    dir <- asks ((<> asDir ("/" ++ prefix)) . _scatacseq_output_dir) >>= getPath
+mkKNNGraph dir input = do
     let output_knn = printf "%s/%s_rep%d_knn.txt.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         output_umap = printf "%s/%s_rep%d_umap.txt" dir (T.unpack $ input^.eid)

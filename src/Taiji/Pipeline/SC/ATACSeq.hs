@@ -95,9 +95,11 @@ preClustering = do
 
         -- Clustering in each sample
         nodePar "Cluster" [| \input -> do
-            let prefix = "/temp/Pre/Cluster/"
-            filterMatrix prefix input >>= spectral prefix Nothing >>=
-                mkKNNGraph prefix >>= clustering prefix 1 RBConfiguration 
+            dir <- asks _scatacseq_tmp_dir
+            withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
+                let prefix = "/temp/Pre/Cluster/"
+                filterMatrix tmp input >>= spectral tmp Nothing >>=
+                    mkKNNGraph tmp >>= clustering prefix 1 RBConfiguration 
             |] $ return ()
         path ["Make_Window_Mat", "Cluster"]
 
@@ -114,6 +116,7 @@ preClustering = do
                     forM bedFls $ findPeaks outDir
                         ( def & mode .~ NoModel (-100) 200
                             & cutoff .~ QValue 0.05
+                            & tmpDir .~ tmp
                         )
                     )
             |] $ return ()
@@ -208,12 +211,15 @@ builder = do
 --------------------------------------------------------------------------------
     node "Merged_Filter_Mat" [| \case
         Nothing -> return Nothing
-        Just x -> Just <$> filterMatrix "/Cluster/" x
+        Just x -> do
+            dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
+            Just <$> filterMatrix dir x
         |] $ return ()
     node "Merged_Reduce_Dims" [| \case
         Nothing -> return Nothing
-        Just x -> Just <$>
-            spectral "/Cluster/" (Just 3943) x
+        Just x -> do
+            dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
+            Just <$> spectral dir (Just 3943) x
         |] $ return ()
     node "Merged_Batch_Correction" [| \case
         Nothing -> return Nothing
@@ -221,7 +227,9 @@ builder = do
         |] $ return ()
     node "Merged_Make_KNN" [| \case
         Nothing -> return Nothing
-        Just x -> Just <$> mkKNNGraph "/Cluster/" x
+        Just x -> do
+            dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
+            Just <$> mkKNNGraph dir x
         |] $ nCore .= 4
     path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
         "Merged_Batch_Correction", "Merged_Make_KNN"]
@@ -331,7 +339,10 @@ builder = do
     path ["Subcluster_Get_Features_Prep", "Subcluster_Get_Features"]
  
     nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()
-    nodePar "Subcluster_Make_KNN" [| mkKNNGraph "/Subcluster/KNN/" |] $ return ()
+    nodePar "Subcluster_Make_KNN" [| \input -> do
+        dir <- asks ((<> "/Subcluster/KNN/") . _scatacseq_output_dir) >>= getPath
+        mkKNNGraph dir input
+        |] $ return ()
     path ["Subcluster_Get_Features", "Subcluster_Reduce_Dims", "Subcluster_Make_KNN"]
     uNode "Subcluster_Param_Search_Prep" [| \(sp, knn) -> do
         rs <- asks _scatacseq_cluster_resolution_list

@@ -14,7 +14,6 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Subclustering
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as Map
-import Bio.Data.Bed hiding (NarrowPeak(..))
 import Data.Conduit.Zlib (multiple, ungzip, gzip)
 import qualified Data.Text as T
 import qualified Data.HashMap.Strict as M
@@ -22,7 +21,6 @@ import qualified Data.Vector as V
 import qualified Data.HashSet as S
 import Data.Binary (decodeFile, encodeFile)
 import qualified Data.Vector.Unboxed as U
-import Data.List.Ordered (nubSort)
 import Shelly (shelly, run_)
    
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
@@ -72,87 +70,26 @@ subSpectral input = do
         mapC (B.intercalate "\t" . map toShortest . U.toList) .|
         unlinesAsciiC .| gzip .| sinkFile output
 
-{-
--- | subsetting of previous spectra
-subSpectral :: SCATACSeqConfig config
-            => SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv, File '[] 'Other)
-            -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
-subSpectral input = do
-    dir <- asks ((<> "/Subcluster/Spectra/") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_spectra.tsv.gz" dir (T.unpack $ input^.eid)
-        outNames = printf "%s/%s_rownames.tsv" dir (T.unpack $ input^.eid)
-    input & replicates.traversed.files %%~ ( \(rownames, spec, clFl) -> do
-        let clId = B.pack $ T.unpack $ input^.eid
-        [cluster] <- liftIO $ fmap (filter ((==clId) . _cluster_name)) $ decodeFile $ clFl^.location
-        let barcodes = S.fromList $ map _cell_barcode $ _cluster_member cluster
-        _ <- runResourceT $ runConduit $
-            zipSources (sourceFile (rownames^.location) .| linesUnboundedAsciiC)
-                (sourceFile (spec^.location) .| multiple ungzip .| linesUnboundedAsciiC) .|
-                filterC ((`S.member` barcodes) . head . B.split '\t' . fst) .|
-                zipSinks (mapC fst .| unlinesAsciiC .| sinkFile outNames)
-                    (mapC snd .| unlinesAsciiC .| gzip .| sinkFile output)
-        return ( location .~ outNames $ emptyFile, location .~ output $ emptyFile )
-        )
--}
-
 subsetFeatMat :: SCATACSeqConfig config
               => ( SCATACSeq S (File '[] 'Other)  -- ^ cluster
-                 --, [SCATACSeq S (File '[] 'Other)]  -- ^ original clusters
-                 --, [SCATACSeq S [(B.ByteString, File '[Gzip] 'NarrowPeak)]]  -- ^ peaks
-                 --, File '[Gzip] 'NarrowPeak
                  , SCATACSeq S (File '[Gzip] 'Other) )
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Other))
-subsetFeatMat (clFl, {-oriCl, peakFl, peakList,-} matFl) = do
-    --dir <- asks ((<> "/Subcluster/Matrix/") . _scatacseq_output_dir) >>= getPath
+subsetFeatMat (clFl, matFl) = do
+    let prefix = asDir $ "/Subcluster/Matrix/" <> T.unpack (clFl^.eid)
+    tmp <- asks _scatacseq_tmp_dir
+    dir <- asks ((<> prefix) . _scatacseq_output_dir) >>= getPath
     let clId = B.pack $ T.unpack $ clFl^.eid
     [cluster] <- liftIO $ fmap (filter ((==clId) . _cluster_name)) $ decodeFile $
         clFl^.replicates._2.files.location
-    --peaks <- liftIO $ findOriCluster cluster oriCl >>= getPeaks peakFl
-    --liftIO $ runResourceT $ runConduit $ yieldMany peaks .| sinkFileBedGzip (dir <> T.unpack (clFl^.eid) <> "_feat.bed.gz")
-    --r <- liftIO $ runResourceT $ runConduit $ streamBedGzip (peakList^.location) .|
-    --    intersectBedWith ((\_ x -> x) :: BED3 -> [BED3] -> [BED3]) peaks .| sinkList
-    --let idx = map snd $ filter (not . null . fst) $ zip r [0..] :: [Int]
     let barcodes = S.fromList $ map _cell_barcode $ _cluster_member cluster
-    withRunInIO $ \runInIO -> withTempDir (Just "./") $ \tmpdir -> runInIO $
+    withRunInIO $ \runInIO -> withTempDir tmp $ \tmpdir -> runInIO $
         ( clFl & replicates.traversed.files %%~ ( \_ -> liftIO $ do
-            mat <- {-fmap (selectCols idx) $-} mkSpMatrix id $ matFl^.replicates._2.files.location
+            mat <- mkSpMatrix id $ matFl^.replicates._2.files.location
             runResourceT $ runConduit $ streamRows mat .|
                 filterC ((`S.member` barcodes) . fst) .|
                 sinkRows' (_num_col mat) id (tmpdir <> "/mat.gz")
             return $ location .~ (tmpdir <> "/mat.gz") $ matFl^.replicates._2.files
-            ) ) >>= filterMatrix ("/Subcluster/Matrix/" <> T.unpack (clFl^.eid))
-
-getPeaks :: [SCATACSeq S [(B.ByteString, File '[Gzip] 'NarrowPeak)]]
-         -> [(T.Text, [B.ByteString])]
-         -> IO [BED3]
-getPeaks peakFls cls = do
-    ps <- runResourceT $ runConduit $ mapM_ streamBedGzip fls .| sinkList
-    runConduit $ mergeBed ps .| sinkList
-  where
-    fls = map (\x -> M.lookupDefault undefined x peakFls') cls'
-    peakFls' = M.fromList $ flip concatMap peakFls $ \e -> 
-        let i = e^.eid <> "_" <> T.pack (show $ e^.replicates._1)
-        in flip map (e^.replicates._2.files) $ \(c, fl) -> ((i, c), fl^.location)
-    cls' = nubSort $ flip concatMap cls $ \(i, xs) -> zip (repeat i) xs
-
-findOriCluster :: CellCluster -> [SCATACSeq S (File '[] 'Other)] -> IO [(T.Text, [B.ByteString])]
-findOriCluster cl ori_cls = fmap catMaybes $ forM ori_cls $ \e -> do
-    let i = e^.eid <> "_" <> T.pack (show $ e^.replicates._1)
-    if i `S.member` exps
-        then do
-            cls <- decodeFile $ e^.replicates._2.files.location
-            let r = flip mapMaybe cls $ \c -> if any (`S.member` barcodes) $ map (addPrefix i . _cell_barcode) $ _cluster_member c
-                    then Just $ _cluster_name c
-                    else Nothing
-            return $ Just (i, r)
-        else return Nothing
-  where
-    exps = S.fromList $ map fst $ filter ((>0.01) . snd) $ normalize $ M.toList $
-        M.fromListWith (+) $ zip (map (T.init . fst . T.breakOnEnd "+" .
-            T.pack . B.unpack . _cell_barcode) $ _cluster_member cl) $ repeat (1 :: Double)
-    barcodes = S.fromList $ map _cell_barcode $ _cluster_member cl
-    addPrefix x y = B.pack (T.unpack x) <> "+" <> y
-    normalize xs = let s = foldl1' (+) $ map snd xs in map (\(a,b) -> (a, b / s)) xs
+            ) ) >>= filterMatrix dir
 
 combineClusters :: SCATACSeqConfig config
                 => [SCATACSeq S (File '[] 'Other)]

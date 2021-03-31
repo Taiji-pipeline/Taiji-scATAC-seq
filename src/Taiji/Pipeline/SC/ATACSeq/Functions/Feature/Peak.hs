@@ -58,13 +58,14 @@ findPeaks :: (SingI tags, SCATACSeqConfig config)
           -> (B.ByteString, File tags 'Bed)
           -> ReaderT config IO (B.ByteString, File '[Gzip] 'NarrowPeak)
 findPeaks prefix opts (cName, bedFl) = do
+    tmpdir <- asks _scatacseq_tmp_dir
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     let output = dir ++ "/" ++ B.unpack cName ++ ".narrowPeak.gz" 
     asks _scatacseq_blacklist >>= \case
         Nothing -> liftIO $ do
             r <- callPeaks output bedFl Nothing opts
             return (cName, r)
-        Just blacklist -> liftIO $ withTemp (Just "./") $ \tmp -> do
+        Just blacklist -> liftIO $ withTemp tmpdir $ \tmp -> do
             _ <- callPeaks tmp bedFl Nothing opts
             blackRegions <- readBed blacklist :: IO [BED3]
             let bedTree = bedToTree const $ map (\x -> (x, ())) blackRegions
@@ -80,9 +81,10 @@ mergePeaks :: SCATACSeqConfig config
            -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
 mergePeaks _ [] = return Nothing
 mergePeaks prefix input = do
+    tmpdir <- asks _scatacseq_tmp_dir
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     let output = dir <> "/merged.narrowPeak.gz" 
-    liftIO $ withTemp Nothing $ \tmp1 -> withTemp Nothing $ \tmp2 -> do
+    liftIO $ withTemp tmpdir $ \tmp1 -> withTemp tmpdir $ \tmp2 -> do
         runResourceT $ runConduit $ mapM_ (streamBedGzip . (^._2.location)) input .|
             mapC resize .| sinkFileBed tmp1
         shelly $ escaping False $ bashPipeFail bash_ "cat" $
