@@ -24,6 +24,7 @@ import Bio.Data.Bed.Utils
 import Bio.Seq.IO (withGenome, getChrSizes)
 
 import Taiji.Prelude hiding (groupBy)
+import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 
@@ -61,15 +62,15 @@ mkWindowMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
                => FilePath
                -> SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
                -> ReaderT config IO (SCATACSeq S (File tags 'Other))
-mkWindowMat prefix input = do
-    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+mkWindowMat dir input = do
     let output = printf "%s/%s_rep%d_window.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
         runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
-            groupCells .| mkFeatMat nCell (map return regions) .| sinkFile output
+            groupCells .| mkCountMat regions .|
+            sinkRows nCell (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
 
 -- | Divide the genome into bins and count the tags.

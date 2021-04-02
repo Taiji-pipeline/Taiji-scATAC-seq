@@ -92,24 +92,29 @@ subsetFeatMat (clFl, matFl) = do
             ) ) >>= filterMatrix dir
 
 combineClusters :: SCATACSeqConfig config
-                => [SCATACSeq S (File '[] 'Other)]
+                => ( Maybe (SCATACSeq S (File '[] 'Other))
+                   , [SCATACSeq S (File '[] 'Other)] )
                 -> ReaderT config IO (Maybe (SCATACSeq S (File '[] 'Other)))
-combineClusters [] = return Nothing
-combineClusters input = do
-    dir <- asks ((<> "/Subcluster/") . _scatacseq_output_dir) >>= getPath
-    let output = dir <> "allClusters.bin"
+combineClusters (cl, []) = return cl
+combineClusters (Just cl, subCl) = do
+    dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
+    let output = dir <> "final_clusters.bin"
+        clIds = S.fromList $ map (B.pack . T.unpack . (^.eid)) subCl
     liftIO $ do
-        cls <- forM input $ \e -> do
+        cls <- forM subCl $ \e -> do
             let i = B.pack $ T.unpack $ e^.eid
             c <- decodeFile $ e^.replicates._2.files.location
             return $ if length c == 1
                 then [(head c){_cluster_name = i}]
                 else map (rename (B.pack $ T.unpack $ e^.eid)) $
                     filter ((>=0.5) . fromMaybe 1 . _cluster_reproducibility) c
-        encodeFile output $ concat cls
-    return $ Just $ eid .~ "Merged" $ replicates._2.files.location .~ output $ head input 
+        cs <- fmap (filter (not . (`S.member` clIds) . _cluster_name)) $
+            decodeFile $ cl^.replicates._2.files.location
+        encodeFile output $ concat cls <> cs
+    return $ Just $ replicates._2.files.location .~ output $ cl
   where
     rename prefix cl = cl{_cluster_name = prefix <> "." <> B.tail (_cluster_name cl)}
+combineClusters _ = return Nothing
 
 plotSubclusters :: SCATACSeqConfig config
              => ( [(Double, (Int, Double, Double))]

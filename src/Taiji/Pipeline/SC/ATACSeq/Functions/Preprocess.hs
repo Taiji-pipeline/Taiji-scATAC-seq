@@ -12,20 +12,20 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     , demultiplex
     ) where
 
-import           Data.Bifunctor                (bimap)
 import Bio.Pipeline
-import Data.Either (lefts)
-import Bio.Data.Experiment.Parser
+import Data.Either (partitionEithers, rights, lefts)
+import Bio.Data.Experiment.Parser (mkInputReader)
+import Data.Conduit.Internal (zipSinks, zipSources)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import Shelly hiding (FilePath)
-import Data.Either
-import Bio.Data.Fastq (streamFastqGzip)
+import qualified Data.IntMap as I
+import Bio.Data.Fastq (streamFastqGzip, sinkFastqGzip, fastqSeqId, fastqSeq)
+import Control.DeepSeq (force)
 
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
-import Taiji.Pipeline.SC.ATACSeq.Functions.Internal (demulti)
 
 type RAWInput = SCATACSeq N [Either SomeFile (SomeFile, SomeFile)]
 
@@ -114,8 +114,23 @@ demultiplex input = do
         stat <- runResourceT $ runConduit $ streamFastqGzip (fqidx^.location) .| takeC 100000000 .| barcodeStat bcLen
         B.writeFile tmp $ B.unlines $ map (B.pack . show . snd) $ U.toList stat
         thres <- fmap (read . T.unpack . head . T.lines) $ shelly $ run "taiji-utils" ["barcode", T.pack tmp]
-        let bcMap = mkBarcodeMap $ map fst $ take (truncate thres) $ U.toList stat
+        let bcMap = mkBarcodeMap $ map fst $ take (truncate (thres :: Double)) $ U.toList stat
         demulti output1 output2 bcMap bcLen (fqidx^.location) (fq1^.location) $ fq2^.location
         return ( location .~ output1 $ emptyFile
                , location .~ output2 $ emptyFile )
         )
+
+demulti :: FilePath -> FilePath -> I.IntMap Int -> Int -> FilePath -> FilePath -> FilePath -> IO ()
+demulti out1 out2 bcMap k fqidx fq1 fq2 = do
+    _ <- runResourceT $ runConduit $ zipSources
+        (streamFastqGzip fqidx .| mapC (dnaToInt . B.take k . fastqSeq))
+        (zipSources (streamFastqGzip fq1) (streamFastqGzip fq2)) .|
+        concatMapC f .| zipSinks (mapC fst .| sinkFastqGzip out1) (mapC snd .| sinkFastqGzip out2)
+    return ()
+  where
+    f (bc, (q1, q2)) = force $ case I.lookup bc bcMap of
+        Nothing -> Nothing
+        Just bc' -> Just (addBarcode bc' q1, addBarcode bc' q2)
+      where
+        addBarcode x fq = fq{fastqSeqId = B.concat [intToDna x, ":", fastqSeqId fq]}
+{-# INLINE demulti #-}

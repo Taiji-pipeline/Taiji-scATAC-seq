@@ -16,7 +16,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Utils
     , createCutSiteIndex
 
       -- * Feature matrix
-    , mkFeatMat
+    , mkCountMat
     , groupCells
     ) where
 
@@ -164,20 +164,12 @@ decodeCutSite chrs = concatMap f . zip chrs . either error id . decode
     f (chr, xs) = map (\x -> CutSite chr x) xs
 {-# INLINE decodeCutSite #-}
 
--- | Generating the cell by feature count matrix as a gzipped stream.
--- The input stream is raw tags grouped by cells.
-mkFeatMat :: (PrimMonad m, MonadThrow m)
-          => Int   -- ^ the number of cells
-          -> [[BED3]]    -- ^ a list of regions
-          -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
-mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
+mkCountMat :: Monad m
+           => [BED3]    -- ^ a list of regions
+           -> ConduitT (B.ByteString, [BED]) (Row Int) m ()
+mkCountMat regions = mapC $ second $ countEachCell bedTree
   where
-    source = yield header >> mapC
-        (encodeRowWith (fromJust . packDecimal) . second (countEachCell bedTree))
-    bedTree = bedToTree (++) $ concat $
-        zipWith (\xs i -> zip xs $ repeat [i]) regions [0::Int ..]
-    nBin = length regions
-    header = B.pack $ printf "Sparse matrix: %d x %d" nCell nBin
+    bedTree = bedToTree (++) $ zip regions $ map return [0::Int ..]
     countEachCell :: BEDTree [Int] -> [BED] -> [(Int, Int)]
     countEachCell beds = HM.toList . foldl' f HM.empty
       where
@@ -187,6 +179,7 @@ mkFeatMat nCell regions = source .| unlinesAsciiC .| gzip
             query = case bed^.strand of
                 Just False -> BED3 (bed^.chrom) (bed^.chromEnd - 1) (bed^.chromEnd)
                 _ -> BED3 (bed^.chrom) (bed^.chromStart) (bed^.chromStart + 1)
+{-# INLINE mkCountMat #-}
 
 groupCells :: Monad m => ConduitT BED (B.ByteString, [BED]) m ()
 groupCells = groupBy ((==) `on` (^.name)) .|

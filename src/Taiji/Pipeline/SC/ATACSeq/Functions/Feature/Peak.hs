@@ -40,16 +40,23 @@ mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath
           -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
-mkPeakMat prefix input = do
-    dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+mkPeakMat dir input = do
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
+        {-
+        rownames = printf "%s/%s_rep%d_rownames.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        features = printf "%s/%s_rep%d_features.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+            -}
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
         runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
-            groupCells .| mkFeatMat nCell (map return regions) .| sinkFile output
+            groupCells .| mkCountMat regions .|
+            sinkRows nCell (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
+
 
 -- | Call Peaks for aggregated files
 findPeaks :: (SingI tags, SCATACSeqConfig config)
@@ -80,9 +87,8 @@ mergePeaks :: SCATACSeqConfig config
            -> [(B.ByteString, File '[Gzip] 'NarrowPeak)]
            -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
 mergePeaks _ [] = return Nothing
-mergePeaks prefix input = do
+mergePeaks dir input = do
     tmpdir <- asks _scatacseq_tmp_dir
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir prefix)
     let output = dir <> "/merged.narrowPeak.gz" 
     liftIO $ withTemp tmpdir $ \tmp1 -> withTemp tmpdir $ \tmp2 -> do
         runResourceT $ runConduit $ mapM_ (streamBedGzip . (^._2.location)) input .|
@@ -101,11 +107,12 @@ mergePeaks prefix input = do
       where
         rest = filter (\x -> sizeOverlapped x bestPeak == 0) peaks
         bestPeak = maximumBy (comparing (fromJust . (^.npPvalue))) peaks
-    resize pk = chromStart .~ max 0 (summit - 250) $
-        chromEnd .~ summit + 250 $
-        npPeak .~ Just 250 $ pk
+    resize pk = chromStart .~ max 0 (summit - halfWindowSize) $
+        chromEnd .~ summit + halfWindowSize$
+        npPeak .~ Just halfWindowSize $ pk
       where
         summit = pk^.chromStart + fromJust (pk^.npPeak)
+    halfWindowSize = 125
     
 -- | Extract BEDs for each cluster.
 mkCellClusterBed :: SCATACSeqConfig config
