@@ -149,7 +149,7 @@ preClustering = do
             |]
         nodePar "Make_Feat_Mat" [| \input -> do
             dir <- asks ((<> "/Feature/Sample/") . _scatacseq_output_dir) >>= getPath
-            mkPeakMat dir input
+            mkFeatMat dir input
             |] $ return ()
         ["Remove_Doublet", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
         node "Merge_Feat_Mat" [| \mats -> if null mats
@@ -157,11 +157,13 @@ preClustering = do
             else do
                 dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/Feature/"))
                 let output = dir <> "Merged_cell_by_peak.mat.gz"
+                {-
                 liftIO $ concatMatrix output $ flip map mats $ \mat ->
                     ( Just $ B.pack $ T.unpack (mat^.eid) <> "_" <> show (mat^.replicates._1)
                     , mat^.replicates._2.files.location )
+                    -}
                 return $ Just $ (head mats & eid .~ "Merged") &
-                    replicates._2.files.location .~ output
+                    replicates._2.files .~ (location .~ "" $ emptyFile)
             |] $ return ()
         path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
 
@@ -193,18 +195,23 @@ builder = do
 --------------------------------------------------------------------------------
 -- Construct KNN
 --------------------------------------------------------------------------------
-    node "Merged_Filter_Mat" [| \case
-        Nothing -> return Nothing
-        Just x -> do
-            dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
-            Just <$> filterMatrix dir x
-        |] $ return ()
-    node "Merged_Reduce_Dims" [| \case
-        Nothing -> return Nothing
-        Just x -> do
-            dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
-            Just <$> spectral dir (Just 3943) x
-        |] $ return ()
+    node "Merged_Feature_Selection" 'dropFeatures $ return ()
+    path ["Pre_Make_Feat_Mat", "Merged_Feature_Selection"]
+
+    node "Merged_Spectral" [| getSpectral 35000 |] $ nCore .= 4
+    ["Pre_Make_Feat_Mat", "Merged_Feature_Selection"] ~> "Merged_Spectral"
+
+    uNode "Merged_Nystrom_Prep" [| \(input, model, feat) -> return $ case model of
+        Just (Right m) -> zip3 input (repeat m) $ repeat $ fromJust feat
+        _ -> []
+        |]
+    nodePar "Merged_Nystrom" 'nystromExtend $ return ()
+    ["Pre_Make_Feat_Mat", "Merged_Spectral", "Merged_Feature_Selection"] ~> "Merged_Nystrom_Prep"
+    path ["Merged_Nystrom_Prep", "Merged_Nystrom"]
+
+    node "Merged_Reduce_Dims" 'mergeResults $ return ()
+    ["Merged_Spectral", "Pre_Make_Feat_Mat", "Merged_Nystrom"] ~> "Merged_Reduce_Dims"
+
     node "Merged_Batch_Correction" [| \case
         Nothing -> return Nothing
         Just x -> Just <$> batchCorrection "/Cluster/" x
@@ -215,8 +222,7 @@ builder = do
             dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
             Just <$> mkKNNGraph dir x
         |] $ nCore .= 4
-    path ["Pre_Merge_Feat_Mat", "Merged_Filter_Mat", "Merged_Reduce_Dims",
-        "Merged_Batch_Correction", "Merged_Make_KNN"]
+    path ["Merged_Reduce_Dims", "Merged_Batch_Correction", "Merged_Make_KNN"]
 
 --------------------------------------------------------------------------------
 -- Clustering

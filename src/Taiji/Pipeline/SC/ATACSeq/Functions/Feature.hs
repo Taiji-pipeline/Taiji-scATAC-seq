@@ -10,8 +10,19 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
     , module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
+    , dropFeatures
     ) where
 
+import Data.Conduit.Zlib (multiple, ungzip, gzip)
+import qualified Data.Vector.Unboxed as U
+import qualified Data.ByteString.Char8 as B
+import Bio.Utils.Functions (scale)
+import Control.DeepSeq (force)
+import Data.Binary (encodeFile)
+
+import Taiji.Prelude
+import Taiji.Utils
+import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
@@ -24,7 +35,31 @@ readMatrix input = do
     let prefix = B.pack $ T.unpack (mat^.eid) <> "_" <> show (mat^.replicates._1) <> "+"
     return $ mapRows (first (prefix <>)) mat
 {-# INLINE readMatrix #-}
-
-selectFeatures :: [SCATACSeq S (File tags 'Other)] -> 
-selectFeatures =
     -}
+
+dropFeatures :: SCATACSeqConfig config
+             => [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
+                              , File '[ColumnName, Gzip] 'Tsv
+                              , File '[Gzip] 'Other ) ]
+             -> ReaderT config IO (Maybe FilePath)
+dropFeatures input = do
+    dir <- asks ((<> "/Spectral/") . _scatacseq_output_dir) >>= getPath
+    let output = dir <> "dropped_feats.bin"
+    liftIO $ do
+        counts <- runConduit $ yieldMany input .| mapMC readVector .| foldlC f Nothing
+        case counts of
+            Nothing -> return Nothing
+            Just c -> do
+                let (zeros, nonzeros) = U.partition ((==0) . snd) $
+                        U.zip (U.enumFromN 0 (U.length c)) c
+                    (i, v) = U.unzip nonzeros
+                    idx = U.toList $ fst $ U.unzip $ U.filter ((>1.65) . snd) $
+                        U.zip i $ scale $ U.map fromIntegral v :: [Int]
+                encodeFile output $ idx <> U.toList (fst $ U.unzip zeros)
+                return $ Just output
+  where
+    readVector x = runResourceT $ runConduit $
+        sourceFile (x^.replicates._2.files._2.location) .| multiple ungzip .|
+        linesUnboundedAsciiC .| mapC (readInt . last . B.split '\t') .| sinkVector
+    f Nothing x = force $ Just x
+    f (Just x') x = force $ Just $ U.zipWith (+) x' x

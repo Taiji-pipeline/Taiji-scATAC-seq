@@ -41,9 +41,9 @@ preChromVar (Just motifFl, Just peakFl, inputs) = do
         peakMat = dir <> "merged_cell_by_peak.mat.gz"
         bin = dir <> "chromVar.bin"
     liftIO $ do
-        concatMatrix peakMat $ zip (repeat Nothing) $
+        mat <- fmap concatMatrix $ mapM (mkSpMatrix readDouble) $
             inputs^..folded.replicates._2.files.location
-        mat <- mkSpMatrix readDouble peakMat
+        saveMatrix peakMat toShortest mat
         gc <- withGenome genome $ \g -> runResourceT $ runConduit $ 
             streamBedGzip (peakFl^.location) .|
             mapMC (liftIO . fmap f . fetchSeq g . (convert :: Bed.NarrowPeak -> BED)) .|

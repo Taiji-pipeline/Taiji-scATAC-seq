@@ -30,7 +30,6 @@ import qualified Data.Map.Strict as M
 import qualified Data.HashMap.Strict as HM
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BS
-import Data.Conduit.Zlib (gzip)
 import Data.Binary (encode, decode)
 import System.IO.Temp (withTempFile)
 import Control.DeepSeq (force)

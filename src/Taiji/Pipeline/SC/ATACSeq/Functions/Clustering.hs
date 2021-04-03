@@ -262,7 +262,7 @@ subMatrix prefix inputs clFl = do
     liftIO $ do
         cls <- decodeFile $ clFl^.location
         mat <- mkSpMatrix id $ head inputs ^. replicates._2.files.location
-        mergedMat <- fmap concatMatrix' $ forM inputs $ \input -> do
+        mergedMat <- fmap concatMatrix $ forM inputs $ \input -> do
             let f x = B.concat [ B.pack $ T.unpack $ input^.eid, "_"
                     , B.pack $ show (input^.replicates._1), "+", x ]
             fmap (mapRows (first f)) $ mkSpMatrix id $ input^.replicates._2.files.location

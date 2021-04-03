@@ -6,7 +6,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
-    ( mkPeakMat
+    ( mkFeatMat
+    , mkPeakMat
     , findPeaks
     , mergePeaks
     , getPeakEnrichment
@@ -14,6 +15,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
     , computePeakRAS
     ) where
 
+import Control.Arrow (first)
 import           Bio.Pipeline
 import qualified Data.HashSet as S
 import Bio.Data.Bed hiding (NarrowPeak)
@@ -25,6 +27,9 @@ import qualified Data.Matrix as Mat
 import Data.Singletons.Prelude (Elem, SingI)
 import Shelly hiding (FilePath)
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
+import Control.DeepSeq (force)
+import Data.Conduit.Zlib (gzip)
 
 import Statistics.Distribution (quantile)
 import Statistics.Distribution.ChiSquared (chiSquared)
@@ -43,12 +48,6 @@ mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
 mkPeakMat dir input = do
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-        {-
-        rownames = printf "%s/%s_rep%d_rownames.txt.gz" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-        features = printf "%s/%s_rep%d_features.txt.gz" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-            -}
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
@@ -57,7 +56,45 @@ mkPeakMat dir input = do
             sinkRows nCell (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
 
-
+-- | Make the read count matrix.
+mkFeatMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+          => FilePath
+          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
+          -> ReaderT config IO ( SCATACSeq S
+              ( File '[RowName, Gzip] 'Tsv
+              , File '[ColumnName, Gzip] 'Tsv
+              , File '[Gzip] 'Other ))
+mkFeatMat dir input = do
+    let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        rownames = printf "%s/%s_rep%d_rownames.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        features = printf "%s/%s_rep%d_features.txt.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        bcPrefix = B.pack $ T.unpack (input^.eid) <> "_" <> show (input^.replicates._1) <> "+"
+    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
+        regions <- runResourceT $ runConduit $
+            streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
+        let rowSink = mapC f .| unlinesAsciiC .| gzip .| sinkFile rownames
+              where
+                f (nm, xs) = force $ nm <> "\t" <> fromJust (packDecimal $ foldl1' (+) $ map snd xs)
+            colSink = do
+                vec <- colSumC $ length regions
+                let bs = B.unlines $ zipWith showBed regions $ U.toList vec
+                yield bs .| gzip .| sinkFile features
+            showBed (BED3 chr s e) x = B.concat
+                [ chr, ":", fromJust $ packDecimal s, "-"
+                , fromJust $ packDecimal e, "\t", fromJust $ packDecimal x]
+            sink = (,,) <$> ZipSink (sinkRows nCell (length regions) (fromJust . packDecimal) output)
+                <*> ZipSink rowSink <*> ZipSink colSink
+        _ <- runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
+            groupCells .| mkCountMat regions .| mapC (first (bcPrefix <>)) .|
+            getZipSink sink
+        return ( location .~ rownames $ emptyFile
+               , location .~ features $ emptyFile
+               , location .~ output $ emptyFile )
+        )
+        
 -- | Call Peaks for aggregated files
 findPeaks :: (SingI tags, SCATACSeqConfig config)
           => FilePath
