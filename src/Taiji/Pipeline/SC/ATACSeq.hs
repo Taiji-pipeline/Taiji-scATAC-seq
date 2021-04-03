@@ -10,9 +10,10 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as Map
 import           Bio.Seq.IO (withGenome, getChrSizes)
-import           Bio.Data.Bed (readBed, streamBedGzip, sinkFileBedGzip, BED3)
+import           Bio.Data.Bed (readBed, streamBedGzip, sinkFileBedGzip, BED3, mergeSortedBed, splitBedBySizeLeft, mergeBed)
 import Data.List.Ordered (nubSort)
 import Data.Binary
+import Control.DeepSeq (($!!))
 
 import           Taiji.Prelude
 import           Taiji.Utils
@@ -26,16 +27,20 @@ getFeatures :: SCATACSeqConfig config
 getFeatures ([], []) = return Nothing
 getFeatures (peaks, windows) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> asDir tmp)
+    ws <- fromIntegral <$> asks _scatacseq_window_size
     asks _scatacseq_cluster_by_window >>= \case
         True -> do
             let output = dir <> "/merged.window.bed.gz" 
                 f acc x = do
                     regions <- liftIO $ runResourceT $ runConduit $
                         streamBedGzip (x^.replicates._2.files._2.location) .|
-                        sinkList
-                    return $ nubSort $ acc ++ (regions :: [BED3])
+                        mergeSortedBed .| sinkList
+                    return $!! runIdentity $ runConduit $
+                        mergeBed (acc <> regions :: [BED3]) .| sinkList
             beds <- foldM f [] windows
-            liftIO $ runResourceT $ runConduit $ yieldMany beds .| sinkFileBedGzip output
+            liftIO $ runResourceT $ runConduit $ yieldMany beds .|
+                concatMapC (splitBedBySizeLeft ws) .|
+                sinkFileBedGzip output
             return $ Just $ location .~ output $ emptyFile
         _ -> mergePeaks dir $ concatMap (^.replicates._2.files) peaks
   where
