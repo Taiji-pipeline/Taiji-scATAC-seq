@@ -35,6 +35,7 @@ getWindows :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
            -> ReaderT config IO
               (SCATACSeq S (File tags 'Bed, File tags 'Bed, Int))
 getWindows prefix input = do
+    res <- fromIntegral <$> asks _scatacseq_window_size
     genome <- asks (fromJust . _scatacseq_genome_index)
     chrSize <- liftIO $ withGenome genome $ return . getChrSizes
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
@@ -54,8 +55,6 @@ getWindows prefix input = do
                 runResourceT $ runConduit $ windows .|
                     filterC (not . isIntersected bedTree) .| sinkFileBedGzip output
         return $ (fl, emptyFile & location .~ output, n) )
-  where
-    res = 5000
 
 -- | Make the read count matrix.
 mkWindowMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)

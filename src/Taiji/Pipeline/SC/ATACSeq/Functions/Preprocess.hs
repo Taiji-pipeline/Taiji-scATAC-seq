@@ -104,7 +104,8 @@ demultiplex :: SCATACSeqConfig config
             -> ReaderT config IO
                 (SCATACSeq S (File '[Demultiplexed, Gzip] 'Fastq, File '[Demultiplexed, Gzip] 'Fastq))
 demultiplex input = do
-    bcLen <- fromMaybe (error "cell barcode length was not provided") <$> asks _scatacseq_cell_barcode_length
+    bcLen <- fromIntegral . fromMaybe (error "cell barcode length was not provided") <$>
+        asks _scatacseq_cell_barcode_length
     dir <- asks ((<> "/Fastq") . _scatacseq_output_dir) >>= getPath
     let output1 = printf "%s/%s_rep%d_demulti_R1.fastq.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)

@@ -152,20 +152,7 @@ preClustering = do
             mkFeatMat dir input
             |] $ return ()
         ["Remove_Doublet", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
-        node "Merge_Feat_Mat" [| \mats -> if null mats
-            then return Nothing
-            else do
-                dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/temp/Pre/Feature/"))
-                let output = dir <> "Merged_cell_by_peak.mat.gz"
-                {-
-                liftIO $ concatMatrix output $ flip map mats $ \mat ->
-                    ( Just $ B.pack $ T.unpack (mat^.eid) <> "_" <> show (mat^.replicates._1)
-                    , mat^.replicates._2.files.location )
-                    -}
-                return $ Just $ (head mats & eid .~ "Merged") &
-                    replicates._2.files .~ (location .~ "" $ emptyFile)
-            |] $ return ()
-        path ["Make_Feat_Mat_Prep", "Make_Feat_Mat", "Merge_Feat_Mat"]
+        path ["Make_Feat_Mat_Prep", "Make_Feat_Mat"]
 
 builder :: Builder ()
 builder = do
@@ -263,7 +250,7 @@ builder = do
 -- Subclustering 
 --------------------------------------------------------------------------------
     uNode "Subcluster_Get_Features_Prep" [| \case
-        (Just clFl, Just x) -> liftIO $ do
+        (Just clFl, x) -> liftIO $ do
             let fl = clFl^.replicates._2.files
             clusters <- decodeFile $ fl^.location
             let clNames = map (T.pack . B.unpack . fst) $
@@ -274,7 +261,7 @@ builder = do
         _ -> return []
         |]
     nodePar "Subcluster_Get_Features" 'subsetFeatMat $ return ()
-    ["Merged_Cluster", "Pre_Merge_Feat_Mat"] ~> "Subcluster_Get_Features_Prep"
+    ["Merged_Cluster", "Pre_Make_Feat_Mat"] ~> "Subcluster_Get_Features_Prep"
     path ["Subcluster_Get_Features_Prep", "Subcluster_Get_Features"]
  
     nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()

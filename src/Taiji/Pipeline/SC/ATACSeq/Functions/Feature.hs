@@ -13,7 +13,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature
     , dropFeatures
     ) where
 
-import Data.Conduit.Zlib (multiple, ungzip, gzip)
+import Data.Conduit.Zlib (multiple, ungzip)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.ByteString.Char8 as B
 import Bio.Utils.Functions (scale)
@@ -21,21 +21,11 @@ import Control.DeepSeq (force)
 import Data.Binary (encodeFile)
 
 import Taiji.Prelude
-import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Peak
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
-
-{-
-readMatrix :: SCATACSeq S (File tags 'Other) -> IO (SpMatrix Int)
-readMatrix input = do
-    mat <- mkSpMatrix readInt $ input^.replicates._2.files.location
-    let prefix = B.pack $ T.unpack (mat^.eid) <> "_" <> show (mat^.replicates._1) <> "+"
-    return $ mapRows (first (prefix <>)) mat
-{-# INLINE readMatrix #-}
-    -}
 
 dropFeatures :: SCATACSeqConfig config
              => [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv

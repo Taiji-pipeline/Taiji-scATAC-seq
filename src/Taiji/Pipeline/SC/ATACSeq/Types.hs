@@ -22,6 +22,7 @@ module Taiji.Pipeline.SC.ATACSeq.Types
     , getQCFunction
     ) where
 
+import Numeric.Natural (Natural)
 import           Data.Binary (Binary(..))
 import Bio.Data.Experiment.Types
 import qualified Data.ByteString.Char8 as B
@@ -59,16 +60,17 @@ class SCATACSeqConfig config where
     _scatacseq_callpeak_opts :: config -> CallPeakOpts
     _scatacseq_annotation :: config -> Maybe FilePath
     _scatacseq_tmp_dir :: config -> Maybe FilePath
-    _scatacseq_cell_barcode_length :: config -> Maybe Int
+    _scatacseq_cell_barcode_length :: config -> Maybe Natural
     _scatacseq_cluster_resolution_list :: config -> [Double]
     _scatacseq_cluster_resolution :: config -> Maybe Double
     _scatacseq_subcluster_resolution :: config -> Maybe (M.Map T.Text Double)
     _scatacseq_cluster_optimizer :: config -> Optimizer
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double
-    _scatacseq_minimal_fragment :: config -> Int
+    _scatacseq_minimal_fragment :: config -> Natural
     _scatacseq_doublet_score_cutoff :: config -> Double
     _scatacseq_cluster_by_window :: config -> Bool
+    _scatacseq_window_size :: config -> Natural
 
 data Stat = Stat
     { _barcode :: B.ByteString
@@ -153,7 +155,7 @@ getCallPeakOpt = do
 getQCFunction :: SCATACSeqConfig config => ReaderT config IO (Stat -> Bool)
 getQCFunction = do
     teCutoff <- asks _scatacseq_te_cutoff
-    fragmentCutoff <- asks _scatacseq_minimal_fragment
+    fragmentCutoff <- fromIntegral <$> asks _scatacseq_minimal_fragment
     doubletCutoff <- asks _scatacseq_doublet_score_cutoff
     return $ \x -> _te x >= teCutoff && _uniq_reads x >= fragmentCutoff && fromMaybe 0 (_doublet_score x) <= doubletCutoff
 {-# INLINE getQCFunction #-}

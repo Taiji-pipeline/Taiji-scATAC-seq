@@ -72,9 +72,11 @@ subSpectral input = do
 
 subsetFeatMat :: SCATACSeqConfig config
               => ( SCATACSeq S (File '[] 'Other)  -- ^ cluster
-                 , SCATACSeq S (File '[Gzip] 'Other) )
+                 , [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
+                               , File '[ColumnName, Gzip] 'Tsv
+                               , File '[Gzip] 'Other ) ] )
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Other))
-subsetFeatMat (clFl, matFl) = do
+subsetFeatMat (clFl, matFls) = do
     let prefix = asDir $ "/Subcluster/Matrix/" <> T.unpack (clFl^.eid)
     tmp <- asks _scatacseq_tmp_dir
     dir <- asks ((<> prefix) . _scatacseq_output_dir) >>= getPath
@@ -84,11 +86,11 @@ subsetFeatMat (clFl, matFl) = do
     let barcodes = S.fromList $ map _cell_barcode $ _cluster_member cluster
     withRunInIO $ \runInIO -> withTempDir tmp $ \tmpdir -> runInIO $
         ( clFl & replicates.traversed.files %%~ ( \_ -> liftIO $ do
-            mat <- mkSpMatrix id $ matFl^.replicates._2.files.location
+            mat <- fmap concatMatrix $ forM matFls $ \x -> mkSpMatrix id $ x^.replicates._2.files._3.location
             runResourceT $ runConduit $ streamRows mat .|
                 filterC ((`S.member` barcodes) . fst) .|
-                sinkRows' (_num_col mat) id (tmpdir <> "/mat.gz")
-            return $ location .~ (tmpdir <> "/mat.gz") $ matFl^.replicates._2.files
+                sinkRows (S.size barcodes) (_num_col mat) id (tmpdir <> "/mat.gz")
+            return $ location .~ (tmpdir <> "/mat.gz") $ emptyFile
             ) ) >>= filterMatrix dir
 
 combineClusters :: SCATACSeqConfig config
@@ -113,7 +115,7 @@ combineClusters (Just cl, subCl) = do
         encodeFile output $ concat cls <> cs
     return $ Just $ replicates._2.files.location .~ output $ cl
   where
-    rename prefix cl = cl{_cluster_name = prefix <> "." <> B.tail (_cluster_name cl)}
+    rename prefix c = c{_cluster_name = prefix <> "." <> B.tail (_cluster_name c)}
 combineClusters _ = return Nothing
 
 plotSubclusters :: SCATACSeqConfig config
