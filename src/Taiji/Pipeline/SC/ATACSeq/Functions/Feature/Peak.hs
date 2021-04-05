@@ -149,7 +149,7 @@ mergePeaks dir input = do
         npPeak .~ Just halfWindowSize $ pk
       where
         summit = pk^.chromStart + fromJust (pk^.npPeak)
-    halfWindowSize = 125
+    halfWindowSize = 200
     
 -- | Extract BEDs for each cluster.
 mkCellClusterBed :: SCATACSeqConfig config
@@ -229,7 +229,7 @@ computePeakRAS prefix (peakFl, inputs) = do
             vec <- computeRAS (input^.replicates._2.files.location)
             return (input^.eid, V.convert vec)
 
-        let ras = DF.fromMatrix peaks names $ Mat.fromColumns cols
+        let ras = DF.map (*2.5) $ DF.fromMatrix peaks names $ Mat.fromColumns cols
             ss = computeSS $ DF.map (logBase 2 . (+1)) ras
         DF.writeTable output1 (T.pack . show) ras
         DF.writeTable output2 (T.pack . show) ss

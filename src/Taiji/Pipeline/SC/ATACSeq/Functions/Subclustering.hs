@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Subclustering
     ( subSpectral
     , subsetFeatMat
     , combineClusters
+    , vizCluster
     , plotSubclusters
     ) where
 
@@ -16,6 +17,7 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as Map
 import Data.Conduit.Zlib (multiple, ungzip, gzip)
 import qualified Data.Text as T
+import Data.Conduit.Internal (zipSources)
 import qualified Data.HashMap.Strict as M
 import qualified Data.Vector as V
 import qualified Data.HashSet as S
@@ -23,6 +25,7 @@ import Data.Binary (decodeFile, encodeFile)
 import qualified Data.Vector.Unboxed as U
 import Shelly (shelly, run_)
    
+import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Prelude
@@ -38,8 +41,9 @@ subSpectral :: SCATACSeqConfig config
             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
 subSpectral input = do
     dir <- asks ((<> "/Subcluster/Spectra/") . _scatacseq_output_dir) >>= getPath
+    tmpdir <- asks _scatacseq_tmp_dir
     let output = printf "%s/%s_spectra.tsv.gz" dir (T.unpack $ input^.eid)
-    withRunInIO $ \runInIO -> withTempDir (Just "./") $ \tmpdir -> runInIO $
+    withRunInIO $ \runInIO -> withTempDir tmpdir $ \tmp -> runInIO $
         input & replicates.traversed.files %%~ ( \(rownames, fl) -> do
             asks _scatacseq_batch_info >>= \case
                 Nothing -> liftIO $ shelly $ run_ "taiji-utils" $ ["reduce", T.pack $ fl^.location,
@@ -56,10 +60,10 @@ subSpectral input = do
                         then shelly $ run_ "taiji-utils" $ ["reduce", T.pack $ fl^.location,
                             T.pack output, "--seed", "23948"]
                         else do
-                            let tmp = tmpdir <> "/tmp.tsv.gz"
+                            let tmp' = tmp <> "/tmp.tsv.gz"
                             shelly $ run_ "taiji-utils" $ ["reduce", T.pack $ fl^.location,
-                                T.pack tmp, "--seed", "23948"]
-                            readData tmp >>= batchCorrect labels >>= writeData output
+                                T.pack tmp', "--seed", "23948"]
+                            readData tmp' >>= batchCorrect labels >>= writeData output
             return ( rownames, location .~ output $ emptyFile )
             )
   where
@@ -99,6 +103,8 @@ combineClusters :: SCATACSeqConfig config
                 -> ReaderT config IO (Maybe (SCATACSeq S (File '[] 'Other)))
 combineClusters (cl, []) = return cl
 combineClusters (Just cl, subCl) = do
+    tmp <- asks _scatacseq_tmp_dir
+    fig <- figDir
     dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "final_clusters.bin"
         clIds = S.fromList $ map (B.pack . T.unpack . (^.eid)) subCl
@@ -117,6 +123,63 @@ combineClusters (Just cl, subCl) = do
   where
     rename prefix c = c{_cluster_name = prefix <> "." <> B.tail (_cluster_name c)}
 combineClusters _ = return Nothing
+
+vizCluster :: SCATACSeqConfig config
+           => ( Maybe (SCATACSeq S (File '[] 'Other))
+              , Maybe (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
+              , FilePath )
+           -> ReaderT config IO ()
+vizCluster (Just clFl, Just coord, qc) = do
+    tmp <- asks _scatacseq_tmp_dir
+    fig <- figDir
+    liftIO $ do
+        cellCluster <- withTempDir tmp $ \tmpdir -> do
+            cls <- decodeFile $ clFl^.replicates._2.files.location
+            let s1 = sourceFile (coord^.replicates._2.files._1.location) .|
+                    linesUnboundedAsciiC .| mapC (head . B.split '\t')
+                s2 = sourceFile (coord^.replicates._2.files._2.location) .|
+                    multiple ungzip .| linesUnboundedAsciiC
+            runResourceT $ runConduit $ zipSources s1 s2 .| umap tmpdir cls
+
+        stats <- readStats qc
+        let clViz = fig <> "/final_cluster.html" 
+            clMeta = fig <> "/cell_metadata.tsv"
+            (nms, num_cells) = unzip $ map (\(CellCluster nm cs _) ->
+                (T.pack $ B.unpack nm, fromIntegral $ length cs)) cellCluster
+            plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
+            compos = composition cellCluster
+        clusters' <- sampleCells cellCluster
+        savePlots clViz [] $ visualizeCluster clusters' ++
+            clusterComposition compos : tissueComposition compos : [plt]
+        outputMetaData clMeta stats cellCluster
+vizCluster _ = return ()
+
+
+umap :: FilePath -> [CellCluster]
+     -> ConduitT (B.ByteString, B.ByteString) Void (ResourceT IO) [CellCluster]
+umap dir clusters = do
+    (bcs, _, _) <- concatMapC f .| sink
+    coord <- liftIO $ do
+        shelly $ run_ "taiji-utils" ["viz", T.pack outData, T.pack out, "-t", T.pack outCl]
+        map (map readDouble . B.split '\t') . B.lines <$> B.readFile out
+    let coord' = M.fromList $ zip bcs coord
+        updateCoord c = let [x, y] = M.lookupDefault undefined (_cell_barcode c) coord'
+                        in c{_cell_2d = (x,y)}
+    return $ flip map clusters $ \cl -> cl{_cluster_member = map updateCoord $ _cluster_member cl}
+  where
+    sink = getZipSink $ (,,) <$>
+        ZipSink (mapC (^._1) .| sinkList) <*>
+        ZipSink (mapC (^._2) .| unlinesAsciiC .| sinkFile outCl) <*>
+        ZipSink (mapC (^._3) .| unlinesAsciiC .| sinkFile outData)
+    outCl = dir <> "/cl.txt"
+    outData = dir <> "/data.txt"
+    out = dir <> "/umap.txt"
+    f (bc, x) = case M.lookup bc bcMap of
+        Nothing -> Nothing
+        Just c -> Just (bc, c, x)
+    bcMap = M.fromList $ flip concatMap clusters $ \cl ->
+        zip (map _cell_barcode $ _cluster_member cl) $ repeat $ _cluster_name cl
+{-# INLINE umap #-}
 
 plotSubclusters :: SCATACSeqConfig config
              => ( [(Double, (Int, Double, Double))]
@@ -164,3 +227,35 @@ plotSubclusters (params, clFl, knn) = do
         [a, b] -> (a, b)
         [a] -> (a, "0")
         _ -> error "formatting error"
+
+outputMetaData :: FilePath -> [Stat] -> [CellCluster] -> IO ()
+outputMetaData output stat = B.writeFile output . B.unlines . (header:) . concatMap f
+  where
+    f CellCluster{..} = map g _cluster_member
+      where
+        g Cell{..} = B.intercalate "\t" $ map (fromMaybe "NA")
+            [ Just _cell_barcode
+            , Just cl
+            , Just $ toShortest $ fst _cell_2d
+            , Just $ toShortest $ snd _cell_2d
+            , fmap (toShortest . _te) $ M.lookup _cell_barcode stat'
+            , fmap (fromJust . packDecimal . _uniq_reads) $ M.lookup _cell_barcode stat'
+            , join $ fmap (fmap toShortest . _doublet_score) $ M.lookup _cell_barcode stat'
+            , join $ fmap (fmap toShortest . _mito_rate) $ M.lookup _cell_barcode stat'
+            , join $ fmap (fmap toShortest . _dup_rate) $ M.lookup _cell_barcode stat'
+            ]
+        cl = B.tail _cluster_name
+    header = B.intercalate "\t"
+        [ "Sample+Barcode"
+        , "Cluster"
+        , "UMAP1"
+        , "UMAP2"
+        , "TSSe"
+        , "Num_fragments"
+        , "Doublet_score"
+        , "Fraction_Mito"
+        , "Fraction_duplication"
+        ]
+    stat' = M.fromList $ map (\x -> (_barcode x, x)) stat
+{-# INLINE outputMetaData #-}
+

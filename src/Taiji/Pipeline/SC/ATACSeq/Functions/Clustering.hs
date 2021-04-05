@@ -165,12 +165,15 @@ clustering prefix resolution optimizer input = do
                     linesUnboundedAsciiC .|
                     mapC (map readDouble . B.split '\t') )
         cells <- runResourceT $ runConduit $ sourceCells .| mapC f .| sinkVector
-        clusters <- fmap (sortBy (flip (comparing length)) . filter ((>100) . length)) $ readKNNGraph (knn^.location) >>= leiden resolution optimizer
+        let clusterSizeCutoff = max minCells $ min 50 $ V.length cells `div` 1000
+        clusters <- fmap (sortBy (flip (comparing length)) . filter ((>=clusterSizeCutoff) . length)) $
+            readKNNGraph (knn^.location) >>= leiden resolution optimizer
         let cellCluster = zipWith (\i x -> CellCluster (B.pack $ "C" ++ show i) x Nothing) [1::Int ..] $
                 map (map (cells V.!)) clusters
         encodeFile output cellCluster
         return $ location .~ output $ emptyFile )
   where
+    minCells = 10
     f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
     f _ = error "formatting error"
     g x = case B.split '\t' x of
@@ -288,8 +291,7 @@ plotClusters :: SCATACSeqConfig config
 plotClusters (_, _, Nothing, _) = return Nothing
 plotClusters (params, clFl, Just knn, qc) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Cluster/")
-    fig <- figDir
-    resAuto <- liftIO $ optimalParam (fig <> "/Clustering_parameters.html") params
+    resAuto <- liftIO $ optimalParam (dir <> "/Clustering_parameters.html") params
     res <- fromMaybe resAuto <$> asks _scatacseq_cluster_resolution 
     let clOutput = printf "%s/%s_rep%d_clusters.bin" dir (T.unpack $ knn^.eid)
             (knn^.replicates._1)
@@ -312,7 +314,7 @@ plotClusters (params, clFl, Just knn, qc) = do
         encodeFile clOutput cellCluster
 
         stats <- readStats qc
-        let clViz = printf "%s/%s_rep%d_cluster.html" fig (T.unpack $ knn^.eid)
+        let clViz = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ knn^.eid)
                 (knn^.replicates._1)
             clMeta = printf "%s/%s_metadata.tsv" dir (T.unpack $ knn^.eid)
             (nms, num_cells) = unzip $ map (\(CellCluster nm cs _) ->

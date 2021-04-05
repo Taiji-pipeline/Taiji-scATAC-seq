@@ -44,7 +44,7 @@ getFeatures (peaks, windows) = do
             return $ Just $ location .~ output $ emptyFile
         _ -> mergePeaks dir $ concatMap (^.replicates._2.files) peaks
   where
-    tmp = "/temp/Pre/Peak/"
+    tmp = "/temp/Peak/"
 
 -- | The basic analysis.
 basicAnalysis :: Builder ()
@@ -99,7 +99,7 @@ preClustering = do
         -- Clustering in each sample
         nodePar "Cluster" [| \input -> do
             dir <- asks _scatacseq_tmp_dir
-            let prefix = "/temp/Pre/Cluster/"
+            let prefix = "/temp/Cluster/"
             withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
                 mkWindowMat tmp input >>= filterMatrix tmp >>=
                     spectral tmp Nothing >>= mkKNNGraph tmp >>=
@@ -111,7 +111,7 @@ preClustering = do
         nodePar "Call_Peaks" [| \input -> do
             dir <- asks _scatacseq_tmp_dir
             withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
-                let outDir = printf "/temp/Pre/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
+                let outDir = printf "/temp/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
                         (input^.replicates._1)
                 input & replicates.traverse.files %%~ ( \(bed, cl) -> do
                     clusters <- liftIO $ decodeFile $ cl^.location
@@ -255,14 +255,16 @@ builder = do
 -- Subclustering 
 --------------------------------------------------------------------------------
     uNode "Subcluster_Get_Features_Prep" [| \case
-        (Just clFl, x) -> liftIO $ do
-            let fl = clFl^.replicates._2.files
-            clusters <- decodeFile $ fl^.location
-            let clNames = map (T.pack . B.unpack . fst) $
-                    filter ((>=500) . snd) $ flip map clusters $ \cl ->
-                        (_cluster_name cl, length $ _cluster_member cl)
-            return $ flip map clNames $ \nm ->
-                (eid .~ nm $ clFl, x)
+        (Just clFl, x) -> asks _scatacseq_do_subclustering >>= \case
+            False -> return []
+            True -> liftIO $ do
+                let fl = clFl^.replicates._2.files
+                clusters <- decodeFile $ fl^.location
+                let clNames = map (T.pack . B.unpack . fst) $
+                        filter ((>=500) . snd) $ flip map clusters $ \cl ->
+                            (_cluster_name cl, length $ _cluster_member cl)
+                return $ flip map clNames $ \nm ->
+                    (eid .~ nm $ clFl, x)
         _ -> return []
         |]
     nodePar "Subcluster_Get_Features" 'subsetFeatMat $ return ()
@@ -310,7 +312,9 @@ builder = do
 
 
     node "Combine_Clusters" 'combineClusters $ return ()
+    node "Cluster_Viz" 'vizCluster $ nCore .= 8
     ["Merged_Cluster", "Subcluster_Cluster"] ~> "Combine_Clusters"
+    ["Combine_Clusters", "Merged_Batch_Correction", "QC"] ~> "Cluster_Viz"
 
 --------------------------------------------------------------------------------
 -- Compute gene-level accessibility
@@ -319,7 +323,7 @@ builder = do
         (mats, Just promoter, Just clFl) -> return $ zip3 mats (repeat promoter) (repeat clFl)
         _ -> return []
         |]
-    nodePar "Gene_Count" [| mkExprTable "/temp/Pre/Gene/" |] $ return ()
+    nodePar "Gene_Count" [| mkExprTable "/temp/Gene/" |] $ return ()
     ["Make_Gene_Mat", "Get_Promoters", "Combine_Clusters"] ~> "Gene_Count_Prep"
     path ["Gene_Count_Prep", "Gene_Count"]
     node "Gene_Acc" [| \input -> do
