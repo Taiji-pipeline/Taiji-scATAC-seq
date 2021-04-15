@@ -54,14 +54,14 @@ findMotifs :: SCATACSeqConfig config
            => (B.ByteString, File '[Gzip] 'NarrowPeak, File '[] 'Other)
            -> ReaderT config IO (B.ByteString, Maybe (File '[] 'BigBed))
 findMotifs (chr, openChromatin, motifFl) = do
+    tmpdir <- asks _scatacseq_tmp_dir
     seqIndex <- asks ( fromMaybe (error "Genome index file was not specified!") .
         _scatacseq_genome_index )
     chrSize <- liftIO $ withGenome seqIndex $
         return . filter ((==chr). fst) . getChrSizes
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Feature/TF/"))
     let output = dir ++ B.unpack chr ++ ".bb"
-    liftIO $ withGenome seqIndex $ \g -> withTempFile "./" "tmp_tbfs.bed" $ \tmpFl h -> do
-        hClose h
+    liftIO $ withGenome seqIndex $ \g -> withTemp tmpdir $ \tmpFl -> do
         motifs <- decodeFile (motifFl^.location) :: IO [CutoffMotif]
         r <- runResourceT $ runConduit $
             (streamBedGzip (openChromatin^.location) :: _ _ BED3 _ _) .|

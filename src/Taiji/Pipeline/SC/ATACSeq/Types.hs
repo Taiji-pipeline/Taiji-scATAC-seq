@@ -63,6 +63,7 @@ class SCATACSeqConfig config where
     _scatacseq_cell_barcode_length :: config -> Maybe Natural
     _scatacseq_cluster_resolution_list :: config -> [Double]
     _scatacseq_cluster_resolution :: config -> Maybe Double
+    _scatacseq_cluster_exclude :: config -> [T.Text]
     _scatacseq_do_subclustering :: config -> Bool
     _scatacseq_subcluster_resolution :: config -> Maybe (M.Map T.Text Double)
     _scatacseq_cluster_optimizer :: config -> Optimizer

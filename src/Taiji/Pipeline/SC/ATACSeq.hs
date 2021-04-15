@@ -175,7 +175,7 @@ builder = do
 --------------------------------------------------------------------------------
     node "Get_Promoters" [| \input -> if null input
         then return Nothing
-        else Just <$> writePromoters PromoterPlusGeneBody
+        else Just <$> writePromoters PromoterOnly
         |] $ doc .= "Get the list of promoters from the annotation file."
     ["Pre_Remove_Doublet"] ~> "Get_Promoters"
     uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat $ fromJust genes |]
@@ -343,7 +343,10 @@ builder = do
         opts <- getCallPeakOpt
         findPeaks "/Feature/Peak/Cluster/" opts x
         |] $ return ()
-    node "Merge_Peaks" [| mergePeaks "/Feature/Peak/" |] $ return ()
+    node "Merge_Peaks" [| \input -> do
+        dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Feature/Peak/")
+        mergePeaks dir input
+        |] $ return ()
     path ["Merge_Tags", "Call_Peaks", "Merge_Peaks"]
 
     nodePar "Make_BigWig" [| \(nm, fl) -> do

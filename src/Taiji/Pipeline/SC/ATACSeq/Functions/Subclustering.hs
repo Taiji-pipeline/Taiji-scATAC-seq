@@ -103,8 +103,7 @@ combineClusters :: SCATACSeqConfig config
                 -> ReaderT config IO (Maybe (SCATACSeq S (File '[] 'Other)))
 combineClusters (cl, []) = return cl
 combineClusters (Just cl, subCl) = do
-    tmp <- asks _scatacseq_tmp_dir
-    fig <- figDir
+    exclude <- S.fromList <$> asks _scatacseq_cluster_exclude
     dir <- asks ((<> "/Cluster/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "final_clusters.bin"
         clIds = S.fromList $ map (B.pack . T.unpack . (^.eid)) subCl
@@ -118,7 +117,9 @@ combineClusters (Just cl, subCl) = do
                     filter ((>=0.5) . fromMaybe 1 . _cluster_reproducibility) c
         cs <- fmap (filter (not . (`S.member` clIds) . _cluster_name)) $
             decodeFile $ cl^.replicates._2.files.location
-        encodeFile output $ concat cls <> cs
+        encodeFile output $
+            filter (not . (`S.member` exclude) . T.pack . B.unpack . _cluster_name) $
+            concat cls <> cs
     return $ Just $ replicates._2.files.location .~ output $ cl
   where
     rename prefix c = c{_cluster_name = prefix <> "." <> B.tail (_cluster_name c)}
@@ -154,7 +155,6 @@ vizCluster (Just clFl, Just coord, qc) = do
         outputMetaData clMeta stats cellCluster
 vizCluster _ = return ()
 
-
 umap :: FilePath -> [CellCluster]
      -> ConduitT (B.ByteString, B.ByteString) Void (ResourceT IO) [CellCluster]
 umap dir clusters = do
@@ -178,7 +178,8 @@ umap dir clusters = do
         Nothing -> Nothing
         Just c -> Just (bc, c, x)
     bcMap = M.fromList $ flip concatMap clusters $ \cl ->
-        zip (map _cell_barcode $ _cluster_member cl) $ repeat $ _cluster_name cl
+        zip (map _cell_barcode $ _cluster_member cl) $ repeat $ getClusterName cl
+    getClusterName x = fst $ B.break (=='.') $ _cluster_name x
 {-# INLINE umap #-}
 
 plotSubclusters :: SCATACSeqConfig config
