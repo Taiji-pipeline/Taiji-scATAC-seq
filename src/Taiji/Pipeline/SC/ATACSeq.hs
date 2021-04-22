@@ -129,15 +129,17 @@ preClustering = do
         -- Doublet detection
         uNode "Detect_Doublet_Prep" [| \(x, y, z) -> return $
             flip map (zipExp (zipExp x y) z) $ \input ->
-                input & replicates._2.files %~ ( \(((a,_,c), pk), qc) -> ((a,pk,c), qc) ) |]
-        nodePar "Detect_Doublet" [| \input -> do
-            dir <- asks _scatacseq_tmp_dir
-            withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
-                input' <- input & replicates.traverse.files._1._2 %%~ fmap fromJust .
-                    mergePeaks tmp
-                mat <- mkPeakMat tmp $ input' & replicates.traverse.files %~ fst
-                detectDoublet $ mat & replicates.traverse.files %~ ( \x ->
-                    (x, input'^.replicates._2.files._2) )
+                input & replicates._2.files %~ ( \(((a,_,c), pk), qc) -> ((a,pk), qc) ) |]
+        nodePar "Detect_Doublet" [| \input -> asks _scatacseq_remove_doublets >>= \case
+            True -> do
+                dir <- asks _scatacseq_tmp_dir
+                withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
+                    input' <- input & replicates.traverse.files._1._2 %%~ fmap fromJust .
+                        mergePeaks tmp
+                    mat <- mkPeakMat tmp $ input' & replicates.traverse.files %~ fst
+                    detectDoublet $ mat & replicates.traverse.files %~ ( \x ->
+                        (x, input'^.replicates._2.files._2) )
+            False -> return $ input & replicates.traverse.files %~ snd . snd
             |] $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
 
@@ -150,7 +152,7 @@ preClustering = do
         ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
         uNode "Make_Feat_Mat_Prep" [| \(bed, pk) -> return $
             flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
-                x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
+                x & replicates.traverse.files %~ (\a -> (a,p))
             |]
         nodePar "Make_Feat_Mat" [| \input -> do
             dir <- asks ((<> "/Feature/Sample/") . _scatacseq_output_dir) >>= getPath
@@ -336,8 +338,8 @@ builder = do
     -- Extract tags for each subcluster
     uNode "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |]
     extractTags "/Bed/Cluster/"
-    ["Pre_Remove_Doublet", "Combine_Clusters"] ~> "Extract_Tags_Prep"
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
+    ["Pre_Remove_Doublet", "Combine_Clusters"] ~> "Extract_Tags_Prep"
 
     nodePar "Call_Peaks" [| \x -> do
         opts <- getCallPeakOpt
@@ -364,10 +366,9 @@ builder = do
         |] $ return ()
     ["Merge_Tags"] ~> "Make_BigWig"
 
-
     uNode "Make_Peak_Mat_Prep" [| \(bed, pk) -> return $
         flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
-            x & replicates.traverse.files %~ (\(a,b) -> (a,p,b))
+            x & replicates.traverse.files %~ (\a -> (a,p))
         |]
     nodePar "Make_Peak_Mat" [| \input -> do
         dir <- asks ((<> "/Feature/Peak/Sample/") . _scatacseq_output_dir) >>= getPath

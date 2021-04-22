@@ -18,6 +18,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
     , plotClusters
     , extractTags
     , subMatrix
+    , splitBedByCluster
     , splitBedByCluster'
     ) where
 
@@ -195,7 +196,7 @@ extractTags prefix = do
 
 -- | Extract BEDs for each cluster.
 splitBedByCluster :: SCATACSeqConfig config
-                  => ( SCATACSeq S (File '[NameSorted, Gzip] 'Bed, a)
+                  => ( SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
                      , SCATACSeq S (File '[] 'Other) ) -- ^ Cluster files
                   -> ReaderT config IO
                        (SCATACSeq S [(B.ByteString, File '[] 'Bed)])
@@ -205,7 +206,7 @@ splitBedByCluster (input, clFl) = do
         exp_id = B.pack $
             T.unpack (input^.eid) <> "_" <> show (input^.replicates._1)
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
-    input & replicates.traverse.files %%~ ( \(bed,_) -> liftIO $ do
+    input & replicates.traverse.files %%~ ( \bed -> liftIO $ do
         let filterBarcode cl =
                 let x = filter (B.isPrefixOf exp_id . _cell_barcode) $
                         _cluster_member cl
@@ -324,7 +325,8 @@ plotClusters (params, clFl, Just knn, qc) = do
         clusters' <- sampleCells cellCluster
         savePlots clViz [] $ visualizeCluster clusters' ++
             figRepro : clusterComposition compos : tissueComposition compos : plt :
-                clusterQC stats cellCluster
+                []
+                --clusterQC stats cellCluster
         outputMetaData clMeta stats cellCluster
 
         return $ location .~ clOutput $ emptyFile )
@@ -343,7 +345,8 @@ plotClusters (params, clFl, Just knn, qc) = do
       where
         res = flip map cls $ \x ->
             (T.pack $ B.unpack $ _cluster_name x, map h $ _cluster_member x)
-        h x = M.lookupDefault undefined (_cell_barcode x) statMap
+        h x = M.lookupDefault
+            (error $ "barcode not found: " <> show (_cell_barcode x)) (_cell_barcode x) statMap
         statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
 
 outputMetaData :: FilePath -> [Stat] -> [CellCluster] -> IO ()

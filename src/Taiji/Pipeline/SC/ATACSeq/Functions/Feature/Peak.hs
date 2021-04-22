@@ -43,23 +43,23 @@ import Taiji.Utils
 -- | Make the read count matrix.
 mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath
-          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
+          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak)
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
 mkPeakMat dir input = do
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
+    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl) -> do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
         runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
             groupCells .| mkCountMat regions .|
-            sinkRows nCell (length regions) (fromJust . packDecimal) output
+            sinkRows' (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
 
 -- | Make the read count matrix.
 mkFeatMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath
-          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak, Int)
+          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak)
           -> ReaderT config IO ( SCATACSeq S
               ( File '[RowName, Gzip] 'Tsv
               , File '[ColumnName, Gzip] 'Tsv
@@ -72,7 +72,7 @@ mkFeatMat dir input = do
         features = printf "%s/%s_rep%d_features.txt.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         bcPrefix = B.pack $ T.unpack (input^.eid) <> "_" <> show (input^.replicates._1) <> "+"
-    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl, nCell) -> do
+    input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl) -> do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
         let rowSink = mapC f .| unlinesAsciiC .| gzip .| sinkFile rownames
@@ -85,7 +85,7 @@ mkFeatMat dir input = do
             showBed (BED3 chr s e) x = B.concat
                 [ chr, ":", fromJust $ packDecimal s, "-"
                 , fromJust $ packDecimal e, "\t", fromJust $ packDecimal x]
-            sink = (,,) <$> ZipSink (sinkRows nCell (length regions) (fromJust . packDecimal) output)
+            sink = (,,) <$> ZipSink (sinkRows' (length regions) (fromJust . packDecimal) output)
                 <*> ZipSink rowSink <*> ZipSink colSink
         _ <- runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
             groupCells .| mkCountMat regions .| mapC (first (bcPrefix <>)) .|

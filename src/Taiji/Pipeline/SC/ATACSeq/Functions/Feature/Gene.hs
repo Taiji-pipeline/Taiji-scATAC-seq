@@ -37,38 +37,18 @@ import qualified Taiji.Utils.DataFrame as DF
 
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
-             -> (SCATACSeq S (File tags 'Bed, Int), File '[] 'Bed)
+             -> (SCATACSeq S (File tags 'Bed), File '[] 'Bed)
              -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
 mkCellByGene prefix (input, promoters) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_gene.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . ( \(fl, nCell) -> do
+    input & replicates.traverse.files %%~ liftIO . ( \fl -> do
         regions <- readBed $ promoters^.location :: IO [BED3]
         runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
-            groupCells .| mkMat nCell regions .| sinkFile output
+            groupCells .| mkCountMat regions .|
+            sinkRows' (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
-  where
-    mkMat :: (PrimMonad m, MonadThrow m)
-          => Int   -- ^ the number of cells
-          -> [BED3]    -- ^ a list of regions
-          -> ConduitT (B.ByteString, [BED]) B.ByteString m ()
-    mkMat nCell regions = source .| unlinesAsciiC .| gzip
-      where
-        source = yield header >> mapC
-            (encodeRowWith (fromJust . packDecimal) . second countEachCell)
-          where
-            countEachCell :: [BED] -> [(Int, Int)]
-            countEachCell = M.toList . foldl' f M.empty
-              where
-                f m tag = foldl' (\x k -> M.insertWith (+) k (1::Int) x) m $ concat $
-                    IM.elems $ IM.containing (M.lookupDefault IM.empty (tag^.chrom) bedTree) p
-                  where
-                    p | tag^.strand == Just True = tag^.chromStart
-                      | tag^.strand == Just False = tag^.chromEnd - 1
-                      | otherwise = error "Unkown strand"
-        bedTree = bedToTree (++) $ zip regions $ map return [0..]
-        header = B.pack $ printf "Sparse matrix: %d x %d" nCell (length regions)
 
 data GeneAccDef = PromoterOnly -- ^ -/+ 1000 around TSS
                 | PromoterPlusGeneBody   -- ^ Gene body plus upstream 2000

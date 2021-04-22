@@ -221,21 +221,24 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenesValidated
 removeDoublet :: SCATACSeqConfig config
               => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
                              , File '[] 'Tsv )
-              -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed, Int))
+              -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
 removeDoublet input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
-    passedQC <- getQCFunction
-    let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(bedFl, statFl) -> do
-        stats <- readStats $ statFl^.location
-        let cells = S.fromList $ map _barcode $ filter passedQC stats
-            f :: [BED] -> Bool
-            f = (`S.member` cells) . fromJust . (^.name) . head
-            sink = zipSinks lengthC $ concatC .| sinkFileBedGzip output
-        (nCells, _) <- runResourceT $ runConduit $ streamBedGzip (bedFl^.location) .|
-            groupBy ((==) `on` (^.name)) .| filterC f .| sink
-        return (location .~ output $ emptyFile, nCells) )
+    asks _scatacseq_remove_doublets >>= \case
+        True -> do
+            passedQC <- getQCFunction
+            let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
+                    (input^.replicates._1)
+            input & replicates.traverse.files %%~ liftIO . (\(bedFl, statFl) -> do
+                stats <- readStats $ statFl^.location
+                let cells = S.fromList $ map _barcode $ filter passedQC stats
+                    f :: [BED] -> Bool
+                    f = (`S.member` cells) . fromJust . (^.name) . head
+                runResourceT $ runConduit $ streamBedGzip (bedFl^.location) .|
+                    groupBy ((==) `on` (^.name)) .| filterC f .| concatC .|
+                    sinkFileBedGzip output
+                return $ location .~ output $ emptyFile )
+        False -> return $ input & replicates.traverse.files %~ fst
 
 detectDoublet :: SCATACSeqConfig config
               => SCATACSeq S (File tags 'Other, (a, File '[] 'Tsv ))

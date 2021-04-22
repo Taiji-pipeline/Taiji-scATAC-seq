@@ -70,6 +70,7 @@ class SCATACSeqConfig config where
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double
     _scatacseq_minimal_fragment :: config -> Natural
+    _scatacseq_remove_doublets :: config -> Bool
     _scatacseq_doublet_score_cutoff :: config -> Double
     _scatacseq_cluster_by_window :: config -> Bool
     _scatacseq_window_size :: config -> Natural
