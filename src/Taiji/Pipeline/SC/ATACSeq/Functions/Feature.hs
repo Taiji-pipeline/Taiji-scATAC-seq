@@ -30,7 +30,7 @@ import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Motif
 dropFeatures :: SCATACSeqConfig config
              => [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
                               , File '[ColumnName, Gzip] 'Tsv
-                              , File '[Gzip] 'Other ) ]
+                              , File '[Gzip] 'Matrix) ]
              -> ReaderT config IO (Maybe FilePath)
 dropFeatures input = do
     dir <- asks ((<> "/Spectral/") . _scatacseq_output_dir) >>= getPath

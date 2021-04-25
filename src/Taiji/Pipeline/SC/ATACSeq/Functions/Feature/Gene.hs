@@ -38,7 +38,7 @@ import qualified Taiji.Utils.DataFrame as DF
 mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
              -> (SCATACSeq S (File tags 'Bed), File '[] 'Bed)
-             -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
+             -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Matrix))
 mkCellByGene prefix (input, promoters) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
     let output = printf "%s/%s_rep%d_gene.mat.gz" dir (T.unpack $ input^.eid)
@@ -111,7 +111,7 @@ combineExprTable _ _ = return Nothing
 -- | Combine expression data into a table and output
 mkExprTable :: SCATACSeqConfig config
             => FilePath
-            -> ( SCATACSeq S (File '[Gzip] 'Other)  -- matrix
+            -> ( SCATACSeq S (File '[Gzip] 'Matrix)  -- matrix
                , File '[] 'Bed  -- promoter
                , SCATACSeq S (File '[] 'Other) )  -- cluster
             -> ReaderT config IO FilePath

@@ -130,16 +130,14 @@ preClustering = do
         uNode "Detect_Doublet_Prep" [| \(x, y, z) -> return $
             flip map (zipExp (zipExp x y) z) $ \input ->
                 input & replicates._2.files %~ ( \(((a,_,c), pk), qc) -> ((a,pk), qc) ) |]
-        nodePar "Detect_Doublet" [| \input -> asks _scatacseq_remove_doublets >>= \case
-            True -> do
-                dir <- asks _scatacseq_tmp_dir
-                withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
-                    input' <- input & replicates.traverse.files._1._2 %%~ fmap fromJust .
-                        mergePeaks tmp
-                    mat <- mkPeakMat tmp $ input' & replicates.traverse.files %~ fst
-                    detectDoublet $ mat & replicates.traverse.files %~ ( \x ->
-                        (x, input'^.replicates._2.files._2) )
-            False -> return $ input & replicates.traverse.files %~ snd . snd
+        nodePar "Detect_Doublet" [| \input -> do
+            dir <- asks _scatacseq_tmp_dir
+            withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
+                input' <- input & replicates.traverse.files._1._2 %%~ fmap fromJust .
+                    mergePeaks tmp
+                mat <- mkPeakMat tmp $ input' & replicates.traverse.files %~ fst
+                detectDoublet $ mat & replicates.traverse.files %~ ( \x ->
+                    (x, input'^.replicates._2.files._2) )
             |] $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
 
@@ -189,22 +187,29 @@ builder = do
 --------------------------------------------------------------------------------
 -- Construct KNN
 --------------------------------------------------------------------------------
+    uNode "Get_Feat_Mat" [| \(input, mats) -> case getMatrix input of
+        [] -> return mats
+        x -> return x
+        |]
+    ["Read_Input", "Pre_Make_Feat_Mat"] ~> "Get_Feat_Mat"
     node "Merged_Feature_Selection" 'dropFeatures $ return ()
-    path ["Pre_Make_Feat_Mat", "Merged_Feature_Selection"]
+    path ["Get_Feat_Mat", "Merged_Feature_Selection"]
 
     node "Merged_Spectral" [| getSpectral 35000 |] $ nCore .= 4
-    ["Pre_Make_Feat_Mat", "Merged_Feature_Selection"] ~> "Merged_Spectral"
+    ["Get_Feat_Mat", "Merged_Feature_Selection"] ~> "Merged_Spectral"
 
-    uNode "Merged_Nystrom_Prep" [| \(input, model, feat) -> return $ case model of
-        Just (Right m) -> zip3 input (repeat m) $ repeat $ fromJust feat
-        _ -> []
+    uNode "Merged_Nystrom_Prep" [| \(input, model, feat) -> case model of
+        Just (Right m) -> liftIO $ do
+            input' <- chunksInput $ map (\x -> x^.replicates._2.files._3) input
+            return $ zip3 input' (repeat m) $ repeat $ fromJust feat
+        _ -> return []
         |]
     nodePar "Merged_Nystrom" 'nystromExtend $ return ()
-    ["Pre_Make_Feat_Mat", "Merged_Spectral", "Merged_Feature_Selection"] ~> "Merged_Nystrom_Prep"
+    ["Get_Feat_Mat", "Merged_Spectral", "Merged_Feature_Selection"] ~> "Merged_Nystrom_Prep"
     path ["Merged_Nystrom_Prep", "Merged_Nystrom"]
 
     node "Merged_Reduce_Dims" 'mergeResults $ return ()
-    ["Merged_Spectral", "Pre_Make_Feat_Mat", "Merged_Nystrom"] ~> "Merged_Reduce_Dims"
+    ["Merged_Spectral", "Get_Feat_Mat", "Merged_Nystrom"] ~> "Merged_Reduce_Dims"
 
     node "Merged_Batch_Correction" [| \case
         Nothing -> return Nothing
@@ -270,7 +275,7 @@ builder = do
         _ -> return []
         |]
     nodePar "Subcluster_Get_Features" 'subsetFeatMat $ return ()
-    ["Merged_Cluster", "Pre_Make_Feat_Mat"] ~> "Subcluster_Get_Features_Prep"
+    ["Merged_Cluster", "Get_Feat_Mat"] ~> "Subcluster_Get_Features_Prep"
     path ["Subcluster_Get_Features_Prep", "Subcluster_Get_Features"]
  
     nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()

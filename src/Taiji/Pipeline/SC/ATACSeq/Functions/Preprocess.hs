@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     , getBamUnsorted
     , getBam
     , getSortedBed
+    , getMatrix
     , demultiplex
     ) where
 
@@ -97,6 +98,30 @@ getSortedBed input = concatMap split $ concatMap split $
     filterFn x = getFileType x == Bed && x `hasTag` NameSorted && x `hasTag` Gzip
     f fl | fl `hasTag` PairedEnd = Right $ fromSomeFile fl
          | otherwise = Left $ fromSomeFile fl
+
+getMatrix :: [RAWInput]
+          -> [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
+                           , File '[ColumnName, Gzip] 'Tsv
+                           , File '[Gzip] 'Matrix ) ]
+getMatrix inputs = concatMap split $ concatMap split $
+    inputs & mapped.replicates.mapped.files %~ f . lefts
+  where
+    f fls = case (getRow fls, getCol fls, getMat fls) of
+        (Just row, Just col, Just mat) -> [(row, col, mat)]
+        (Nothing, Nothing, Nothing) -> []
+        _ -> error "Incomplete matrix input"
+    getMat fls = case filter (\x -> x `hasTag` Gzip && getFileType x == Matrix) fls of
+        [] -> Nothing
+        [x] -> Just $ fromSomeFile x
+        _ -> error "Found multiple matrix files in the input"
+    getRow fls = case filter (\x -> x `hasTag` Gzip && x `hasTag` RowName) fls of
+        [] -> Nothing
+        [x] -> Just $ fromSomeFile x
+        _ -> error "Found multiple row name files in the input"
+    getCol fls = case filter (\x -> x `hasTag` Gzip && x `hasTag` ColumnName) fls of
+        [] -> Nothing
+        [x] -> Just $ fromSomeFile x
+        _ -> error "Found multiple column name files in the input"
       
 demultiplex :: SCATACSeqConfig config
             => SCATACSeq S ( (File '[Gzip] 'Fastq, File '[Gzip] 'Fastq)

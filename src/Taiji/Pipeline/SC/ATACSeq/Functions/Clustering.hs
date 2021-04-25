@@ -51,8 +51,8 @@ import Taiji.Utils.Plot.ECharts
 
 filterMatrix :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
              => FilePath
-             -> SCATACSeq S (File tags 'Other)
-             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File tags 'Other))
+             -> SCATACSeq S (File tags 'Matrix)
+             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File tags 'Matrix))
 filterMatrix dir input = do
     let output = printf "%s/%s_rep%d_filt.mat.gz" dir
             (T.unpack $ input^.eid) (input^.replicates._1)
@@ -81,7 +81,7 @@ filterMatrix dir input = do
 spectral :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
          => FilePath  -- ^ directory
          -> Maybe Int  -- ^ seed
-         -> SCATACSeq S (a, File tags 'Other)
+         -> SCATACSeq S (a, File tags 'Matrix)
          -> ReaderT config IO (SCATACSeq S (a, File '[Gzip] 'Tsv))
 spectral dir seed input = do
     let output = printf "%s/%s_rep%d_spectral.tsv.gz" dir
@@ -258,9 +258,9 @@ mergeBedCluster prefix (cName, fls) = do
 -- | Extract cluster submatrix
 subMatrix :: SCATACSeqConfig config
           => FilePath   -- ^ Dir
-          -> [SCATACSeq S (File tags 'Other)]   -- ^ Matrices
+          -> [SCATACSeq S (File tags 'Matrix)]   -- ^ Matrices
           -> File tag' 'Other   -- Clusters
-          -> ReaderT config IO [SCATACSeq S (File tags 'Other)]
+          -> ReaderT config IO [SCATACSeq S (File tags 'Matrix)]
 subMatrix prefix inputs clFl = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir prefix))
     liftIO $ do

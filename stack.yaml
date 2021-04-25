@@ -21,7 +21,7 @@ extra-deps:
   commit:  b9814899ac5d8322bf1e8e04b48712472e807df7
 
 - git:     https://github.com/Taiji-pipeline/bio-experiments.git
-  commit:  1d5fb05157fd308278e19d048e56068e96f17d76
+  commit:  672026f25b621246882e2fe7a41e8eda753896fc
 
 - git:     https://github.com/haskell-distributed/distributed-static.git
   commit:  d34b5139a0c349fbda6ffea5fbbe960c3c91aeb1

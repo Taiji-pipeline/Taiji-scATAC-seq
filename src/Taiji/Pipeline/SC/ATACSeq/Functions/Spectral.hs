@@ -5,6 +5,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Spectral
     ( getSpectral
     , nystromExtend
     , mergeResults
+    , chunksInput
     ) where
 
 import Data.Binary (decodeFile)
@@ -12,16 +13,33 @@ import Data.Conduit.Zlib (multiple, ungzip, gzip)
 import qualified Data.Text as T
 import System.Random.MWC
 import Shelly
+import Data.Hashable (hash)
 
 import Taiji.Prelude
 import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
 
+chunksInput :: [File '[Gzip] 'Matrix]
+            -> IO [([File '[Gzip] 'Matrix], Int)]
+chunksInput mats = do
+    sizes <- mapM (fmap _num_row . mkSpMatrix id . (^.location)) mats
+    return $ go 0 $ zip3 (scanl1 (+) sizes) sizes mats
+  where
+    chunkSize = 50000
+    go _ [] = []
+    go start xs = let (res, (next, rest)) = takeN start xs in res : go next rest
+    takeN start xs = ( (map (^._3) res, start)
+                     , (nextStart, map f $ if nextStart == 0 then rest else last res : rest) )
+      where
+        f (a,b,c) = (a - chunkSize, b, c)
+        nextStart = let (acc, n, _) = last res in if acc >= chunkSize then 0 else n - (acc - chunkSize)
+        (res, rest) = partition ((<=chunkSize) . (^._1)) xs
+
 getSpectral :: SCATACSeqConfig config
             => Int     -- ^ Number of samples
             -> ( [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
                                , File '[ColumnName, Gzip] 'Tsv
-                               , File '[Gzip] 'Other ) ]
+                               , File '[Gzip] 'Matrix ) ]
                , Maybe FilePath )
             -> ReaderT config IO (Maybe (Either FilePath FilePath))
 getSpectral sampleSize (input, Just cidxFl) = do
@@ -46,31 +64,31 @@ getSpectral sampleSize (input, Just cidxFl) = do
 getSpectral _ _ = return Nothing
 
 nystromExtend :: SCATACSeqConfig config
-              => ( SCATACSeq S ( File '[RowName, Gzip] 'Tsv
-                               , File '[ColumnName, Gzip] 'Tsv
-                               , File '[Gzip] 'Other )
+              => ( ([File '[Gzip] 'Matrix], Int)
                  , FilePath
                  , FilePath )
-              -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Tsv))
-nystromExtend (input, modelFl, cidxFl) = do
+              -> ReaderT config IO (File '[Gzip] 'Tsv)
+nystromExtend ((matFls, start), modelFl, cidxFl) = do
     tmpdir <- asks _scatacseq_tmp_dir
-    dir <- asks ((<> "/Spectral/Sample/") . _scatacseq_output_dir) >>= getPath
-    let output = printf "%s/%s_rep%d_nystrom.txt.gz" dir (T.unpack $ input^.eid)
-            (input^.replicates._1)
-    input & replicates.traverse.files %%~ liftIO . (\(_, _, matFl) -> withTemp tmpdir $ \tmp -> do
+    dir <- asks ((<> "/temp/Nystrom/") . _scatacseq_output_dir) >>= getPath
+    let output = printf "%s/%d.txt.gz" dir (hash (map (^.location) matFls, start))
+    liftIO $ withTemp tmpdir $ \tmp -> do
         cidx <- decodeFile cidxFl
-        (deleteCols cidx <$> mkSpMatrix id (matFl^.location)) >>= saveMatrix tmp id
+        ( deleteCols cidx . takeRows chunkSize . dropRows start .
+            concatMatrix <$> mapM (mkSpMatrix id . (^.location)) matFls ) >>=
+                saveMatrix tmp id
         shelly $ run_ "taiji-utils" $ ["predict", T.pack output,
             "--model", T.pack modelFl, "--input", T.pack tmp]
         return $ location .~ output $ emptyFile
-        )
+  where
+    chunkSize = 50000
 
 mergeResults :: SCATACSeqConfig config
              => ( Maybe (Either FilePath FilePath)
                 , [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
                                 , File '[ColumnName, Gzip] 'Tsv
-                                , File '[Gzip] 'Other ) ]
-                , [SCATACSeq S (File '[Gzip] 'Tsv)] )
+                                , File '[Gzip] 'Matrix ) ]
+                , [File '[Gzip] 'Tsv] )
              -> ReaderT config IO (Maybe (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv)))
 mergeResults (Nothing, _, _) = return Nothing
 mergeResults (Just modelFl, fls1, fls2) = do
@@ -83,7 +101,7 @@ mergeResults (Just modelFl, fls1, fls2) = do
         Left model -> shelly $ run_ "taiji-utils" $ ["predict", T.pack output,
             "--model", T.pack model]
         Right _ -> runResourceT $ runConduit $
-            mergeFiles (map (^.replicates._2.files.location) fls2) .| gzip .| sinkFile output
+            mergeFiles (map (^.location) fls2) .| gzip .| sinkFile output
     return $ Just $ head fls1 & eid .~ "Merged" & replicates._2.files .~
         (location .~ rownames $ emptyFile, location .~ output $ emptyFile)
   where

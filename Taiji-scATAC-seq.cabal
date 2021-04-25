@@ -56,6 +56,7 @@ library
                      , data-ordlist
                      , double-conversion
                      , filepath
+                     , hashable
                      , HsHTSLib >= 1.9.2
                      , IntervalMap
                      , jmacro

@@ -241,7 +241,7 @@ removeDoublet input = do
         False -> return $ input & replicates.traverse.files %~ fst
 
 detectDoublet :: SCATACSeqConfig config
-              => SCATACSeq S (File tags 'Other, (a, File '[] 'Tsv ))
+              => SCATACSeq S (File tags 'Matrix, (a, File '[] 'Tsv ))
               -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
 detectDoublet input = do
     dir <- qcDir

@@ -44,7 +44,7 @@ import Taiji.Utils
 mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           => FilePath
           -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak)
-          -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Other))
+          -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Matrix))
 mkPeakMat dir input = do
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
@@ -63,7 +63,7 @@ mkFeatMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
           -> ReaderT config IO ( SCATACSeq S
               ( File '[RowName, Gzip] 'Tsv
               , File '[ColumnName, Gzip] 'Tsv
-              , File '[Gzip] 'Other ))
+              , File '[Gzip] 'Matrix ))
 mkFeatMat dir input = do
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
@@ -213,7 +213,7 @@ getPeakEnrichment _ = undefined
 computePeakRAS :: SCATACSeqConfig config
                => FilePath
                -> ( Maybe (File '[Gzip] 'NarrowPeak)
-                  , [SCATACSeq S (File '[Gzip] 'Other)] )
+                  , [SCATACSeq S (File '[Gzip] 'Matrix)] )
                -> ReaderT config IO (Maybe (FilePath, FilePath, FilePath))
 computePeakRAS _ (Nothing, _) = return Nothing
 computePeakRAS prefix (peakFl, inputs) = do

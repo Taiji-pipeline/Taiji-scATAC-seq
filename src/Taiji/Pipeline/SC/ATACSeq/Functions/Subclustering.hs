@@ -37,7 +37,7 @@ import Taiji.Utils.Plot.ECharts
 
 -- | Reduce dimensionality using spectral clustering
 subSpectral :: SCATACSeqConfig config
-            => SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Other)
+            => SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Matrix)
             -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Tsv))
 subSpectral input = do
     dir <- asks ((<> "/Subcluster/Spectra/") . _scatacseq_output_dir) >>= getPath
@@ -78,8 +78,8 @@ subsetFeatMat :: SCATACSeqConfig config
               => ( SCATACSeq S (File '[] 'Other)  -- ^ cluster
                  , [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
                                , File '[ColumnName, Gzip] 'Tsv
-                               , File '[Gzip] 'Other ) ] )
-              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Other))
+                               , File '[Gzip] 'Matrix) ] )
+              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv, File '[Gzip] 'Matrix))
 subsetFeatMat (clFl, matFls) = do
     let prefix = asDir $ "/Subcluster/Matrix/" <> T.unpack (clFl^.eid)
     tmp <- asks _scatacseq_tmp_dir

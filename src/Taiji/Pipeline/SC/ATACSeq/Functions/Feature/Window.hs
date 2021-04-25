@@ -60,7 +60,7 @@ getWindows prefix input = do
 mkWindowMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
                => FilePath
                -> SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)
-               -> ReaderT config IO (SCATACSeq S (File tags 'Other))
+               -> ReaderT config IO (SCATACSeq S (File tags 'Matrix))
 mkWindowMat dir input = do
     let output = printf "%s/%s_rep%d_window.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
