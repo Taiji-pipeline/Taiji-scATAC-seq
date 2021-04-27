@@ -151,8 +151,20 @@ vizCluster (Just clFl, Just coord, qc) = do
             compos = composition cellCluster
         clusters' <- sampleCells cellCluster
         savePlots clViz [] $ visualizeCluster clusters' ++
-            clusterComposition compos : tissueComposition compos : [plt]
+            clusterComposition compos : tissueComposition compos : plt : clusterQC stats cellCluster
         outputMetaData clMeta stats cellCluster
+  where
+    clusterQC stats cls =
+        [ plotNumReads res
+        , plotTE res
+        , plotDoubletScore res
+        , plotDupRate res ]
+      where
+        res = flip map cls $ \x ->
+            (T.pack $ B.unpack $ _cluster_name x, map h $ _cluster_member x)
+        h x = M.lookupDefault
+            (error $ "barcode not found: " <> show (_cell_barcode x)) (_cell_barcode x) statMap
+        statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
 vizCluster _ = return ()
 
 umap :: FilePath -> [CellCluster]

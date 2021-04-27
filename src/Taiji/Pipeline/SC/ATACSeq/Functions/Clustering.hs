@@ -286,11 +286,10 @@ subMatrix prefix inputs clFl = do
 plotClusters :: SCATACSeqConfig config
              => ( [(Double, (Int, Double, Double))]
                 , [(Double, ([FilePath], FilePath))]
-                , Maybe (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv))
-                , FilePath )
+                , Maybe (SCATACSeq S (File '[] 'Tsv, File '[] 'Other, File '[] Tsv)) )
              -> ReaderT config IO (Maybe (SCATACSeq S (File '[] 'Other)))
-plotClusters (_, _, Nothing, _) = return Nothing
-plotClusters (params, clFl, Just knn, qc) = do
+plotClusters (_, _, Nothing) = return Nothing
+plotClusters (params, clFl, Just knn) = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> "/Cluster/")
     resAuto <- liftIO $ optimalParam (dir <> "/Clustering_parameters.html") params
     res <- fromMaybe resAuto <$> asks _scatacseq_cluster_resolution 
@@ -313,22 +312,15 @@ plotClusters (params, clFl, Just knn, qc) = do
         let cellCluster = zipWith3 (\i x y -> CellCluster (B.pack $ "C" ++ show i) x $ Just y)
                 [1::Int ..] (map (map (cells V.!)) clusters) repro
         encodeFile clOutput cellCluster
-
-        stats <- readStats qc
         let clViz = printf "%s/%s_rep%d_cluster.html" dir (T.unpack $ knn^.eid)
                 (knn^.replicates._1)
-            clMeta = printf "%s/%s_metadata.tsv" dir (T.unpack $ knn^.eid)
             (nms, num_cells) = unzip $ map (\(CellCluster nm cs _) ->
                 (T.pack $ B.unpack nm, fromIntegral $ length cs)) cellCluster
             plt = stackBar $ DF.mkDataFrame ["number of cells"] nms [num_cells]
             compos = composition cellCluster
         clusters' <- sampleCells cellCluster
         savePlots clViz [] $ visualizeCluster clusters' ++
-            figRepro : clusterComposition compos : tissueComposition compos : plt :
-                []
-                --clusterQC stats cellCluster
-        outputMetaData clMeta stats cellCluster
-
+            figRepro : clusterComposition compos : tissueComposition compos : [plt]
         return $ location .~ clOutput $ emptyFile )
   where
     f (i, (bc, dep), [d1,d2]) = Cell i (d1,d2) bc $ readInt dep
@@ -337,48 +329,6 @@ plotClusters (params, clFl, Just knn, qc) = do
         [a, b] -> (a, b)
         [a] -> (a, "0")
         _ -> error "formatting error"
-    clusterQC stats cls =
-        [ plotNumReads res
-        , plotTE res
-        , plotDoubletScore res
-        , plotDupRate res ]
-      where
-        res = flip map cls $ \x ->
-            (T.pack $ B.unpack $ _cluster_name x, map h $ _cluster_member x)
-        h x = M.lookupDefault
-            (error $ "barcode not found: " <> show (_cell_barcode x)) (_cell_barcode x) statMap
-        statMap = M.fromList $ map (\x -> (_barcode x, x)) stats
-
-outputMetaData :: FilePath -> [Stat] -> [CellCluster] -> IO ()
-outputMetaData output stat = B.writeFile output . B.unlines . (header:) . concatMap f
-  where
-    f CellCluster{..} = map g _cluster_member
-      where
-        g Cell{..} = B.intercalate "\t" $ map (fromMaybe "NA")
-            [ Just _cell_barcode
-            , Just cl
-            , Just $ toShortest $ fst _cell_2d
-            , Just $ toShortest $ snd _cell_2d
-            , fmap (toShortest . _te) $ M.lookup _cell_barcode stat'
-            , fmap (fromJust . packDecimal . _uniq_reads) $ M.lookup _cell_barcode stat'
-            , join $ fmap (fmap toShortest . _doublet_score) $ M.lookup _cell_barcode stat'
-            , join $ fmap (fmap toShortest . _mito_rate) $ M.lookup _cell_barcode stat'
-            , join $ fmap (fmap toShortest . _dup_rate) $ M.lookup _cell_barcode stat'
-            ]
-        cl = B.tail _cluster_name
-    header = B.intercalate "\t"
-        [ "Sample+Barcode"
-        , "Cluster"
-        , "UMAP1"
-        , "UMAP2"
-        , "TSSe"
-        , "Num_fragments"
-        , "Doublet_score"
-        , "Fraction_Mito"
-        , "Fraction_duplication"
-        ]
-    stat' = M.fromList $ map (\x -> (_barcode x, x)) stat
-{-# INLINE outputMetaData #-}
 
 -- | Compute the normalized tissue composition for each cluster.
 tissueComposition :: DF.DataFrame Int -> EChart

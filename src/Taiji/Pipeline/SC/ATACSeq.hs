@@ -254,7 +254,7 @@ builder = do
     node "Merged_Cluster" 'plotClusters $ return ()
     ["Merged_Reduce_Dims", "Merged_Param_Search"] ~> "Merged_Cluster_Metric_Prep"
     path ["Merged_Cluster_Metric_Prep", "Merged_Cluster_Metric"]
-    ["Merged_Cluster_Metric", "Merged_Param_Search", "Merged_Make_KNN", "QC"] ~> "Merged_Cluster"
+    ["Merged_Cluster_Metric", "Merged_Param_Search", "Merged_Make_KNN"] ~> "Merged_Cluster"
 
 
 
@@ -316,7 +316,6 @@ builder = do
     ["Subcluster_Reduce_Dims", "Subcluster_Make_KNN"] ~> "Subcluster_Param_Search_Prep"
     path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search",
         "Subcluster_Cluster_Prep", "Subcluster_Cluster"]
-
 
     node "Combine_Clusters" 'combineClusters $ return ()
     node "Cluster_Viz" 'vizCluster $ nCore .= 8
