@@ -24,7 +24,7 @@ import Data.Conduit.Internal (zipSinks, zipSources)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Matrix as Mat
-import Data.Singletons.Prelude (Elem, SingI)
+import Data.Singletons.Prelude (SingI)
 import Shelly hiding (FilePath)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
@@ -37,34 +37,37 @@ import Statistics.Distribution.ChiSquared (chiSquared)
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
+import Taiji.Pipeline.SC.ATACSeq.Functions.QC (streamTN5Insertion)
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils
 
 -- | Make the read count matrix.
-mkPeakMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+mkPeakMat :: SCATACSeqConfig config
           => FilePath
-          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak)
+          -> SCATACSeq S (TagsAligned, File '[Gzip] 'NarrowPeak)
           -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Matrix))
 mkPeakMat dir input = do
+    passedQC <- getQCFunction
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . (\(tagFl, regionFl) -> do
         regions <- runResourceT $ runConduit $
             streamBedGzip (regionFl^.location) .| sinkList :: IO [BED3]
-        runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
-            groupCells .| mkCountMat regions .|
+        runResourceT $ runConduit $ streamTN5Insertion passedQC tagFl .|
+            mapC (\xs -> (fromJust $ head xs^.name, xs)) .| mkCountMat regions .|
             sinkRows' (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
 
 -- | Make the read count matrix.
-mkFeatMat :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+mkFeatMat :: SCATACSeqConfig config
           => FilePath
-          -> SCATACSeq S (File tags 'Bed, File '[Gzip] 'NarrowPeak)
+          -> SCATACSeq S (TagsAligned, File '[Gzip] 'NarrowPeak)
           -> ReaderT config IO ( SCATACSeq S
               ( File '[RowName, Gzip] 'Tsv
               , File '[ColumnName, Gzip] 'Tsv
               , File '[Gzip] 'Matrix ))
 mkFeatMat dir input = do
+    passedQC <- getQCFunction
     let output = printf "%s/%s_rep%d_peak.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
         rownames = printf "%s/%s_rep%d_rownames.txt.gz" dir (T.unpack $ input^.eid)
@@ -87,8 +90,9 @@ mkFeatMat dir input = do
                 , fromJust $ packDecimal e, "\t", fromJust $ packDecimal x]
             sink = (,,) <$> ZipSink (sinkRows' (length regions) (fromJust . packDecimal) output)
                 <*> ZipSink rowSink <*> ZipSink colSink
-        _ <- runResourceT $ runConduit $ streamBedGzip (tagFl^.location) .|
-            groupCells .| mkCountMat regions .| mapC (first (bcPrefix <>)) .|
+        _ <- runResourceT $ runConduit $ streamTN5Insertion passedQC tagFl .|
+            mapC (\xs -> (fromJust $ head xs^.name, xs)) .|
+            mkCountMat regions .| mapC (first (bcPrefix <>)) .|
             getZipSink sink
         return ( location .~ rownames $ emptyFile
                , location .~ features $ emptyFile

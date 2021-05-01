@@ -6,12 +6,14 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 
 module Taiji.Pipeline.SC.ATACSeq.Types
     ( SCATACSeq(..)
     , SCATACSeqConfig(..)
     , Stat(..)
+    , TagsAligned
     , qcDir
     , figDir
     , getGenomeFasta
@@ -48,6 +50,10 @@ deriving instance Show (container (Replicate file)) => Show (SCATACSeq container
 instance Binary (container (Replicate file)) =>
     Binary (SCATACSeq container file)
 
+type TagsAligned =
+    ( Either (File '[NameSorted, Gzip] 'Bed) (File '[NameSorted, PairedEnd, Gzip] 'Bed)
+    , File '[] 'Tsv )
+
 class SCATACSeqConfig config where
     _scatacseq_output_dir :: config -> Directory
     _scatacseq_input :: config -> FilePath
@@ -70,7 +76,6 @@ class SCATACSeqConfig config where
     _scatacseq_blacklist :: config -> Maybe FilePath
     _scatacseq_te_cutoff :: config -> Double
     _scatacseq_minimal_fragment :: config -> Natural
-    _scatacseq_remove_doublets :: config -> Bool
     _scatacseq_doublet_score_cutoff :: config -> Double
     _scatacseq_cluster_by_window :: config -> Bool
     _scatacseq_window_size :: config -> Natural

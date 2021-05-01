@@ -13,11 +13,9 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Gene
 import qualified Data.ByteString.Char8 as B
 import qualified Data.HashMap.Strict                  as M
 import Data.Binary (decodeFile, encodeFile)
-import Control.Arrow (second)
 import Data.Char (toUpper)
 import Bio.Data.Bed.Types
 import Bio.Data.Bed
-import Data.Singletons.Prelude (Elem)
 import qualified Data.Text as T
 import Bio.RealWorld.GENCODE (Gene(..), Transcript(..), TranscriptType(..))
 import           Data.CaseInsensitive  (original)
@@ -25,28 +23,28 @@ import           Bio.Pipeline.Utils
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
-import Data.Conduit.Zlib (gzip)
-import qualified Data.IntervalMap.Strict as IM
 import Control.DeepSeq (force)
 
 import Taiji.Prelude
 import Taiji.Utils
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.QC (streamTN5Insertion)
 import qualified Taiji.Utils.DataFrame as DF
 
-mkCellByGene :: (Elem 'Gzip tags ~ 'True, SCATACSeqConfig config)
+mkCellByGene :: SCATACSeqConfig config
              => FilePath
-             -> (SCATACSeq S (File tags 'Bed), File '[] 'Bed)
+             -> (SCATACSeq S TagsAligned, File '[] 'Bed)
              -> ReaderT config IO (SCATACSeq S (File '[Gzip] 'Matrix))
 mkCellByGene prefix (input, promoters) = do
     dir <- asks ((<> asDir prefix) . _scatacseq_output_dir) >>= getPath
+    passedQC <- getQCFunction
     let output = printf "%s/%s_rep%d_gene.mat.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . ( \fl -> do
         regions <- readBed $ promoters^.location :: IO [BED3]
-        runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
-            groupCells .| mkCountMat regions .|
+        runResourceT $ runConduit $ streamTN5Insertion passedQC fl .|
+            mapC (\xs -> (fromJust $ head xs^.name, xs)) .| mkCountMat regions .|
             sinkRows' (length regions) (fromJust . packDecimal) output
         return $ emptyFile & location .~ output )
 
