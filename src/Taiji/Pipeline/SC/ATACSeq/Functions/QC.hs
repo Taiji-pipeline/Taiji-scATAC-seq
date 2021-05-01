@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -9,13 +10,13 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , writeStats
     , showStat
     , decodeStat
+    , streamTN5Insertion
     , rmAbnoramlFragment
     , rmChrM
     , rmDup
     , tssEnrichment
     , readTSS
     , detectDoublet
-    , removeDoublet
     , plotNumReads
     , plotDupRate
     , plotMitoRate
@@ -34,7 +35,6 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.Map.Strict as M
 import qualified Data.HashSet as S
 import Data.Conduit.List (groupBy)
-import Data.Conduit.Internal (zipSinks)
 import qualified Data.Text as T
 import Data.List.Ordered (nubSort)
 import qualified Data.IntervalMap.Strict      as IM
@@ -51,7 +51,7 @@ import qualified Taiji.Utils.Plot.ECharts as E
 import Taiji.Utils (mkSpMatrix, streamRows, readGenesValidated)
 
 plotStat :: SCATACSeqConfig config
-         => [SCATACSeq S (File '[] 'Tsv)]
+         => [SCATACSeq S (TagsAligned)]
          -> ReaderT config IO FilePath
 plotStat [] = return ""
 plotStat inputs = do
@@ -62,7 +62,7 @@ plotStat inputs = do
         outputStat = dir <> "/QC_merged.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
-            stats <- readStats $ input^.replicates._2.files.location
+            stats <- readStats $ input^.replicates._2.files._2.location
             let stats' = filter passedQC stats
                 cellQC = plotCells teCutoff stats <> title
                     (printf "%s: %d cells passed QC" (T.unpack nm) (length stats'))
@@ -218,36 +218,38 @@ readTSS = fmap (bedToTree const . concatMap fn) . readGenesValidated
             | otherwise = geneRight : map transRight geneTranscripts
 {-# INLINE readTSS #-}
 
-removeDoublet :: SCATACSeqConfig config
-              => SCATACSeq S ( File '[NameSorted, Gzip] 'Bed
-                             , File '[] 'Tsv )
-              -> ReaderT config IO (SCATACSeq S (File '[NameSorted, Gzip] 'Bed))
-removeDoublet input = do
-    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
-    asks _scatacseq_remove_doublets >>= \case
-        True -> do
-            passedQC <- getQCFunction
-            let output = printf "%s/%s_rep%d_srt_filt_no_dblet.bed.gz" dir (T.unpack $ input^.eid)
-                    (input^.replicates._1)
-            input & replicates.traverse.files %%~ liftIO . (\(bedFl, statFl) -> do
-                stats <- readStats $ statFl^.location
-                let cells = S.fromList $ map _barcode $ filter passedQC stats
-                    f :: [BED] -> Bool
-                    f = (`S.member` cells) . fromJust . (^.name) . head
-                runResourceT $ runConduit $ streamBedGzip (bedFl^.location) .|
-                    groupBy ((==) `on` (^.name)) .| filterC f .| concatC .|
-                    sinkFileBedGzip output
-                return $ location .~ output $ emptyFile )
-        False -> return $ input & replicates.traverse.files %~ fst
+-- | Filter QC-failed cells and convert fragments into TN5 insertions.
+streamTN5Insertion :: ( unpair ~ '[NameSorted, Gzip]
+                      , paired ~ '[NameSorted, PairedEnd, Gzip] )
+                   => (Stat -> Bool)
+                   -> (Either (File unpair 'Bed) (File paired 'Bed), File '[] 'Tsv)
+                   -> ConduitT () [BED] (ResourceT IO) ()
+streamTN5Insertion passedQC (input, qcFl) = do
+    stats <- liftIO $ readStats $ qcFl^.location
+    let cells = S.fromList $ map _barcode $ filter passedQC stats
+    either (f cells . SomeFile) (f cells . SomeFile) input
+  where
+    f cells (SomeFile fl) = streamBedGzip (fl^.location) .|
+        groupBy ((==) `on` (^.name)) .|
+        filterC ((`S.member` cells) . fromJust . (^.name) . head) .|
+        mapC (concatMap getCutSite . filter notChrM)
+      where
+        getCutSite x | fl `hasTag` PairedEnd = [left, right]
+                     | otherwise = [x]
+          where
+            left = let i = x^.chromStart in BED (x^.chrom) i (i+1) (x^.name) Nothing (Just True)
+            right = let i = x^.chromEnd - 1 in BED (x^.chrom) i (i+1) (x^.name) Nothing (Just False)
+    notChrM x = let chr = x^.chrom in chr /= "chrM" && chr /= "M"
+{-# INLINE streamTN5Insertion #-}
 
 detectDoublet :: SCATACSeqConfig config
-              => SCATACSeq S (File tags 'Other, (a, File '[] 'Tsv ))
-              -> ReaderT config IO (SCATACSeq S (File '[] 'Tsv))
+              => SCATACSeq S (File tags 'Other, TagsAligned)
+              -> ReaderT config IO (SCATACSeq S TagsAligned)
 detectDoublet input = do
     dir <- qcDir
     let outputPlot = dir <> "doublet_" <> T.unpack (input^.eid) <> "_rep" <>
             show (input^.replicates._1) <> ".html"
-    input & replicates.traverse.files %%~ liftIO . (\(fl, (_,stat)) -> withTemp Nothing $ \tmp -> do
+    input & replicates.traverse.files %%~ liftIO . (\(fl, (tags,stat)) -> withTemp Nothing $ \tmp -> do
         shelly $ run_ "taiji-utils" ["doublet", T.pack $ fl^.location, T.pack tmp]
         [probs, threshold, sc, sim_sc] <- B.lines <$> B.readFile tmp
         let th = readDouble threshold
@@ -266,7 +268,7 @@ detectDoublet input = do
         writeStats (stat^.location) $ flip map stats $ \s ->
             let v = M.findWithDefault 0 (_barcode s) doubletScore
             in s{_doublet_score = Just v}
-        return stat
+        return (tags, stat)
         )
   where
     mkHist xs ref = plt <> rule

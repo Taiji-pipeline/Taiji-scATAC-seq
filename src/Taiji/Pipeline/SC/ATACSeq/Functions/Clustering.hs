@@ -26,7 +26,6 @@ import qualified Data.ByteString.Char8 as B
 import Data.Binary (encodeFile, decodeFile)
 import Bio.Utils.Functions (scale)
 import Data.Conduit.Zlib (multiple, ungzip, gzip)
-import qualified Data.Conduit.List as CL
 import qualified Data.Text as T
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
@@ -41,9 +40,9 @@ import Data.List.Ordered (nubSort)
 import Shelly (shelly, run_, escaping)
 import Control.Workflow
    
-import Taiji.Pipeline.SC.ATACSeq.Functions.QC
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
+import Taiji.Pipeline.SC.ATACSeq.Functions.QC (streamTN5Insertion)
 import qualified Taiji.Utils.DataFrame as DF
 import Taiji.Utils
 import Taiji.Utils.Plot (savePlots)
@@ -196,7 +195,7 @@ extractTags prefix = do
 
 -- | Extract BEDs for each cluster.
 splitBedByCluster :: SCATACSeqConfig config
-                  => ( SCATACSeq S (File '[NameSorted, Gzip] 'Bed)
+                  => ( SCATACSeq S TagsAligned
                      , SCATACSeq S (File '[] 'Other) ) -- ^ Cluster files
                   -> ReaderT config IO
                        (SCATACSeq S [(B.ByteString, File '[] 'Bed)])
@@ -206,6 +205,7 @@ splitBedByCluster (input, clFl) = do
         exp_id = B.pack $
             T.unpack (input^.eid) <> "_" <> show (input^.replicates._1)
     dir <- asks _scatacseq_output_dir >>= getPath . (<> idRep)
+    passedQC <- getQCFunction
     input & replicates.traverse.files %%~ ( \bed -> liftIO $ do
         let filterBarcode cl =
                 let x = filter (B.isPrefixOf exp_id . _cell_barcode) $
@@ -214,15 +214,15 @@ splitBedByCluster (input, clFl) = do
             addId = name %~ fmap (\x -> exp_id <> "+" <> x)
         clusters <- fmap (map filterBarcode) $ decodeFile $
             clFl^.replicates._2.files.location
-        runResourceT $ runConduit $ streamBedGzip (bed^.location) .|
-            mapC addId .| splitBedByCluster' dir clusters
+        runResourceT $ runConduit $ streamTN5Insertion passedQC bed .|
+            mapC (map addId) .| splitBedByCluster' dir clusters
         )
 
 -- | Extract BEDs for each cluster.
 splitBedByCluster' :: MonadIO m
                   => FilePath   -- ^ Output directory
                   -> [CellCluster]
-                  -> ConduitT BED o m [(B.ByteString, File '[] 'Bed)]
+                  -> ConduitT [BED] o m [(B.ByteString, File '[] 'Bed)]
 splitBedByCluster' dir clusters = do
     let (nm, bcs) = unzip $
             map (_cluster_name &&& map _cell_barcode . _cluster_member) clusters 
@@ -231,7 +231,7 @@ splitBedByCluster' dir clusters = do
         outputs = map (\x -> dir <> "/" <> B.unpack x <> ".bed") nm
     fileHandles <- liftIO $ V.fromList <$>
         mapM (\x -> openFile x WriteMode) outputs
-    CL.groupBy ((==) `on` (^.name)) .| mapM_C ( \beds ->
+    mapM_C ( \beds ->
         maybe (return ())
             (\x -> liftIO $ B.hPutStr (fileHandles V.! x) $ B.unlines $ map toLine beds) $
             M.lookup (fromJust $ head beds ^. name) bcIdxMap

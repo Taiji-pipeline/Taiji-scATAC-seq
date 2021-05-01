@@ -22,7 +22,7 @@ import Taiji.Pipeline.SC.ATACSeq.Types
 
 getFeatures :: SCATACSeqConfig config
             => ( [SCATACSeq S [(B.ByteString, File '[Gzip] 'NarrowPeak)]]
-               , [SCATACSeq S (File tags 'Bed, File tags 'Bed, Int)] )
+               , [SCATACSeq S (a, File tags 'Bed, Int)] )
             -> ReaderT config IO (Maybe (File '[Gzip] 'NarrowPeak))
 getFeatures ([], []) = return Nothing
 getFeatures (peaks, windows) = do
@@ -83,16 +83,14 @@ basicAnalysis = do
     ["Make_Index", "Remove_Duplicates"] ~> "Get_Bed"
 
     nodePar "Run_QC" 'getQCMetric $ return ()
-    nodePar "Filter_Cell" 'filterCell $ return ()
-    path ["Get_Bed", "Run_QC", "Filter_Cell"]
+    path ["Get_Bed", "Run_QC"]
 
 -- PreClustering and doublet detection
 preClustering :: Builder ()
 preClustering = do
-    path ["Filter_Cell", "Pre_Get_Windows"]
-    ["Filter_Cell", "Pre_Cluster"] ~> "Pre_Call_Peaks_Prep"
-    ["Pre_Get_Windows", "Pre_Call_Peaks", "Run_QC"] ~> "Pre_Detect_Doublet_Prep"
-    ["Filter_Cell", "Pre_Detect_Doublet"] ~> "Pre_Remove_Doublet_Prep"
+    path ["Run_QC", "Pre_Get_Windows"]
+    ["Run_QC", "Pre_Cluster"] ~> "Pre_Call_Peaks_Prep"
+    ["Run_QC", "Pre_Call_Peaks"] ~> "Pre_Detect_Doublet_Prep"
     namespace "Pre" $ do
         nodePar "Get_Windows" [| getWindows "/Feature/Window/" |] $ return ()
 
@@ -110,12 +108,13 @@ preClustering = do
         uNode "Call_Peaks_Prep"  [| return . uncurry zipExp |]
         nodePar "Call_Peaks" [| \input -> do
             dir <- asks _scatacseq_tmp_dir
+            passedQC <- getQCFunction
             withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
                 let outDir = printf "/temp/Peak/%s_rep%d/" (T.unpack $ input^.eid) 
                         (input^.replicates._1)
-                input & replicates.traverse.files %%~ ( \(bed, cl) -> do
+                input & replicates.traverse.files %%~ ( \(tags, cl) -> do
                     clusters <- liftIO $ decodeFile $ cl^.location
-                    bedFls <- liftIO $ runResourceT $ runConduit $ streamBedGzip (bed^.location) .|
+                    bedFls <- liftIO $ runResourceT $ runConduit $ streamTN5Insertion passedQC tags .|
                         splitBedByCluster' tmp clusters
                     forM bedFls $ findPeaks outDir
                         ( def & mode .~ NoModel (-100) 200
@@ -127,25 +126,18 @@ preClustering = do
         path ["Call_Peaks_Prep", "Call_Peaks"]
 
         -- Doublet detection
-        uNode "Detect_Doublet_Prep" [| \(x, y, z) -> return $
-            flip map (zipExp (zipExp x y) z) $ \input ->
-                input & replicates._2.files %~ ( \(((a,_,c), pk), qc) -> ((a,pk), qc) ) |]
-        nodePar "Detect_Doublet" [| \input -> asks _scatacseq_remove_doublets >>= \case
-            True -> do
-                dir <- asks _scatacseq_tmp_dir
-                withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
-                    input' <- input & replicates.traverse.files._1._2 %%~ fmap fromJust .
-                        mergePeaks tmp
-                    mat <- mkPeakMat tmp $ input' & replicates.traverse.files %~ fst
-                    detectDoublet $ mat & replicates.traverse.files %~ ( \x ->
-                        (x, input'^.replicates._2.files._2) )
-            False -> return $ input & replicates.traverse.files %~ snd . snd
+        uNode "Detect_Doublet_Prep" [| \(x, y) -> return $ zipExp x y |]
+        nodePar "Detect_Doublet" [| \input -> do
+            return $ input & replicates.traverse.files %~ fst
+            dir <- asks _scatacseq_tmp_dir
+            withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
+                input' <- input & replicates.traverse.files._2 %%~ fmap fromJust .
+                    mergePeaks tmp
+                mat <- mkPeakMat tmp input'
+                detectDoublet $ mat & replicates.traverse.files %~ ( \x ->
+                    (x, input'^.replicates._2.files._1) )
             |] $ return ()
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
-
-        uNode "Remove_Doublet_Prep" [| return . uncurry zipExp |]
-        nodePar "Remove_Doublet" 'removeDoublet $ return ()
-        path ["Remove_Doublet_Prep", "Remove_Doublet"]
 
         -- Make Peak matrix
         node "Get_Peak_List" 'getFeatures $ return ()
@@ -158,7 +150,7 @@ preClustering = do
             dir <- asks ((<> "/Feature/Sample/") . _scatacseq_output_dir) >>= getPath
             mkFeatMat dir input
             |] $ return ()
-        ["Remove_Doublet", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
+        ["Detect_Doublet", "Get_Peak_List"] ~> "Make_Feat_Mat_Prep"
         path ["Make_Feat_Mat_Prep", "Make_Feat_Mat"]
 
 builder :: Builder ()
@@ -179,11 +171,11 @@ builder = do
         then return Nothing
         else Just <$> writePromoters PromoterOnly
         |] $ doc .= "Get the list of promoters from the annotation file."
-    ["Pre_Remove_Doublet"] ~> "Get_Promoters"
+    ["Pre_Detect_Doublet"] ~> "Get_Promoters"
     uNode "Make_Gene_Mat_Prep" [| \(xs, genes) -> return $ zip xs $ repeat $ fromJust genes |]
     nodePar "Make_Gene_Mat" [| mkCellByGene "/Feature/Gene/Sample/" |] $
         doc .= "Create cell by transcript matrix for each sample."
-    ["Pre_Remove_Doublet", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
+    ["Pre_Detect_Doublet", "Get_Promoters"] ~> "Make_Gene_Mat_Prep"
     path ["Make_Gene_Mat_Prep", "Make_Gene_Mat"]
 
 --------------------------------------------------------------------------------
@@ -338,7 +330,7 @@ builder = do
     uNode "Extract_Tags_Prep" [| \(x,y) -> return $ zip x $ repeat $ fromJust y |]
     extractTags "/Bed/Cluster/"
     ["Extract_Tags_Prep"] ~> "Extract_Tags"
-    ["Pre_Remove_Doublet", "Combine_Clusters"] ~> "Extract_Tags_Prep"
+    ["Pre_Detect_Doublet", "Combine_Clusters"] ~> "Extract_Tags_Prep"
 
     nodePar "Call_Peaks" [| \x -> do
         opts <- getCallPeakOpt
@@ -373,7 +365,7 @@ builder = do
         dir <- asks ((<> "/Feature/Peak/Sample/") . _scatacseq_output_dir) >>= getPath
         mkPeakMat dir input
         |] $ return ()
-    ["Pre_Remove_Doublet", "Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
+    ["Pre_Detect_Doublet", "Merge_Peaks"] ~> "Make_Peak_Mat_Prep"
     path ["Make_Peak_Mat_Prep", "Make_Peak_Mat"]
 
     node "Cluster_Peak_Mat" [| \(mats, cl) -> case cl of
