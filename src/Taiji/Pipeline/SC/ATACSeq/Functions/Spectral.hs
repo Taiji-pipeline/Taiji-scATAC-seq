@@ -23,17 +23,18 @@ chunksInput :: [File '[Gzip] 'Matrix]
             -> IO [([File '[Gzip] 'Matrix], Int)]
 chunksInput mats = do
     sizes <- mapM (fmap _num_row . mkSpMatrix id . (^.location)) mats
-    return $ go 0 $ zip3 (scanl1 (+) sizes) sizes mats
+    let totalInput = foldl1' (+) sizes
+        accumulator = scanl1 (+) sizes
+    return $ map (f (zip accumulator mats)) [0, chunkSize .. totalInput]
   where
+    f ms start =
+        let end = start + chunkSize
+            (removed, rest) = span (\(i, _) -> i <= start) ms
+            start' | null removed = start
+                   | otherwise = start - fst (last removed)
+            res = (\(a, b) -> a <> take 1 b) $ span (\(i, _) -> i < end) rest
+        in (map snd res, start')
     chunkSize = 50000
-    go _ [] = []
-    go start xs = let (res, (next, rest)) = takeN start xs in res : go next rest
-    takeN start xs = ( (map (^._3) res, start)
-                     , (nextStart, map f $ if nextStart == 0 then rest else last res : rest) )
-      where
-        f (a,b,c) = (a - chunkSize, b, c)
-        nextStart = let (acc, n, _) = last res in if acc >= chunkSize then 0 else n - (acc - chunkSize)
-        (res, rest) = partition ((<=chunkSize) . (^._1)) xs
 
 getSpectral :: SCATACSeqConfig config
             => Int     -- ^ Number of samples

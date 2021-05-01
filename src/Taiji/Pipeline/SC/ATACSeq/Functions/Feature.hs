@@ -20,6 +20,7 @@ import Bio.Utils.Functions (scale)
 import Control.DeepSeq (force)
 import Data.Binary (encodeFile)
 
+import Taiji.Utils.Matrix
 import Taiji.Prelude
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Feature.Window
@@ -36,7 +37,7 @@ dropFeatures input = do
     dir <- asks ((<> "/Spectral/") . _scatacseq_output_dir) >>= getPath
     let output = dir <> "dropped_feats.bin"
     liftIO $ do
-        counts <- runConduit $ yieldMany input .| mapMC readVector .| foldlC f Nothing
+        counts <- runConduit $ yieldMany input .| mapMC readCounts .| foldlC f Nothing
         case counts of
             Nothing -> return Nothing
             Just c -> do
@@ -48,8 +49,16 @@ dropFeatures input = do
                 encodeFile output $ idx <> U.toList (fst $ U.unzip zeros)
                 return $ Just output
   where
-    readVector x = runResourceT $ runConduit $
-        sourceFile (x^.replicates._2.files._2.location) .| multiple ungzip .|
-        linesUnboundedAsciiC .| mapC (readInt . last . B.split '\t') .| sinkVector
+    readCounts x = do
+        hasCounts <- fmap (fromMaybe False . fmap ((==2) . length . B.split '\t')) $
+            runResourceT $ runConduit $ sourceFile columnName .| multiple ungzip .|
+                linesUnboundedAsciiC .| headC
+        if hasCounts
+            then runResourceT $ runConduit $ sourceFile columnName .| multiple ungzip .|
+                linesUnboundedAsciiC .| mapC (readInt . last . B.split '\t') .| sinkVector
+            else mkSpMatrix readInt mat >>= colSum
+      where
+        columnName = x^.replicates._2.files._2.location
+        mat = x^.replicates._2.files._3.location 
     f Nothing x = force $ Just x
     f (Just x') x = force $ Just $ U.zipWith (+) x' x
