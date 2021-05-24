@@ -128,7 +128,6 @@ preClustering = do
         -- Doublet detection
         uNode "Detect_Doublet_Prep" [| \(x, y) -> return $ zipExp x y |]
         nodePar "Detect_Doublet" [| \input -> do
-            return $ input & replicates.traverse.files %~ fst
             dir <- asks _scatacseq_tmp_dir
             withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
                 input' <- input & replicates.traverse.files._2 %%~ fmap fromJust .
