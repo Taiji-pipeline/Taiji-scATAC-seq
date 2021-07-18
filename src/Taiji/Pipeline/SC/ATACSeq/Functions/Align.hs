@@ -9,6 +9,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
     ( tagAlign
     , mkIndices
     , filterNameSortBam
+    , sortBedFile
     , deDuplicates
     , getQCMetric
     , filterCell
@@ -24,6 +25,7 @@ import qualified Data.HashSet as S
 import           Data.Coerce             (coerce)
 import Control.DeepSeq (force)
 import Control.Exception (evaluate)
+import Shelly (shelly, bash_, bashPipeFail, silently, escaping)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -78,6 +80,42 @@ filterNameSortBam input = do
     input & replicates.traverse.files %%~ liftIO . either
         (fmap Left . fun) (fmap Right . filterBam tmp output)
 
+sortBedFile :: ( SCATACSeqConfig config
+               , unpair ~ '[NameSorted, Gzip]
+               , paired ~ '[NameSorted, PairedEnd, Gzip] )
+            => SCATACSeq S (SomeTags 'Bed)
+            -> ReaderT config IO (
+                 SCATACSeq S (Either (File unpair 'Bed) (File paired 'Bed)) )
+sortBedFile input = do
+    dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
+    tmpdir <- fromMaybe "./" <$> asks _scatacseq_tmp_dir
+    let output = printf "%s/%s_rep%d_nsrt_fragments.bed.gz" dir (T.unpack $ input^.eid)
+            (input^.replicates._1)
+        f (SomeTags fl) = do
+            res <- if fl `hasTag` NameSorted
+                then if fl `hasTag` Gzip
+                    then return $ fl^.location
+                    else do
+                        shelly $ escaping False $ silently $ bashPipeFail bash_ "gzip"
+                            ["-c", ">", T.pack output]
+                        return output
+                else if fl `hasTag` Gzip
+                    then do
+                        shelly $ escaping False $ silently $ bashPipeFail bash_ "gzip"
+                            [ "-d", "-c", T.pack $ fl^.location, "|"
+                            , "sort", "-T", T.pack tmpdir, "-k4,4", "|"
+                            , "gzip", "-c", ">", T.pack output ]
+                        return output
+                    else do
+                        shelly $ escaping False $ silently $ bashPipeFail bash_ "sort"
+                            [ "-T", T.pack tmpdir, "-k4,4", T.pack $ fl^.location, "|"
+                            , "gzip", "-c", ">", T.pack output ]
+                        return output
+            return $ if fl `hasTag` PairedEnd
+                then Right $ location .~ res $ emptyFile
+                else Left $ location .~ res $ emptyFile
+    input & replicates.traverse.files %%~ liftIO . f
+
 -- | Remove duplicates and convert bam file to fragments.
 -- The BED interval of the fragment is obtained by adjusting the BAM alignment
 -- interval of the sequenced read-pair. The start of the interval is moved
@@ -96,7 +134,7 @@ deDuplicates :: ( SCATACSeqConfig config
                  SCATACSeq S (Either (File unpair' 'Bed) (File paired' 'Bed)) )
 deDuplicates input = do
     dir <- asks _scatacseq_output_dir >>= getPath . (<> (asDir "/Bed"))
-    let output = printf "%s/%s_rep%d_fragments.bed.gz" dir (T.unpack $ input^.eid)
+    let output = printf "%s/%s_rep%d_nsrt_fragments.bed.gz" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . either
         (fmap (Left . coerce) . f output . SomeFile)

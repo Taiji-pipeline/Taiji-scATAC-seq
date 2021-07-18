@@ -79,11 +79,15 @@ basicAnalysis = do
     nodePar "Remove_Duplicates" 'deDuplicates $ return ()
     path ["Get_Bam", "Remove_Duplicates"]
 
-    uNode "Get_Bed" [| \(input, x) -> return $ getSortedBed input ++ x |]
-    ["Make_Index", "Remove_Duplicates"] ~> "Get_Bed"
+    uNode "Get_Bed" [| return . getBedFiles |]
+    nodePar "Sort_Bed" 'sortBedFile $ return ()
+    path ["Make_Index", "Get_Bed", "Sort_Bed"]
+
+    uNode "Get_Sorted_Bed" [| \(x, y) -> return $ x ++ y |]
+    ["Sort_Bed", "Remove_Duplicates"] ~> "Get_Sorted_Bed"
 
     nodePar "Run_QC" 'getQCMetric $ return ()
-    path ["Get_Bed", "Run_QC"]
+    path ["Get_Sorted_Bed", "Run_QC"]
 
 -- PreClustering and doublet detection
 preClustering :: Builder ()

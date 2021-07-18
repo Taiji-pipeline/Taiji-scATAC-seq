@@ -8,7 +8,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Preprocess
     , getDemultiFastq
     , getBamUnsorted
     , getBam
-    , getSortedBed
+    , getBedFiles
     , getMatrix
     , demultiplex
     ) where
@@ -88,16 +88,11 @@ getBam input = concatMap split $ concatMap split $
          | getFileType fl == Bam && fl `hasTag` NameSorted = Just $ Left $ fromSomeFile fl
          | otherwise = Nothing
 
-getSortedBed :: ( unpair ~ '[NameSorted, Gzip]
-                , paired ~ '[NameSorted, PairedEnd, Gzip] )
-             => [RAWInput]
-             -> [SCATACSeq S (Either (File unpair 'Bed) (File paired 'Bed))]
-getSortedBed input = concatMap split $ concatMap split $
-    input & mapped.replicates.mapped.files %~ map f . filter filterFn . lefts
-  where
-    filterFn x = getFileType x == Bed && x `hasTag` NameSorted && x `hasTag` Gzip
-    f fl | fl `hasTag` PairedEnd = Right $ fromSomeFile fl
-         | otherwise = Left $ fromSomeFile fl
+getBedFiles :: [RAWInput]
+            -> [SCATACSeq S (SomeTags 'Bed)]
+getBedFiles input = concatMap split $ concatMap split $ input &
+    mapped.replicates.mapped.files %~
+        map castFile . filter (\x -> getFileType x == Bed) . lefts
 
 getMatrix :: [RAWInput]
           -> [ SCATACSeq S ( File '[RowName, Gzip] 'Tsv
