@@ -208,11 +208,11 @@ plotSubclusters (params, clFl, knn) = do
     resAuto <- liftIO $ optimalParam outputParam params
     res <- Map.findWithDefault resAuto (knn^.eid) .
         fromMaybe Map.empty <$> asks _scatacseq_subcluster_resolution 
-    knn & replicates.traversed.files %%~ liftIO . ( \(idx, _, umap) -> do
+    knn & replicates.traversed.files %%~ liftIO . ( \(idx, _, u) -> do
         let sourceCells = getZipSource $ (,,) <$>
                 ZipSource (iterateC succ 0) <*>
                 ZipSource (sourceFile (idx^.location) .| linesUnboundedAsciiC .| mapC g) <*>
-                ZipSource ( sourceFile (umap^.location) .|
+                ZipSource ( sourceFile (u^.location) .|
                     linesUnboundedAsciiC .|
                     mapC (map readDouble . B.split '\t') )
             (perturbed, cl) = fromJust $ lookup res clFl

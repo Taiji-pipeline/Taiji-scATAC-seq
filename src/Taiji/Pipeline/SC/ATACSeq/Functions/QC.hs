@@ -25,7 +25,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ) where
 
 import           Bio.Data.Bam
-import           Bio.HTS
+import           Bio.HTS hiding (_barcode)
 import Control.Monad.State.Strict
 import Language.Javascript.JMacro
 import Bio.Utils.Functions (slideAverage)

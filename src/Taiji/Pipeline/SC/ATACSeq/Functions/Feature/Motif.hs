@@ -23,8 +23,6 @@ import qualified Data.HashMap.Strict as M
 import qualified Data.IntSet as IS
 import qualified Data.ByteString.Char8 as B
 import qualified Bio.Utils.BitVector as BV
-import           System.IO (hClose)
-import           System.IO.Temp (withTempFile)
 import           Data.Default (def)
 import           Data.CaseInsensitive              (original)
 import Data.List.Ordered (nubSort)

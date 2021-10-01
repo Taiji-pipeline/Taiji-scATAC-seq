@@ -41,7 +41,7 @@ readInput :: SCATACSeqConfig config
           => () -> ReaderT config IO [RAWInput]
 readInput _ = do
     input <- asks _scatacseq_input
-    liftIO $ mkInputReader input "scATAC-seq" SCATACSeq
+    liftIO $ mkInputReader input "scATAC-seq" (\_ x -> SCATACSeq x)
 
 download :: SCATACSeqConfig config
          => RAWInput

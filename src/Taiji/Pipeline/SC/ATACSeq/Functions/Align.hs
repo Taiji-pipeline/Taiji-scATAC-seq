@@ -17,7 +17,7 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.Align
 
 import Bio.Data.Bed
 import Bio.Data.Bam
-import           Bio.HTS
+import           Bio.HTS hiding (_barcode)
 import Control.Monad.State.Strict
 import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
