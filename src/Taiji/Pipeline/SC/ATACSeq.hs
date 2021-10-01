@@ -51,7 +51,9 @@ basicAnalysis :: Builder ()
 basicAnalysis = do
     node "Read_Input" 'readInput $
         doc .= "Read input data information."
-    nodePar "Download_Data" 'download $ doc .= "Download data."
+    nodePar "Download_Data" 'download $ do
+        doc .= "Download data."
+        nCore .= 2
     node "Make_Index" 'mkIndices $ doc .= "Generate the genome index."
 
     uNode "Get_Fastq" [| return . getFastq |]
@@ -105,7 +107,7 @@ preClustering = do
             withRunInIO $ \runInIO -> withTempDir dir $ \tmp -> runInIO $ do
                 mkWindowMat tmp input >>= filterMatrix tmp >>=
                     spectral tmp Nothing >>= mkKNNGraph tmp >>=
-                    clustering prefix 1 RBConfiguration 
+                    clustering prefix 1 RBConfigurationWeighted
             |] $ return ()
         path ["Get_Windows", "Cluster"]
 
@@ -263,9 +265,10 @@ builder = do
             False -> return []
             True -> liftIO $ do
                 let fl = clFl^.replicates._2.files
+                    minimalCells = 100
                 clusters <- decodeFile $ fl^.location
                 let clNames = map (T.pack . B.unpack . fst) $
-                        filter ((>=500) . snd) $ flip map clusters $ \cl ->
+                        filter ((>=minimalCells) . snd) $ flip map clusters $ \cl ->
                             (_cluster_name cl, length $ _cluster_member cl)
                 return $ flip map clNames $ \nm ->
                     (eid .~ nm $ clFl, x)

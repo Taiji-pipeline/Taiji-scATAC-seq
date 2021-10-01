@@ -191,7 +191,8 @@ umap dir clusters = do
         Just c -> Just (bc, c, x)
     bcMap = M.fromList $ flip concatMap clusters $ \cl ->
         zip (map _cell_barcode $ _cluster_member cl) $ repeat $ getClusterName cl
-    getClusterName x = fst $ B.break (=='.') $ _cluster_name x
+    --getClusterName x = fst $ B.break (=='.') $ _cluster_name x
+    getClusterName x = _cluster_name x
 {-# INLINE umap #-}
 
 plotSubclusters :: SCATACSeqConfig config
