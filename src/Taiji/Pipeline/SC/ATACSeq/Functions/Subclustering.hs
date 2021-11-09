@@ -151,14 +151,10 @@ vizCluster (Just clFl, Just coord, qc) = do
             compos = composition cellCluster
         clusters' <- sampleCells cellCluster
         savePlots clViz [] $ visualizeCluster clusters' ++
-            clusterComposition compos : tissueComposition compos : plt : clusterQC stats cellCluster
+            clusterComposition compos : tissueComposition compos : plt : []
         outputMetaData clMeta stats cellCluster
   where
-    clusterQC stats cls =
-        [ plotNumReads res
-        , plotTE res
-        , plotDoubletScore res
-        , plotDupRate res ]
+    clusterQC stats cls = statToJson res
       where
         res = flip map cls $ \x ->
             (T.pack $ B.unpack $ _cluster_name x, map h $ _cluster_member x)

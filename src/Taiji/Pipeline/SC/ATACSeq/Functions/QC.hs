@@ -6,6 +6,7 @@
 {-# LANGUAGE DataKinds #-}
 module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     ( plotStat
+    , statToJson
     , readStats
     , writeStats
     , showStat
@@ -15,13 +16,8 @@ module Taiji.Pipeline.SC.ATACSeq.Functions.QC
     , rmChrM
     , rmDup
     , tssEnrichment
-    , readTSS
+    , readPromoter
     , detectDoublet
-    , plotNumReads
-    , plotDupRate
-    , plotMitoRate
-    , plotTE
-    , plotDoubletScore
     ) where
 
 import           Bio.Data.Bam
@@ -32,22 +28,24 @@ import Bio.Utils.Functions (slideAverage)
 import           Bio.Data.Bed
 import Bio.RealWorld.GENCODE
 import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Map.Strict as M
+import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as S
 import Data.Conduit.List (groupBy)
 import qualified Data.Text as T
 import Data.List.Ordered (nubSort)
-import qualified Data.IntervalMap.Strict      as IM
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as UM
 import Shelly (shelly, run_)
+import Codec.Compression.GZip (compress)
+import Data.Aeson (Value, toJSON, encode)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
 import Taiji.Pipeline.SC.ATACSeq.Functions.Utils (extractBarcode)
 import Taiji.Utils.Plot
 import Taiji.Utils.Plot.Vega
-import qualified Taiji.Utils.Plot.ECharts as E
 import Taiji.Utils (mkSpMatrix, streamRows, readGenesValidated)
 
 plotStat :: SCATACSeqConfig config
@@ -59,6 +57,7 @@ plotStat inputs = do
     passedQC <- getQCFunction
     teCutoff <- asks _scatacseq_te_cutoff 
     let output = dir <> "/QC.html"
+        output2 = dir <> "/QC.json.gz"
         outputStat = dir <> "/QC_merged.tsv"
     liftIO $ do
         (cellQCs, stats) <- fmap unzip $ forM inputs $ \input -> do
@@ -68,12 +67,41 @@ plotStat inputs = do
                     (printf "%s: %d cells passed QC" (T.unpack nm) (length stats'))
                 nm = (input^.eid) <> "_" <> T.pack (show $ input^.replicates._1)
             return (cellQC, (nm, stats'))
-        savePlots output cellQCs 
-            [ plotNumReads stats, plotTE stats, plotDupRate stats
-            , plotMitoRate stats ]
+        savePlots output cellQCs []
+        BL.writeFile output2 $ compress $ encode $ statToJson stats
         writeStats outputStat $ flip concatMap stats $ \(i, stat) -> map (\x ->
             x{_barcode = B.pack (T.unpack i) <> "+" <> _barcode x}) stat
         return outputStat
+
+statToJson :: [(T.Text, [Stat])] -> [HM.HashMap T.Text Value]
+statToJson stats = map HM.fromList $ [numCells, numReads, te, doubletScore, dupRate, mitoRate]
+  where
+    height = toJSON (50 :: Double)
+    width = toJSON (fromIntegral (length stats) * 10 + 10 :: Double)
+    numCells = [ ("type", "bar"), ("height", height), ("width", width) 
+            , ("dataLabel", "Number of cells")
+            , ("data", toJSON $ HM.fromList $ flip map stats $ \(nm, stat) ->
+                (nm, length stat) )]
+    mitoRate = [ ("type", "violin"), ("height", height), ("width", width) 
+            , ("dataLabel", "%chrM")
+            , ("data", toJSON $ HM.fromList $ flip map stats $ \(nm, stat) -> 
+                (nm, map ((100*) . fromMaybe 0 . _mito_rate) stat) )]
+    dupRate = [ ("type", "violin"), ("height", height), ("width", width) 
+            , ("dataLabel", "%Duplication")
+            , ("data", toJSON $ HM.fromList $ flip map stats $ \(nm, stat) -> 
+                (nm, map ((100*) . fromMaybe 0 . _dup_rate) stat) )]
+    numReads = [ ("type", "violin"), ("height", height), ("width", width) 
+            , ("dataLabel", "log10(Number of fragment)")
+            , ("data", toJSON $ HM.fromList $ flip map stats $ \(nm, stat) -> 
+                (nm, map (logBase (10 :: Double) . fromIntegral . _uniq_reads) stat) )]
+    te = [ ("type", "violin"), ("height", height), ("width", width) 
+            , ("dataLabel", "TSS enrichment")
+            , ("data", toJSON $ HM.fromList $ flip map stats $ \(nm, stat) -> 
+                (nm, map _te stat) )]
+    doubletScore = [ ("type", "violin"), ("height", height), ("width", width) 
+            , ("dataLabel", "Doublet probability")
+            , ("data", toJSON $ HM.fromList $ flip map stats $ \(nm, stat) -> 
+                (nm, map (fromMaybe 0 . _doublet_score) stat) )]
 
 readStats :: FilePath -> IO [Stat]
 readStats = fmap (map decodeStat . tail . B.lines) . B.readFile
@@ -102,38 +130,6 @@ decodeStat x = Stat bc
   where
     [bc, dupRate, mitoRate, te, uniq, ds] = B.split '\t' x
 {-# INLINE decodeStat #-}
-
-{-
-baseCoverageStat :: BAMHeader -> [BAM] -> [(Int, Int)]
-baseCoverageStat header bam = sort $ I.toList $ runIdentity $ runConduit $
-    mergeBedWith counts beds .| foldlC (I.unionWith (+)) I.empty
-  where
-    beds = runIdentity $ runConduit $
-        yieldMany (sortBy (comparing queryName) bam) .|
-        toBed header .| sinkList
-    counts xs = I.fromListWith (+) $ flip zip (repeat 1) $
-        flip map [lo..hi-1] $ \i -> length $
-        filter (\x -> i >= x^.chromStart && i < x^.chromEnd) xs
-      where
-        lo = minimum $ map (^.chromStart) xs
-        hi = maximum $ map (^.chromEnd) xs
-{-# INLINE baseCoverageStat #-}
-
-toBed :: Monad m => BAMHeader -> ConduitT BAM BED3 m ()
-toBed header = sortedBamToBedPE header .| concatMapC makeFragment
-  where
-    makeFragment (b1, b2)
-        | b1^.chrom /= b2^.chrom || b1^.strand == b2^.strand = Nothing
-        | otherwise = 
-            let left = if fromJust (b1^.strand)
-                    then b1^.chromStart else b2^.chromStart
-                right = if not (fromJust $ b2^.strand)
-                    then b2^.chromEnd else b1^.chromEnd
-            in if left < right
-                  then Just (asBed (b1^.chrom) left right :: BED3)
-                  else error "Left coordinate is larger than right coordinate."
-{-# INLINE toBed #-}
--}
 
 rmAbnoramlFragment:: [BAM] -> [BAM]
 rmAbnoramlFragment = filter $ \bam ->
@@ -181,21 +177,21 @@ rmChrM input = (output, mito, chrMRate)
     notChrM x = let chr = x^.chrom in chr /= "chrM" && chr /= "M"
 {-# INLINE rmChrM #-}
 
-tssEnrichment :: BEDTree (Int, Bool)   -- ^ TSS
+tssEnrichment :: BEDTree Bool   -- ^ Promoters
               -> [BED]   -- ^ Valid input can be fragments or single-end reads
               -> Double
 tssEnrichment regions beds = U.maximum $ normalize $ U.create $ do
-            v <- UM.replicate 4000 0
+            v <- UM.replicate 4001 0
             forM_ (concatMap getCutSite beds) $ \cutsite ->
-                forM_ (IM.elems $ intersecting regions cutsite) $ \(x, str) ->
+                forM_ (queryIntersect cutsite regions) $ \(promoter, str) ->
                     UM.unsafeModify v (+1) $ if str
-                        then cutsite^.chromStart - (x - 2000)
-                        else 3999 - (x + 2000 - cutsite^.chromStart)
+                        then cutsite^.chromStart - promoter^.chromStart
+                        else 4000 - (promoter^.chromEnd - cutsite^.chromStart)
             return v
   where
     normalize vec = slideAverage 5 $ U.map (/bk) vec
       where
-        bk = (U.sum (U.take 100 vec) + U.sum (U.drop 3900 vec)) / 200 + 0.1
+        bk = (U.sum (U.take 100 vec) + U.sum (U.drop 3901 vec)) / 200 + 0.1
     getCutSite bed = case bed^.strand of
         -- This is a fragment
         Nothing -> [left, right]
@@ -208,15 +204,15 @@ tssEnrichment regions beds = U.maximum $ normalize $ U.create $ do
         right = let i = bed^.chromEnd - 76 in BED3 (bed^.chrom) i $ i+1
 {-# INLINE tssEnrichment #-}
 
-readTSS :: FilePath -> IO (BEDTree (Int, Bool))
-readTSS = fmap (bedToTree const . concatMap fn) . readGenesValidated
+readPromoter :: FilePath -> IO (BEDTree Bool)
+readPromoter = fmap (bedToTree const . concatMap fn) . readGenesValidated
   where
     fn Gene{..} = map g $ nubSort tss
       where
-        g x = (BED3 geneChrom (x - 2000) (x + 2000), (x, geneStrand))
+        g x = (BED3 geneChrom (x - 2000) (x + 2001), geneStrand)
         tss | geneStrand = geneLeft : map transLeft geneTranscripts
             | otherwise = geneRight : map transRight geneTranscripts
-{-# INLINE readTSS #-}
+{-# INLINE readPromoter #-}
 
 -- | Filter QC-failed cells and convert fragments into TN5 insertions.
 streamTN5Insertion :: ( unpair ~ '[NameSorted, Gzip]
@@ -290,61 +286,6 @@ detectDoublet input = do
 -- Plotting
 --------------------------------------------------------------------------------
 
---plotNumCells :: [(T.Text, [Stat])] -> Vega
---plotNumCells stats = $ flip map stats $ \(nm, stat) -> (nm, length stat)
-
-plotDupRate :: [(T.Text, [Stat])] -> E.EChart
-plotDupRate stats = E.addAttr [jmacroE| {
-    yAxis: {
-        name: "duplication rate",
-        nameLocation: "middle",
-        nameGap: 50
-    }
-    }|] plt
-  where
-    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
-        (nm, map (fromMaybe 0 . _dup_rate) stat)
-
-plotMitoRate :: [(T.Text, [Stat])] -> E.EChart
-plotMitoRate stats = E.boxplot $ flip map stats $ \(nm, stat) -> 
-    (nm, map (fromMaybe 0 . _mito_rate) stat)
-
-plotNumReads :: [(T.Text, [Stat])] -> E.EChart
-plotNumReads stats = E.addAttr [jmacroE| {
-    yAxis: {
-        name: "log10(number of fragments)",
-        nameLocation: "middle",
-        nameGap: 50
-    }
-    }|] plt
-  where
-    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
-        (nm, map (logBase 10 . fromIntegral . _uniq_reads) stat)
-
-plotTE :: [(T.Text, [Stat])] -> E.EChart
-plotTE stats = E.addAttr [jmacroE| {
-    yAxis: {
-        name: "TSS enrichment",
-        nameLocation: "middle",
-        nameGap: 50
-    }
-    }|] plt
-  where
-    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
-        (nm, map _te stat)
-
-plotDoubletScore :: [(T.Text, [Stat])] -> E.EChart
-plotDoubletScore stats = E.addAttr [jmacroE| {
-    yAxis: {
-        name: "probability of doublet",
-        nameLocation: "middle",
-        nameGap: 50
-    }
-    }|] plt
-  where
-    plt = E.boxplot $ flip map stats $ \(nm, stat) -> 
-        (nm, map (fromMaybe 0 . _doublet_score) stat)
-
 plotCells :: Double -> [Stat] -> Vega
 plotCells teCutoff input = plt <> axes <> vline <> hline <> scales
   where
@@ -399,103 +340,3 @@ plotCells teCutoff input = plt <> axes <> vline <> hline <> scales
             }
         }
     } |]
-
---------------------------------------------------------------------------------
--- Cluster level QC
---------------------------------------------------------------------------------
-
-{-
-plotClusterQC :: SCATACSeqConfig config
-              => ( FilePath
-                 , SCATACSeq S
-                    ( File '[] 'Tsv
-                    , File '[] 'Other
-                    , File '[Gzip] 'Other
-                    , [(T.Text, File '[] 'Tsv)] ) )
-              -> ReaderT config IO ()
-plotClusterQC (idxFl, input) = do
-    dir <- qcDir
-    let output = dir <> T.unpack (input^.eid) <> "_cluster_qc.html"
-    (geneList, plt1, plt2) <- plotDiffGene diff
-    liftIO $ do
-        stats <- M.fromList . map (\x -> (_barcode x, x)) <$>
-            readStats (statFl^.location)
-        cls <- decodeFile $ clFl^.location
-        geneExpr <- M.fromList <$>
-            readGeneExpr (map (B.pack . T.unpack) geneList) idxFl matFl
-        let points = flip map cls $ \(CellCluster nm cells) ->
-                (B.unpack nm, map _cell_3d cells)
-            statViz = [ ("read depth", map (logBase 10 . fromIntegral . _uniq_reads) statOrdered)
-                , ("TSS enrichment", map _te statOrdered)
-                , ("duplication rate", map _dup_rate statOrdered)
-                , ("mito rate", map _mito_rate statOrdered)
-                , ("doublet score", map _doublet_score statOrdered) ]
-            geneViz = zipWith (\x y -> (x, map fromIntegral y))
-                (map T.unpack geneList) $ transpose $ concatMap (map (\x ->
-                    M.findWithDefault undefined (_cell_barcode x) geneExpr) .
-                    _cluster_member) cls
-            statOrdered = concatMap (map
-                (\x -> M.findWithDefault undefined (_cell_barcode x) stats) .
-                _cluster_member) cls
-        savePlots output []
-            [ E.scatter3D' points (statViz <> geneViz) <> E.toolbox
-            , plt1, plt2 ]
-  where
-    (statFl, clFl, matFl, diff) = input^.replicates._2.files
-
-readGeneExpr :: [B.ByteString] 
-             -> FilePath   -- ^ Index
-             -> File '[Gzip] 'Other  -- ^ gene matrix
-             -> IO [(B.ByteString, [Int])]
-readGeneExpr genes idxFl fl = do
-    allGenes <- map (head . B.split '\t') . B.lines <$> B.readFile idxFl
-    let idxMap = M.fromList $ zip allGenes [0..]
-        idx = map (\x -> M.findWithDefault (error $ show x) x idxMap) genes
-        f xs = let m = M.fromList xs
-               in map (\k -> M.findWithDefault 0 k m) idx
-    mat <- mkSpMatrix readInt $ fl^.location
-    runResourceT $ runConduit $ streamRows mat .| mapC (second f) .| sinkList
-
-plotDiffGene :: SCATACSeqConfig config
-             => [(T.Text, File '[] 'Tsv)]
-             -> ReaderT config IO ([T.Text], E.EChart, E.EChart)
-plotDiffGene inputs = do
-    (cls, fdrs) <- liftIO $ fmap unzip $ forM inputs $ \(cl, fl) -> do
-        fdr <- readFDR $ fl^.location
-        return (cl, fdr)
-    markers <- asks _scatacseq_marker_gene_list >>= \case
-        Nothing -> return []
-        Just fl -> liftIO $ readMarkers fl
-    let genes = nubSort $ concatMap M.keys fdrs
-        df1 = DF.mkDataFrame cls (map fst markers) $ flip map fdrs $ \fdr ->
-            U.toList $ scale' $ U.fromList $ map snd $ enrichment markers fdr
-        df2 = DF.mkDataFrame cls genes $ flip map fdrs $ \fdr ->
-            map (\g -> M.findWithDefault 0 g fdr) genes
-    return ( filter (`elem` concatMap snd markers) genes
-           , mkHeatmap df1, mkHeatmap df2 )
-  where
-    mkHeatmap df = p <> E.toolbox <> E.option
-        [jmacroE| { visualMap: { inRange: {color: `viridis`} } } |]
-      where
-        p = E.heatmap $ DF.orderDataFrame id df
-    scale' xs | U.all (==0) xs = xs
-              | otherwise = scale xs
-    enrichment :: [(T.Text, [T.Text])] -> M.Map T.Text Double
-               -> [(T.Text, Double)]
-    enrichment markers fdr = map (second f) markers
-      where
-        f xs = foldl' (+) 0 (map (\k -> M.findWithDefault 0 k fdr) xs) /
-            fromIntegral (length xs)
-    readFDR :: FilePath -> IO (M.Map T.Text Double)
-    readFDR fl = M.fromList . map snd . filter ((>2) . fst) .
-        map (f . T.splitOn "\t") . T.lines <$> T.readFile fl
-      where
-        f (a:fld:_:q:_) = (read $ T.unpack fld :: Double, (a, read $ T.unpack q))
-        f _ = undefined
-    readMarkers :: FilePath -> IO [(T.Text, [T.Text])]
-    readMarkers fl = M.toList . M.fromListWith (++) . map (f . T.splitOn "\t") .
-        T.lines <$> T.readFile fl
-      where
-        f (a:b:_) = (b, [T.toUpper a])
-        f _ = undefined
--}

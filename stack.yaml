@@ -1,52 +1,60 @@
-resolver: nightly-2019-05-22
+resolver: lts-18.8
 
 flags:
   Taiji-scATAC-seq:
-    exe: true
+    exe: false
 
 packages:
 - '.'
 
 extra-deps:
 
+#- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
+#  commit:  f5e009cf7a9a683f7e43bf97fb33c758ba13d97b
+- "../Taiji-utils"
+
 - git:     https://github.com/Taiji-pipeline/Taiji-ATAC-seq.git
   commit:  8d59086c7337d7143474391fcd0c93aa2e1a65ad
 
-#- git:     https://github.com/Taiji-pipeline/Taiji-utils.git
-#  commit:  14115137475e7eccc6744b3b9054299b0049fb25
-
-- '../Taiji-utils'
-
 - git:     https://github.com/Taiji-pipeline/bio-pipelines.git
-  commit:  b9814899ac5d8322bf1e8e04b48712472e807df7
+  commit:  90f242992001be3672ddc2c1749beff432bbc5f3
 
 - git:     https://github.com/Taiji-pipeline/bio-experiments.git
-  commit:  672026f25b621246882e2fe7a41e8eda753896fc
+  commit:  12d62074c50f746482c3c2db4e5b47bc43803a60
 
-- git:     https://github.com/haskell-distributed/distributed-static.git
-  commit:  d34b5139a0c349fbda6ffea5fbbe960c3c91aeb1
+- git:     https://github.com/Taiji-pipeline/Taiji-fusion.git
+  commit:  a2ef0b3c162028ba1bd89c7f151b3e703f4cde8d
 
-- git:     https://github.com/haskell-distributed/network-transport-tcp.git
-  commit:  5a08e32c73093c1338c09a17a95c456568394d48
+- git:     https://github.com/kaizhang/HsHTSLib.git
+  commit:  a2fcc435fc752152f06f14e0cfa56153fa0b7d02
 
-- git:     https://github.com/haskell-distributed/distributed-process.git
-  commit:  660d554f6acd2dba8b605c84e8fa69e45708bc14
+- git:     https://github.com/kaizhang/ChromVAR.git
+  commit:  d64dd55579c8db9625028065b4cb3314e8f0c4a9
 
-- git:     https://github.com/kaizhang/SciFlow.git
-  commit:  0c909a2ac16b42e821e22e5a4b6c58e8b752f4ff
-  subdirs:
-      - SciFlow
-      - SciFlow-app
-      - SciFlow-drmaa
+- git:     https://github.com/kaizhang/matrix-sized.git
+  commit:  aed69651b2da5ca4c9076c8c4d981b876932e5b8
+
+- git:     https://github.com/kaizhang/haskell-igraph.git
+  commit:  d790e030e6e08b04dc0971221b6054d6700d82e7
 
 - git:     https://github.com/kaizhang/bioinformatics-toolkit.git
-  commit:  2a551f1b71ae71996ada231c0d4f9feebdd9e875
+  commit:  463cb8d16230a0777072e8793338b89a7c420487
   subdirs:
       - bioinformatics-toolkit
 
-- distributed-process-monad-control-0.5.1.3
-- HsHTSLib-1.9.2
-- drmaa-0.3.0
-- clustering-0.4.1
 - bbi-0.1.1
-- jmacro-0.6.16
+- clustering-0.4.1
+- jmacro-0.6.17
+
+- git:     https://github.com/Taiji-pipeline/distributed-process.git
+  commit:  e143f6bce9d7f1e13b0d12f11763f6f24d2da4df
+- distributed-process-monad-control-0.5.1.3
+- network-transport-tcp-0.8.0
+- distributed-static-0.3.9
+
+- git:     https://github.com/kaizhang/SciFlow.git
+  commit:  f38f1de35edb243c6e5a554963e8dae3fa820603
+  subdirs:
+      - SciFlow
+      - SciFlow-app
+      - SciFlow-remote

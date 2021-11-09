@@ -158,7 +158,7 @@ getQCMetric :: ( SCATACSeqConfig config
                  , File '[] 'Tsv ))
 getQCMetric input = do
     dir <- qcDir
-    tss <- getAnnotation >>= liftIO . readTSS
+    tss <- getAnnotation >>= liftIO . readPromoter
     let output = printf "%s/%s_rep%d_qc.tsv" dir (T.unpack $ input^.eid)
             (input^.replicates._1)
     input & replicates.traverse.files %%~ liftIO . \fl -> do

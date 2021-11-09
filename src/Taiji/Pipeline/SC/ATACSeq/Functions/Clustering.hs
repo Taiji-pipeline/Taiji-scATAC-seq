@@ -113,7 +113,8 @@ batchCorrection prefix input = do
                 if (all isNothing labels)
                     then return (rownames, fl)
                     else do
-                        readData (fl^.location) >>= batchCorrect labels >>= writeData output
+                        --readData (fl^.location) >>= batchCorrect labels >>= writeData output
+                        readData (fl^.location) >>= batchCorrectWithHarmony labels >>= writeData output
                         return (rownames, location .~ output $ emptyFile)
                 )
   where
