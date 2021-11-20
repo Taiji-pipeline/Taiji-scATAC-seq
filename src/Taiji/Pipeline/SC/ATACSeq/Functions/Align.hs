@@ -19,13 +19,16 @@ import Bio.Data.Bed
 import Bio.Data.Bam
 import           Bio.HTS hiding (_barcode)
 import Control.Monad.State.Strict
-import Data.Conduit.List (groupBy)
+import Data.Conduit.List (groupBy, chunksOf)
+import Control.Parallel.Strategies (parMap, rseq)
 import qualified Data.Text as T
+import qualified Data.ByteString.Char8 as B
 import qualified Data.HashSet as S
 import           Data.Coerce             (coerce)
 import Control.DeepSeq (force)
 import Control.Exception (evaluate)
 import Shelly (shelly, bash_, bashPipeFail, silently, escaping)
+import Data.Conduit.Async ((=$=&), runCConduit)
 
 import Taiji.Prelude hiding (groupBy)
 import Taiji.Pipeline.SC.ATACSeq.Types
@@ -166,12 +169,13 @@ getQCMetric input = do
         return (fl, q)
   where
     qc output tss (SomeFile fl) = do
-        stats <- runResourceT $ runConduit $ streamBedGzip (fl^.location) .|
-            groupBy ((==) `on` (^.name)) .| mapMC f .| sinkList
-        writeStats output stats
+        runResourceT $ runCConduit $
+            (streamBedGzip (fl^.location) .| groupBy ((==) `on` (^.name)) .| chunksOf 200) =$=&
+            ((yield header >> mapC (B.unlines . parMap rseq f)) .| unlinesAsciiC .| sinkFile output)
         return $ location .~ output $ emptyFile
       where
-        f beds = liftIO $ evaluate $ force $ Stat bc dupRate (Just chrMRate) te num Nothing
+        header = "barcode\tduplication_rate\tchrM_rate\tTSSe\tunique_fragment\tdoublet_likelihood"
+        f beds = showStat $ Stat bc dupRate (Just chrMRate) te num Nothing
           where
             bc = fromJust $ head beds ^. name
             dupRate = case totalReads of

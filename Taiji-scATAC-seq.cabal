@@ -10,8 +10,8 @@ build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 data-files:
-  tests/data/gencode.gtf.gz
-  tests/data/fragments.bed.gz
+  data/gencode.gtf.gz
+  data/fragments.bed.gz
 
 Flag exe
   Description: Build executable
@@ -65,12 +65,14 @@ library
                      , jmacro
                      , mtl
                      , matrices
+                     , parallel
                      , SciFlow >= 0.7.2
                      , template-haskell
                      , text
                      , temporary
                      , transformers-base
                      , mwc-random
+                     , stm-conduit
                      , singletons >= 2.5
                      , split
                      , shelly
@@ -125,3 +127,20 @@ test-suite tests
 source-repository head
   type:     git
   location: https://github.com/githubuser/Taiji-ATAC-seq
+
+benchmark bench
+  type: exitcode-stdio-1.0
+  --ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded
+  main-is: benchmarks/bench.hs
+  default-language:    Haskell2010
+  build-depends:
+      base
+    , bioinformatics-toolkit >= 0.9.3.1
+    , bytestring
+    , criterion
+    , conduit
+    , conduit-extra
+    , parallel
+    , Taiji-utils
+    , Taiji-scATAC-seq

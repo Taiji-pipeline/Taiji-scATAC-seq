@@ -88,7 +88,7 @@ basicAnalysis = do
     uNode "Get_Sorted_Bed" [| \(x, y) -> return $ x ++ y |]
     ["Sort_Bed", "Remove_Duplicates"] ~> "Get_Sorted_Bed"
 
-    nodePar "Run_QC" 'getQCMetric $ return ()
+    nodePar "Run_QC" 'getQCMetric $ nCore .= 2
     path ["Get_Sorted_Bed", "Run_QC"]
 
 -- PreClustering and doublet detection
