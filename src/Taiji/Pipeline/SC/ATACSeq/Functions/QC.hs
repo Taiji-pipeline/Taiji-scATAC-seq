@@ -184,9 +184,9 @@ tssEnrichment regions beds = U.maximum $ normalize $ U.create $ do
             v <- UM.replicate 4001 0
             forM_ (concatMap getCutSite beds) $ \cutsite ->
                 forM_ (queryIntersect cutsite regions) $ \(promoter, str) ->
-                    UM.unsafeModify v (+1) $ if str
+                    UM.modify v (+1) $ if str
                         then cutsite^.chromStart - promoter^.chromStart
-                        else 4000 - (promoter^.chromEnd - cutsite^.chromStart)
+                        else 4000 - (promoter^.chromEnd - 1 - cutsite^.chromStart)
             return v
   where
     normalize vec = slideAverage 5 $ U.map (/bk) vec
@@ -200,8 +200,8 @@ tssEnrichment regions beds = U.maximum $ normalize $ U.create $ do
         -- Single reverse strand
         Just False -> [right]
       where
-        left = let i = bed^.chromStart + 75 in BED3 (bed^.chrom) i $ i+1
-        right = let i = bed^.chromEnd - 76 in BED3 (bed^.chrom) i $ i+1
+        left = let i = bed^.chromStart in BED3 (bed^.chrom) i $ i+1
+        right = let i = bed^.chromEnd - 1 in BED3 (bed^.chrom) i $ i+1
 {-# INLINE tssEnrichment #-}
 
 readPromoter :: FilePath -> IO (BEDTree Bool)

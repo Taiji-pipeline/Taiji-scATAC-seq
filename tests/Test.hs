@@ -12,6 +12,8 @@ import           Data.Conduit.Zlib           (ungzip, multiple)
 import           Test.Tasty.HUnit
 import Bio.Data.Bed
 import Bio.Utils.Misc
+import Taiji.Prelude
+import Data.Function (on)
 
 import Taiji.Pipeline.SC.ATACSeq.Functions.QC (tssEnrichment, readPromoter)
 
@@ -33,9 +35,13 @@ tests = testGroup "Test"
 
 tsseTest :: TestTree
 tsseTest = testCase "TSSe" $ do
-    tss <- readPromoter' "tests/data/gencode.gtf.gz"
-    fragments <- runResourceT $ runConduit $ streamBedGzip input .| sinkList
-    expected @=? tssEnrichment tss fragments
+    tss <- readPromoter' "data/gencode.gtf.gz"
+    fragments <- fmap (groupBy ((==) `on` (^.name))) $
+        runResourceT $ runConduit $ streamBedGzip input .| sinkList
+    expected @=? map (tssEnrichment tss) fragments
   where
-    expected = 12.834224598930483
-    input = "tests/data/fragments.bed.gz"
+    expected = [11.857707509881424, 2.727272727272727, 6.583072100313478
+        , 2.727272727272727, 0.0, 0.0, 1.8181818181818181, 6.1633281972265
+        , 0.9090909090909091, 6.220095693779905, 5.965909090909091
+        , 7.204116638078901, 9.312638580931262]
+    input = "data/fragments.bed.gz"

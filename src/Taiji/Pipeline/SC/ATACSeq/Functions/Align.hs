@@ -171,7 +171,7 @@ getQCMetric input = do
     qc output tss (SomeFile fl) = do
         runResourceT $ runCConduit $
             (streamBedGzip (fl^.location) .| groupBy ((==) `on` (^.name)) .| chunksOf 200) =$=&
-            ((yield header >> mapC (B.unlines . parMap rseq f)) .| unlinesAsciiC .| sinkFile output)
+            ((yield header >> mapC (B.intercalate "\n" . parMap rseq f)) .| unlinesAsciiC .| sinkFile output)
         return $ location .~ output $ emptyFile
       where
         header = "barcode\tduplication_rate\tchrM_rate\tTSSe\tunique_fragment\tdoublet_likelihood"
