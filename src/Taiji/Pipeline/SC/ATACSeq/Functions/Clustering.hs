@@ -29,7 +29,7 @@ import Data.Conduit.Zlib (multiple, ungzip, gzip)
 import qualified Data.Text as T
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
-import Data.Singletons.Prelude (Elem)
+import Prelude.Singletons (Elem)
 import Bio.Data.Bed
 import Control.Arrow (first, (&&&))
 import qualified Data.Vector as V
@@ -186,7 +186,7 @@ clustering prefix resolution optimizer input = do
 extractTags :: FilePath   -- ^ Directory to save the results
             -> Builder ()
 extractTags prefix = do
-    nodePar "Extract_Tags" 'splitBedByCluster $ return ()
+    nodePar "Extract_Tags" [| splitBedByCluster |] $ return ()
     uNode "Merge_Tags_Prep" [| \input -> return $
         map (first head . unzip) $ groupBy ((==) `on` fst) $
         sortBy (comparing fst) $ concat $ input^..folded.replicates._2.files

@@ -26,7 +26,6 @@ library
   exposed-modules:     Taiji.Pipeline.SC.ATACSeq
                        Taiji.Pipeline.SC.ATACSeq.Functions
                        Taiji.Pipeline.SC.ATACSeq.Functions.Align
-                       Taiji.Pipeline.SC.ATACSeq.Functions.ChromVar
                        Taiji.Pipeline.SC.ATACSeq.Functions.Spectral
                        Taiji.Pipeline.SC.ATACSeq.Functions.Clustering
                        Taiji.Pipeline.SC.ATACSeq.Functions.Subclustering
@@ -53,7 +52,6 @@ library
                      , case-insensitive
                      , containers
                      , conduit
-                     , ChromVAR
                      , deepseq
                      , data-default
                      , data-ordlist
@@ -73,7 +71,8 @@ library
                      , transformers-base
                      , mwc-random
                      , stm-conduit
-                     , singletons >= 2.5
+                     , singletons >= 3.0
+                     , singletons-base
                      , split
                      , shelly
                      , statistics >= 0.15.0.0

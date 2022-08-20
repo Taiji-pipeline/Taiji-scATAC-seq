@@ -49,19 +49,19 @@ getFeatures (peaks, windows) = do
 -- | The basic analysis.
 basicAnalysis :: Builder ()
 basicAnalysis = do
-    node "Read_Input" 'readInput $
+    node "Read_Input" [| readInput |] $
         doc .= "Read input data information."
-    nodePar "Download_Data" 'download $ do
+    nodePar "Download_Data" [| download |] $ do
         doc .= "Download data."
         nCore .= 2
-    node "Make_Index" 'mkIndices $ doc .= "Generate the genome index."
+    node "Make_Index" [| mkIndices |] $ doc .= "Generate the genome index."
 
     uNode "Get_Fastq" [| return . getFastq |]
-    nodePar "Demultiplex" 'demultiplex $ return ()
+    nodePar "Demultiplex" [| demultiplex |] $ return ()
     path ["Read_Input", "Download_Data", "Make_Index", "Get_Fastq", "Demultiplex"]
 
     uNode "Get_Fastq_Demulti"  [| \(input, x) -> return $ getDemultiFastq input <> x |]
-    nodePar "Align" 'tagAlign $ do
+    nodePar "Align" [| tagAlign |] $ do
         nCore .= 8
         doc .= "Read alignment using BWA. The default parameters are: " <>
             "bwa mem -M -k 32."
@@ -69,7 +69,7 @@ basicAnalysis = do
     path ["Get_Fastq_Demulti", "Align"]
 
     uNode "Filter_Bam_Prep" [| \(input, x) -> return $ getBamUnsorted input ++ x |]
-    nodePar "Filter_Bam" 'filterNameSortBam $ do
+    nodePar "Filter_Bam" [| filterNameSortBam |] $ do
         nCore .= 2
         doc .= "Remove low quality tags using: samtools -F 0x70c -q 30"
     ["Make_Index", "Align"] ~> "Filter_Bam_Prep"
@@ -78,17 +78,17 @@ basicAnalysis = do
     uNode "Get_Bam" [| \(input, x) -> return $ getBam input ++ x |]
     ["Make_Index", "Filter_Bam"] ~> "Get_Bam"
 
-    nodePar "Remove_Duplicates" 'deDuplicates $ return ()
+    nodePar "Remove_Duplicates" [| deDuplicates |] $ return ()
     path ["Get_Bam", "Remove_Duplicates"]
 
     uNode "Get_Bed" [| return . getBedFiles |]
-    nodePar "Sort_Bed" 'sortBedFile $ return ()
+    nodePar "Sort_Bed" [| sortBedFile |] $ return ()
     path ["Make_Index", "Get_Bed", "Sort_Bed"]
 
     uNode "Get_Sorted_Bed" [| \(x, y) -> return $ x ++ y |]
     ["Sort_Bed", "Remove_Duplicates"] ~> "Get_Sorted_Bed"
 
-    nodePar "Run_QC" 'getQCMetric $ nCore .= 2
+    nodePar "Run_QC" [| getQCMetric |] $ nCore .= 2
     path ["Get_Sorted_Bed", "Run_QC"]
 
 -- PreClustering and doublet detection
@@ -145,7 +145,7 @@ preClustering = do
         path ["Detect_Doublet_Prep", "Detect_Doublet"]
 
         -- Make Peak matrix
-        node "Get_Peak_List" 'getFeatures $ return ()
+        node "Get_Peak_List" [| getFeatures |] $ return ()
         ["Call_Peaks", "Get_Windows"] ~> "Get_Peak_List"
         uNode "Make_Feat_Mat_Prep" [| \(bed, pk) -> return $
             flip map (zip bed $ repeat $ fromJust pk) $ \(x, p) ->
@@ -166,7 +166,7 @@ builder = do
 --------------------------------------------------------------------------------
 -- QC
 --------------------------------------------------------------------------------
-    node "QC" 'plotStat $ return ()
+    node "QC" [| plotStat |] $ return ()
     ["Pre_Detect_Doublet"] ~> "QC"
 
 --------------------------------------------------------------------------------
@@ -191,7 +191,7 @@ builder = do
         x -> return x
         |]
     ["Read_Input", "Pre_Make_Feat_Mat"] ~> "Get_Feat_Mat"
-    node "Merged_Feature_Selection" 'dropFeatures $ return ()
+    node "Merged_Feature_Selection" [| dropFeatures |] $ return ()
     path ["Get_Feat_Mat", "Merged_Feature_Selection"]
 
     node "Merged_Spectral" [| getSpectral 35000 |] $ nCore .= 4
@@ -203,11 +203,11 @@ builder = do
             return $ zip3 input' (repeat m) $ repeat $ fromJust feat
         _ -> return []
         |]
-    nodePar "Merged_Nystrom" 'nystromExtend $ return ()
+    nodePar "Merged_Nystrom" [| nystromExtend |] $ return ()
     ["Get_Feat_Mat", "Merged_Spectral", "Merged_Feature_Selection"] ~> "Merged_Nystrom_Prep"
     path ["Merged_Nystrom_Prep", "Merged_Nystrom"]
 
-    node "Merged_Reduce_Dims" 'mergeResults $ return ()
+    node "Merged_Reduce_Dims" [| mergeResults |] $ return ()
     ["Merged_Spectral", "Get_Feat_Mat", "Merged_Nystrom"] ~> "Merged_Reduce_Dims"
 
     node "Merged_Batch_Correction" [| \case
@@ -250,7 +250,7 @@ builder = do
         r <- liftIO $ computeClusterMetrics cl spec
         return (res, r)
         |] $ return ()
-    node "Merged_Cluster" 'plotClusters $ return ()
+    node "Merged_Cluster" [| plotClusters |] $ return ()
     ["Merged_Reduce_Dims", "Merged_Param_Search"] ~> "Merged_Cluster_Metric_Prep"
     path ["Merged_Cluster_Metric_Prep", "Merged_Cluster_Metric"]
     ["Merged_Cluster_Metric", "Merged_Param_Search", "Merged_Make_KNN"] ~> "Merged_Cluster"
@@ -274,11 +274,11 @@ builder = do
                     (eid .~ nm $ clFl, x)
         _ -> return []
         |]
-    nodePar "Subcluster_Get_Features" 'subsetFeatMat $ return ()
+    nodePar "Subcluster_Get_Features" [| subsetFeatMat |] $ return ()
     ["Merged_Cluster", "Get_Feat_Mat"] ~> "Subcluster_Get_Features_Prep"
     path ["Subcluster_Get_Features_Prep", "Subcluster_Get_Features"]
  
-    nodePar "Subcluster_Reduce_Dims" 'subSpectral $ return ()
+    nodePar "Subcluster_Reduce_Dims" [| subSpectral |] $ return ()
     nodePar "Subcluster_Make_KNN" [| \input -> do
         dir <- asks ((<> "/Subcluster/KNN/") . _scatacseq_output_dir) >>= getPath
         mkKNNGraph dir input
@@ -312,13 +312,13 @@ builder = do
             let (a,b,c,_) = unzip4 $ e^.replicates._2.files
             in (zip a b, zip a c, e & replicates.traversed.files %~ (^._4) . head)
         |]
-    nodePar "Subcluster_Cluster" 'plotSubclusters $ return ()
+    nodePar "Subcluster_Cluster" [| plotSubclusters |] $ return ()
     ["Subcluster_Reduce_Dims", "Subcluster_Make_KNN"] ~> "Subcluster_Param_Search_Prep"
     path ["Subcluster_Param_Search_Prep", "Subcluster_Param_Search",
         "Subcluster_Cluster_Prep", "Subcluster_Cluster"]
 
-    node "Combine_Clusters" 'combineClusters $ return ()
-    node "Cluster_Viz" 'vizCluster $ nCore .= 8
+    node "Combine_Clusters" [| combineClusters |] $ return ()
+    node "Cluster_Viz" [| vizCluster |] $ nCore .= 8
     ["Merged_Cluster", "Subcluster_Cluster"] ~> "Combine_Clusters"
     ["Combine_Clusters", "Merged_Batch_Correction", "QC"] ~> "Cluster_Viz"
 
@@ -391,21 +391,7 @@ builder = do
     ["Merge_Peaks", "Cluster_Peak_Mat"] ~> "Cluster_Peak_Acc"
 
 
---------------------------------------------------------------------------------
--- Run ChromVar 
---------------------------------------------------------------------------------
     -- Motif finding
     node "Find_TFBS_Prep" [| findMotifsPre 1e-5 |] $ return ()
-    nodePar "Find_TFBS" 'findMotifs $ return ()
+    nodePar "Find_TFBS" [| findMotifs |] $ return ()
     path ["Merge_Peaks", "Find_TFBS_Prep", "Find_TFBS"]
-
-    -- ChromVar
-    {-
-    node "Make_Motif_Peak_Mat" 'mkMotifMat $ return ()
-    ["Merge_Peaks", "Find_TFBS"] ~> "Make_Motif_Peak_Mat"
-
-    node "ChromVar_Pre" 'preChromVar $ return ()
-    ["Make_Motif_Peak_Mat", "Merge_Peaks", "Cluster_Peak_Mat"] ~> "ChromVar_Pre"
-    nodePar "ChromVar" 'runChromVar $ return ()
-    ["ChromVar_Pre"] ~> "ChromVar"
-    -}

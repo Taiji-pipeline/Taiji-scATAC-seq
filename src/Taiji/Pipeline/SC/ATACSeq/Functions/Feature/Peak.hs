@@ -24,7 +24,7 @@ import Data.Conduit.Internal (zipSinks, zipSources)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Matrix as Mat
-import Data.Singletons.Prelude (SingI)
+import Data.Singletons (SingI)
 import Shelly hiding (FilePath)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
